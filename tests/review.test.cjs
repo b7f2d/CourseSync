@@ -169,3 +169,22 @@ test('legacy title with teacher suffix matches a verified new lesson',async()=>{
  ev.title='其他个人事项';
  a.equal(e.m.matchesOldCourse(ev,rec),false);
 });
+
+test('notes migration keeps the same native event ID',async()=>{
+  const e=await env(),rec=lesson();e.baseline([rec]);const ev=e.add(rec);
+  e.state.semesters['161'].index={[rec.id]:ev.identifier};
+  e.store.write(e.state);
+  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+  a.equal(e.db.length,1);
+  a.match(e.db[0].notes,/^教师：/);
+  a.doesNotMatch(e.db[0].notes,/NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
+  a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,rec.id);
+});
+test('verified duplicated legacy title is removed without touching kept lesson',async()=>{
+  const e=await env(),rec=lesson();e.baseline([rec]);const good=e.add(rec);
+  e.state.semesters['161'].index={[rec.id]:good.identifier};
+  const old=e.add(rec,{notes:'legacy calendar import'});old.title='高等数学 - 张老师';
+  e.store.write(e.state);
+  await e.m.removeMatchedOldCourses(e.calendar,e.state,e.store,'161',()=>{});
+  a.equal(e.db.length,1);a.equal(e.db[0].identifier,good.identifier);
+});

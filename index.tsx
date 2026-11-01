@@ -637,7 +637,7 @@ function readableNotes(e,stamp){
   return '教师：'+(e.teachers?.length?e.teachers.join('、'):'未提供')+'\n同步：'+localDateTime(stamp);
 }
 class CalendarAdapter {
-  constructor(calendar,owner,store,budget=()=>store.check(),state=null){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;this.byNative=storedEventIndex(state);}
+  constructor(calendar,owner,store,budget=()=>store.check(),state=null){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;}
   async scan(anchor,events=[]) {
     // Chunked bounded queries avoid EventKit's multi-year predicate limit.
     let lo=Date.parse(anchor+'T00:00:00+08:00')-30*DAY,hi=lo+500*DAY;
@@ -646,7 +646,7 @@ class CalendarAdapter {
     for(let start=lo;start<hi;start+=90*DAY){this.budget();this.store.check();const list=await calendarRows(start,Math.min(hi,start+90*DAY),this.calendar);this.store.check();for(const ev of list){const rec=eventRecord(ev,this.owner,this.byNative);if(rec)found.set(occurrenceKey(ev),{ev,rec});}}
     return [...found.values()];
   }
-  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);return ev.identifier;}
+  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
   async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner,this.byNative),'FOREIGN_EVENT');await ev.remove();this.store.check();}
 }
 async function applyTransaction(tx,adapter,budget=()=>{}) {
@@ -1199,7 +1199,7 @@ async function finishTx(state,store,adapter,budget) {
   const oldTerm=state.semesters[tx.sid];
   const sourceChanges=tx.changes.added+tx.changes.removed+tx.changes.changed;
   state.semesters[tx.sid]={events:tx.target,index,anchor:tx.anchor,name:tx.name,lastSuccess:new Date().toISOString(),skipped:tx.skipped,
-    notesFormat:sourceChanges?1:(oldTerm?.notesFormat||1),
+    notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
   const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
   if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
