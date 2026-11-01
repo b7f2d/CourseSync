@@ -457,3 +457,10 @@ test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
  a.doesNotMatch(e.db[0].notes,/教师：/);
  a.equal(e.state.semesters['161'].notesFormat,3);
 });
+
+test('full teacher names from the school remain intact in calendar titles',async()=>{
+ const {m}=await env();
+ const rec=m.expand(raw([activity({courseName:'中国税制',teachers:[{name:'高玉胭(001)'}]})]),161,'2026-09-07').events[0];
+ a.equal(rec.teachers[0],'高玉胭');
+ a.equal(m.calendarTitle(rec),'中国税制（高玉胭）');
+});
