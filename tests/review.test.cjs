@@ -387,3 +387,26 @@ test('WebView initialization timeout safely falls back to native secure inputs',
  a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(r.remember,false);
  a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
 });
+
+test('missing WebView message bridge uses native secure fields without crashing',async()=>{
+ const e=await env();const prompts=[];
+ e.sandbox.__sdk.WebViewController=class{dispose(){}};
+ e.sandbox.__sdk.Dialog.prompt=async options=>{prompts.push(options);return prompts.length===1?'id':'pw';};
+ const result=await e.m.credentialForm();
+ a.equal(result.username,'id');a.equal(result.password,'pw');
+ a.equal(prompts.length,2);
+ a.equal(prompts[1].obscureText,true);
+});
+test('invalid message-bridge payload never dismisses or reveals credentials',async()=>{
+ const e=await env();let handler,dismissed=false;
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(_n,fn){handler=fn;}
+  async loadHTML(){return true;}
+  async present(){const result=await handler({username:'',password:'bad'});a.equal(result,false);}
+  dismiss(){dismissed=true;}
+  dispose(){}
+ };
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(dismissed,false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});

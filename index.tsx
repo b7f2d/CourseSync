@@ -510,6 +510,7 @@ async function credentialForm({title='NUFE 登录',showRemember=false}={}){
     let submitted=null;
     // The bridge is the only path from this local HTML page to the host.
     // Never persist or log the values returned by the bridge.
+    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
     await bounded(w.inner.addScriptMessageHandler('nufeCredentials',async value=>{
       if(submitted)return false;
       if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
