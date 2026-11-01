@@ -1097,7 +1097,7 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
   // Prefer an explicit first-teaching-week field when available. The official
   // semester start date is also a valid schedule baseline for this timetable
   // system: normalize it to Monday, consistent with the semester API consumer.
-// Never invent a date when the school returns no usable dates.
+  // Never invent a date when the school returns no usable dates.
   let suggestion=null, lookupError=null;
   try{
     const detail=await http.json(JW+'/student/ws/semester/get/'+sid);

@@ -207,7 +207,7 @@ test('renamed calendar is selected using the stored identifier',async()=>{
 test('school semester start automatically anchors historical spring timetable without prompting',async()=>{
  const e=await env({hostEnv:'intent'});
  const http={json:async url=>{
-   a.match(url,/student\\/ws\\/semester\\/get\\/140$/);
+   a.ok(url.endsWith('/student/ws/semester/get/140'));
    return {startDate:'2024-02-26'};
  }};
  const anchor=await e.m.chooseAnchor(140,'2023-2024-2',http,e.state,e.store,false);
