@@ -245,12 +245,13 @@ test('foreground management exposes locked-state recovery without waiting for ac
   constructor(){this.actions=[];}
   addAction(label){this.actions.push(label);}
   addCancelAction(){}
-  async presentSheet(){actions.push(this.actions.slice());return presented++===0?1:4;}
+  async presentSheet(){actions.push(this.actions.slice());return [1,2,2][presented++]??-1;}
   async presentAlert(){return 0;}
  };
  e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;return false;};
  await e.m.run();
- a.ok(actions[1].includes('检查同步锁'));
+ a.ok(actions[1].includes('更多操作'));
+ a.ok(actions[2].includes('检查同步锁'));
  a.equal(confirmations,1);
  a.equal(e.files.get(lockPath),lockBefore);
  a.equal(e.requests.length,0);

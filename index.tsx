@@ -609,7 +609,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
   onStage('等待输入学校登录信息');
-  const account=await credentialForm({title:'NUFE 登录',showRemember:!hasSavedCredentials()});
+  const account=await credentialForm({title:'NUFE 登录',showRemember:true});
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
   // Save only after school confirms authentication succeeded.
   if(account.remember)saveCredentials(account.username,account.password);
@@ -1470,8 +1470,15 @@ async function run() {
       if(selected===2){await notice('运行状态',statusText(state));return;}
       if(selected===1){
         const settings=new Alert();settings.title='账号与日历设置';
-        ['自动登录凭据','重新绑定课表日历','清除学校会话','导出最近备份','检查同步锁'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
-        const choice=await settings.presentSheet();if(choice<0)return;action=[13,7,5,16,17][choice];
+        ['自动登录凭据','课表日历','更多操作'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
+        const choice=await settings.presentSheet();if(choice<0)return;
+        if(choice===2){
+          const advanced=new Alert();advanced.title='更多操作';
+          ['清除学校会话','导出最近备份','检查同步锁'].forEach(x=>advanced.addAction(x));
+          advanced.addCancelAction('返回');
+          const selected=await advanced.presentSheet();if(selected<0)return;
+          action=[5,16,17][selected];
+        }else action=[13,7][choice];
         if(action===17){
           // Lock inspection must work without acquiring an already held lock.
           // Never clear it automatically: another scheduled run may be active.
