@@ -348,8 +348,8 @@ test('local form displays account and masked password together',async()=>{
  a.ok(html.includes('type="password"'));
  a.ok(html.includes('id="account"'));
  a.ok(html.includes('id="remember"'));
- a.equal(requestGuard({url:'https://example.org'}),false);
- a.equal(requestGuard({url:'about:blank'}),true);
+ a.equal(await requestGuard({url:'https://example.org'}),false);
+ a.equal(await requestGuard({url:'about:blank'}),true);
 });
 test('local credential form does not opt-in to iCloud automatically',async()=>{
  const e=await env();
