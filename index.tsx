@@ -553,11 +553,8 @@ async function fieldsFrom(html,id) {
   for(const name of ['execution','lt'])if(!out[name]){const x=lookup('name',name);if(x)out[name]=x.value||'';}
   return out;
 }
-// Compact, local-only credential entry. No school webpage or third-party URL
-// is loaded. Password stays hidden and the ephemeral view is disposed promptly.
-// The form sends the result WHILE the WebView is still presented; accessing
-// the DOM after closing the sheet can hang because WebKit suspends detached views.
-// A legacy native prompt fallback keeps login usable if the WebView cannot load.
+// Passwords are entered in a native iOS sheet. No embedded HTML login page,
+// fake website domain, separate cookie store or duplicated credential bridge.
 async function fallbackCredentialForm({title='NUFE 登录'}={}){
   const username=(await legacyInput(title,'NUFE 学号')).trim();
   const password=await legacyInput(title,'NUFE 密码（安全输入）',true);
@@ -565,94 +562,27 @@ async function fallbackCredentialForm({title='NUFE 登录'}={}){
   return {username,password};
 }
 async function credentialForm({title='NUFE 登录'}={}){
-  // Prefer SwiftUI-backed iOS controls: these expose textContentType=username
-  // and textContentType=password, unlike our local HTML hosted by scripting.fun.
-  // iOS may still ask the user to choose an existing school-site credential.
-  if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+  if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  let code='NATIVE_FORM_UNAVAILABLE';
+  if(typeof hostAPI('Navigation')?.present==='function'){
     try{
       const native=await presentNativeCredentialForm(title);
       if(!native)fail('CANCELLED');
       return native;
     }catch(e){
       if(e?.code==='CANCELLED')throw e;
-      const code=e&&typeof e.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code)?e.code:'NATIVE_FORM_UNAVAILABLE';
-      const fallback=await HostDialog.confirm({
-        title:'原生登录窗口不可用',
-        message:'原生账号密码窗口未能打开（'+code+'）。是否改用本地网页表单继续？',
-        cancelLabel:'取消登录',
-        confirmLabel:'使用备用表单'
-      });
-      if(!fallback)fail('CANCELLED');
+      if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
-  let w=null;
-  try{
-    w=new WebView();
-    // This page contains only our inline HTML and is locked down by its CSP.
-    // Do not block non-about:blank navigation during loadHTML: Scripting's
-    // WebKit implementation can use internal non-about:blank URLs, which
-    // previously made this single-form view fail and opened two prompts.
-    let submitted=null;
-    // The bridge is the only path from this local HTML page to the host.
-    // Never persist or log the values returned by the bridge.
-    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
-    await bounded(w.inner.addScriptMessageHandler('nufeCredentials',async value=>{
-      if(submitted)return false;
-      if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
-      const username=value.username.trim(),password=value.password;
-      if(!username||username.length>100||!password||password.length>512)return false;
-      submitted={username,password};
-      // Close only AFTER data crossed to native code. Do not evaluate JS
-      // in a view already dismissed / suspended by WebKit.
-      try{w.inner.dismiss();}catch(_){}
-      return true;
-    }),12000,'WEBVIEW_TIMEOUT');
-    const html=[
-      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
-      '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
-      'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
-      'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
-      'button{display:block;width:100%;background:#1769dd;color:white;font:600 17px -apple-system;padding:13px;border:0;border-radius:12px;margin-top:22px}',
-      'button:disabled{opacity:.55}.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:14px}</style></head><body>',
-      '<h2>NUFE 统一身份认证</h2>',
-      // Use a real username/password form and iOS Password AutoFill semantic hints.
-      // Submission stays entirely local: JS prevents default and CSP blocks form posts.
-      '<form id="login-form" autocomplete="on" novalidate>',
-      '<label class="label" for="account">学号</label><input id="account" name="username" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
-      '<label class="label" for="secret">密码</label><input id="secret" name="password" type="password" maxlength="512" autocomplete="current-password">',
-      '<button type="submit" id="submit">确认</button></form>',
-      '<p class="hint" id="hint">认证成功后自动保存至 iCloud 钥匙串；关闭页面则取消。</p>',
-      '<script>(function(){const button=document.getElementById("submit"),hint=document.getElementById("hint"),form=document.getElementById("login-form");',
-      'form.addEventListener("submit",async event=>{event.preventDefault();const username=document.getElementById("account").value.trim(),password=document.getElementById("secret").value;',
-      'if(!username||!password){hint.textContent="请输入学号和密码。";return;}button.disabled=true;',
-      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password});',
-      'if(!ok){hint.textContent="请检查输入内容。";button.disabled=false;}}',
-      'catch(_){hint.textContent="未能提交登录信息，请重试。";button.disabled=false;}});})();</script></body></html>'
-    ].join('');
-    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
-    await w.present(title);
-    if(!submitted)fail('CANCELLED');
-    return submitted;
-  }catch(e){
-    // Never silently replace the single login form with two separate prompts.
-    // If the local WebView is unavailable, explain the failure and ask first.
-    // Cancelling the unified form never causes a fallback or stores a password.
-    if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
-      const consent=await HostDialog.confirm({
-        title:'无法显示统一登录窗口',
-        message:'本地账号密码窗口加载失败（'+e.code+'）。是否改用两个系统安全输入框继续？',
-        cancelLabel:'取消登录',
-        confirmLabel:'使用系统输入框'
-      });
-      if(!consent)fail('CANCELLED');
-      return await fallbackCredentialForm({title});
-    }
-    throw e;
-  }finally{
-    if(w){try{w.inner.dispose();}catch(_){}__webviews.delete(w.inner);}
-  }
+  // The only fallback is still a native iOS Dialog (two secure prompts).
+  // Ask before showing them; never silently downgrade the combined form.
+  const consent=await HostDialog.confirm({
+    title:'原生登录窗口不可用',
+    message:'无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？',
+    cancelLabel:'取消登录',confirmLabel:'继续'
+  });
+  if(!consent)fail('CANCELLED');
+  return await fallbackCredentialForm({title});
 }
 async function humanSlider(http) {
   await http.get(AUTH+'/common/toSliderCaptcha.htl',{ajax:true});
