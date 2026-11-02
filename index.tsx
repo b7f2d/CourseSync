@@ -1377,6 +1377,7 @@ function statusText(state){
     '\n课表日历：'+calendar+'（未实时核验）'+
     (state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
+    (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+noticeWarning+
     (hasIssue?'\n建议：打开「环境自检」定位问题':'\n需要处理：暂未记录异常')+
     '\n\n以上为本地记录，非实时状态。';
