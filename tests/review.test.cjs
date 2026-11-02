@@ -794,11 +794,40 @@ test('successful verified synchronization clears signed-out state without changi
  e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'stale',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
  e.baseline([lesson()]);e.add(lesson());
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const cookieHeaders=[];const get=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(...args){cookieHeaders.push(this.jar.header('https://jwxt.nufe.edu.cn/student/for-std/course-table'));return get.apply(this,args);};
  await e.m.synchronize(e.state,e.store,e.calendar,true,false,()=>{});
+ a.ok(cookieHeaders.length>0);
+ a.ok(cookieHeaders.every(header=>!header.includes('SESSION=stale')));
  a.equal(e.state.signedOut,false);
  a.equal(e.state.authPaused,false);
  a.equal(e.state.calendarId,e.calendar.identifier);
  a.equal(e.db.length,1);
+});
+test('a crash after persisting logout intent still offers credential cleanup retry',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('sample','stale-test');
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+ await e.m.run();
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.equal(e.requests.length,0);
+});
+test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
+ const e=await env(),seen=[];
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'old-session',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push(options);
+   return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>login required</html>'};
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(seen.length,1);
+ a.equal(seen[0].headers?.Cookie||'', '');
+ a.equal(checks.find(c=>c.name==='登录会话').level,'正常');
+ a.match(checks.find(c=>c.name==='Cookie 存储').detail,/已退出登录/);
 });
 test('background sync after deliberate logout makes no school request or extra notification',async()=>{
  const e=await env();
