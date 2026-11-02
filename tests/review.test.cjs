@@ -255,7 +255,7 @@ test('settings menu contains only credentials and the calendar, with no advanced
    return menus.length===1?1:null;
  };
  await e.m.run();
- a.deepEqual(menus[0],['立即刷新','账号与日历设置','运行状态']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);
  a.deepEqual(Array.from(menus[1]),['自动登录凭据','课表日历']);
  a.equal(e.requests.length,0);
  a.equal(e.store.read().failures,0);
