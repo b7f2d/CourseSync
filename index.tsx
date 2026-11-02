@@ -2,6 +2,7 @@
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';
+import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
 async function __NUFE_REPORT_STARTUP(error){
@@ -1387,112 +1388,45 @@ function safeProgressLabel(message){
   return '正在刷新课表';
 }
 function createProgress(state,store,interactive){
-  let view=null,closed=false,paused=false,visible=false,generation=0;
-  let latest='正在刷新课表',started=false,painting=false,pending=false;
-  let loadFailure=null,dismissedByUser=false,awaitingVerification=false,lastPainted=null;
-  function show(){
-    // A single presentation stays alive for the whole noninteractive phase.
-    // User-dismissed progress must never reappear on the next stage update.
-    if(!view||closed||paused||visible||dismissedByUser)return;
-    visible=true;lastPainted=null;const id=++generation;
-    try{Promise.resolve(view.present({fullscreen:false,navigationTitle:'正在刷新课表'}))
-      .then(()=>{if(generation===id){visible=false;dismissedByUser=true;}})
-      .catch(()=>{if(generation===id){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}});}
-    catch(_){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}
-  }
-  function hide(){
-    if(paused)return;
-    paused=true;generation++;visible=false;lastPainted=null;
-    try{view?.dismiss();}catch(_){}
-  }
-  async function paint(){
-    if(!view||closed||paused)return;
-    if(painting){pending=true;return;}
-    painting=true;
-    try{
-      do{
-        pending=false;
-        // Never queue hundreds of JS bridge calls during HTTP/event updates.
-        const label=latest;
-        if(label===lastPainted)break;
-        await view.evaluateJavaScript('return window.updateStage('+JSON.stringify(label)+')');
-        lastPainted=label;
-      }while(pending&&view&&!closed&&!paused);
-    }catch(_){loadFailure='PROGRESS_STAGE';}
-    finally{painting=false;}
-  }
+  // Every detailed stage is still persisted for diagnostics. The native
+  // progress sheet is intentionally not a fake percent-based progress bar.
+  let ui=null,closed=false,started=false,waitingForVerification=false;
   const stage=message=>{
     stampStage(state,store,message);
-    if(!interactive||closed)return;
-    const name=String(message);
-    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(name)){
-      awaitingVerification=true;hide();return;
+    if(!interactive||closed||!started||!ui)return;
+    const label=String(message||'');
+    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
+      waitingForVerification=true;
+      ui.pause(); // Free the modal presentation slot for native input.
+      return;
     }
-    // The login/MFA pipeline has many intermediate HTTP stages. Do not reopen
-    // the progress page between native credential, SMS and CAPTCHA sheets.
-    // Resume once after authentication or when calendar work actually begins.
-    if(awaitingVerification){
-      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(name))return;
-      awaitingVerification=false;paused=false;
+    if(waitingForVerification){
+      // Never flash the sheet between captcha, SMS and login HTTP requests.
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
+      waitingForVerification=false;
+      ui.resume();
     }
-    // Keep one stable visible label while detailed steps remain in local logs.
-    // This avoids a flashing title every time a semester changes phase.
-    latest='正在刷新课表';
-    if(started)show();
-    if(visible)void paint();
   };
   stage.start=async()=>{
-    if(!interactive||closed||started)return;
+    if(!interactive||started||closed)return;
     started=true;
-    const Controller=hostAPI('WebViewController');
-    if(typeof Controller!=='function')return;
     try{
-      view=new Controller({ephemeral:true});
-      // This HTML is self-contained and CSP blocks ALL outgoing requests.
-      // Do not install a navigation blocker: WebKit internally navigates
-      // through non-about:blank URLs when loading raw HTML on some versions.
-      const html=[
-        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; img-src \'none\'; form-action \'none\'">',
-        '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;background:Canvas;color:CanvasText;margin:0;display:grid;min-height:75vh;place-items:center}',
-        '.wrap{text-align:center;padding:24px;max-width:300px}h1{font-size:21px;margin:16px 0 8px}',
-        'p{font-size:15px;color:GrayText;line-height:1.5;margin:0}',
-        '.spinner{width:34px;height:34px;border:3px solid #8a8a8a44;border-top-color:#2476e3;border-radius:50%;margin:auto;animation:spin .85s linear infinite}',
-        '@keyframes spin{to{transform:rotate(360deg)}}small{display:block;margin-top:14px;color:GrayText}</style></head>',
-        '<body><div class="wrap"><div class="spinner" role="progressbar" aria-label="刷新中"></div>',
-        '<h1>正在同步</h1><p id="stage">正在刷新课表</p>',
-        '<small>完成后会显示结果</small></div>',
-        '<script>window.updateStage=function(s){document.getElementById("stage").textContent=String(s).slice(0,80);return true;};</script>',
-        '</body></html>'
-      ].join('');
-      if(await view.loadHTML(html)===false)throw Error('PROGRESS_LOAD');
-      if(closed){view.dispose();view=null;return;}
-      show();void paint();
-      // Yield to the Scripting UI loop before the first network request.
-      await new Promise(resolve=>Timer.schedule(120,false,resolve));
-      if(loadFailure)throw Error(loadFailure);
-    }catch(e){
-      const code=String(e?.message||'PROGRESS_UI_FAILED').slice(0,50);
-      loadFailure=code;
-      try{view?.dispose();}catch(__){}
-      view=null;
-      // An invisible UI must never look like a frozen sync.
-      // Keep this error local; the main school/calendar operation still runs.
-      if(interactive)try{
-        await HostDialog.alert({
-          title:'无法显示刷新进度',
-          message:'进度页加载异常（'+code+'）。课程仍可继续同步；若持续发生，请反馈此错误代码。'
-        });
-      }catch(__){}
+      if(typeof hostAPI('Navigation')?.present!=='function')return;
+      ui=createNativeProgressView();
+      ui.show();
+      // Yield to iOS once before network work; never block on modal dismissal.
+      await new Promise(resolve=>Timer.schedule(100,false,resolve));
+    }catch(_){
+      // A progress display failure must never turn a valid calendar sync into
+      // a failure or trigger a second, overlapping progress window.
+      ui=null;
     }
   };
   stage.finish=()=>{
     if(closed)return;
-    closed=true;generation++;visible=false;
-    try{view?.dismiss();}catch(_){}
-    try{view?.dispose();}catch(_){}
-    view=null;
+    closed=true;
+    try{ui?.finish();}catch(_){}
+    ui=null;
   };
   return stage;
 }
