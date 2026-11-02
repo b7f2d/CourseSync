@@ -362,49 +362,45 @@ test('second background invocation does not start while a previous lock is held'
  a.equal(e.store.read().failures,0);
 });
 test('manual school login saves to Keychain only after verified success',async()=>{
- const e=await env();let handler=null,tableVisits=0;
- e.sandbox.__sdk.WebViewController=class{
-   async addScriptMessageHandler(_name,cb){handler=cb;}
-   async loadHTML(){return true;}
-   async present(){await handler({username:'verified-student',password:'verified-password'});}
-   dismiss(){}dispose(){}
- };
- const html='var personId=100;var currentSemester={"id":161};';
- const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
-   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table'){
-     return {url,text:++tableVisits===1?'<html>login required</html>':html};
-   }
-   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {
-     url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
-   };
-   if(opt.body)return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:html};
-   return {url,text:''};
- },authJSON:async()=>({isNeed:false})};
- const page=await e.m.coursePage(http,true);
- a.match(page,/personId=100/);
- const saved=e.m.readSavedCredentials();
- a.equal(saved.username,'verified-student');a.equal(saved.password,'verified-password');
- a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
- a.ok(![...e.files.values()].some(v=>String(v).includes('verified-password')));
+  const e=await env({hostEnv:'index'});let tableVisits=0;
+  e.sandbox.__sdk.Navigation={present:()=>true};
+  e.sandbox.__nativeCredentialMock=async()=>({
+    username:'verified-student',password:'verified-password'
+  });
+  const html='var personId=100;var currentSemester={"id":161};';
+  const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+    if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table'){
+      return {url,text:++tableVisits===1?'<html>login required</html>':html};
+    }
+    if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {
+      url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
+    };
+    if(opt.body)return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:html};
+    return {url,text:''};
+  },authJSON:async()=>({isNeed:false})};
+  const page=await e.m.coursePage(http,true);
+  a.match(page,/personId=100/);
+  const saved=e.m.readSavedCredentials();
+  a.equal(saved.username,'verified-student');a.equal(saved.password,'verified-password');
+  a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
+  a.ok(![...e.files.values()].some(v=>String(v).includes('verified-password')));
 });
+
 test('failed school authentication never saves a password',async()=>{
- const e=await env();let handler;
- e.sandbox.__sdk.WebViewController=class{
-   async addScriptMessageHandler(_name,fn){handler=fn;}
-   async loadHTML(){return true;}
-   async present(){await handler({username:'student',password:'invalid-password'});}
-   dismiss(){}dispose(){}
- };
- let visits=0;
- const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
-   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table')return {url,text:'not authenticated'};
-   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
-   if(opt.body){visits++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'invalid'};}
-   return {url,text:''};
- },authJSON:async()=>({isNeed:false})};
- await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
- a.equal(visits,1);
- a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+  const e=await env({hostEnv:'index'});let visits=0;
+  e.sandbox.__sdk.Navigation={present:()=>true};
+  e.sandbox.__nativeCredentialMock=async()=>({
+    username:'student',password:'invalid-password'
+  });
+  const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+    if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table')return {url,text:'not authenticated'};
+    if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
+    if(opt.body){visits++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'invalid'};}
+    return {url,text:''};
+  },authJSON:async()=>({isNeed:false})};
+  await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
+  a.equal(visits,1);
+  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 test('one SMS challenge requires only its code and selects the schools trusted-device option',async()=>{
  const e=await env();let prompts=0,codePosts=0,submitBodies=[];
