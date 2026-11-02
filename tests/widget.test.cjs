@@ -221,7 +221,7 @@ test('rolling view only greys classes after end time and changes at exact bounda
 test('widget UI uses four rolling columns with legible multi-line names and classroom',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
- a.match(ui,/model\.days\.map\(day/);
+ a.match(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)\.map\(day/);
  a.match(ui,/lineLimit=\{compact\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
