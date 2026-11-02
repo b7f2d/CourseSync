@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm } from './login-native';
+import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
 async function __NUFE_REPORT_STARTUP(error){
@@ -492,7 +492,33 @@ class HTTP {
   async json(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});if(safeURL(r.url).host==='authserver.nufe.edu.cn'||safeURL(r.url).path==='/student/login')fail('AUTH_REQUIRED');try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
   async authJSON(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
 }
-async function input(title,label,secure=false) {const a=new Alert();a.title=title;if(secure)a.addSecureTextField(label);else a.addTextField(label);a.addAction('继续');a.addCancelAction('取消');if(await a.presentAlert()<0)fail('CANCELLED');return a.textFieldValue(0);}
+async function legacyInput(title,label,secure=false) {
+  const a=new Alert();a.title=title;
+  if(secure)a.addSecureTextField(label);else a.addTextField(label);
+  a.addAction('继续');a.addCancelAction('取消');
+  if(await a.presentAlert()<0)fail('CANCELLED');
+  return a.textFieldValue(0);
+}
+async function input(title,label,secure=false,options={}) {
+  if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+    try {
+      const code=await presentNativeTextForm({
+        title,label,kind:secure?'secure':options.kind||'text',image:options.image||null
+      });
+      if(code===null)fail('CANCELLED');
+      return code;
+    }catch(e){
+      if(e?.code==='CANCELLED')throw e;
+      const recover=await HostDialog.confirm({
+        title:'原生输入窗口不可用',
+        message:'无法打开原生输入窗口。是否改用系统输入框继续？',
+        cancelLabel:'取消',confirmLabel:'使用系统输入框'
+      });
+      if(!recover)fail('CANCELLED');
+    }
+  }
+  return await legacyInput(title,label,secure);
+}
 async function confirm(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('确认');a.addCancelAction('取消');return await a.presentAlert()===0;}
 async function notice(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('好');await a.presentAlert();}
 // Read known login-form inputs as inert text; no WebView, no embedded page scripts.
@@ -532,8 +558,8 @@ async function fieldsFrom(html,id) {
 // the DOM after closing the sheet can hang because WebKit suspends detached views.
 // A legacy native prompt fallback keeps login usable if the WebView cannot load.
 async function fallbackCredentialForm({title='NUFE 登录'}={}){
-  const username=(await input(title,'NUFE 学号')).trim();
-  const password=await input(title,'NUFE 密码（安全输入）',true);
+  const username=(await legacyInput(title,'NUFE 学号')).trim();
+  const password=await legacyInput(title,'NUFE 密码（安全输入）',true);
   if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
   return {username,password};
 }
@@ -653,7 +679,8 @@ async function mfa(http,r) {
   if(type==='3') {
     const j=await http.authJSON(endpoint('getDynamicCodeByReauth.do',AUTH+'/dynamicCode/getDynamicCodeByReauth.do'),{body:form({userName:reauthValue(r.text,'reAuthUserId'),authCodeTypeName:'reAuthDynamicCodeType'})});assert(['success','other_success'].includes(j.res),'MFA_SEND');
   }
-  const code=await input('学校二次认证',type==='3'?'短信验证码':'身份验证器动态口令');
+  const code=await input('学校二次认证',type==='3'?'短信验证码':'身份验证器动态口令',
+    false,{kind:type==='3'?'sms':'totp'});
   const data={service,reAuthType:type,isMultifactor:reauthValue(r.text,'isMultifactor')||'true',password:'',dynamicCode:type==='3'?code:'',uuid:'',answer1:'',answer2:'',otpCode:type==='10'?code:''};
   // Use the school's existing trusted-device flag when offered. Only the
   // school determines its lifetime; the script does not guarantee 180 days.
@@ -676,7 +703,28 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     let captcha='';if(need.isNeed||/\b_badCredentialsCount\s*=\s*["']?0\b/.test(r.text)) {
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
       if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){onStage('等待图形验证');await humanSlider(http);}
-      else {onStage('等待图形验证');const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');await QuickLook.present(Image.fromData(image.text));captcha=await input('图形验证码','输入刚才图片中的字符');}
+      else {
+        onStage('等待图形验证');
+        const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});
+        assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');
+        // Keep the school image in memory. Show it together with the input
+        // in one native sheet when the Scripting UIImage API can decode it.
+        const UI=hostAPI('UIImage');
+        let rendered=null;
+        if(interactive&&config.runsInApp&&typeof UI?.fromData==='function'){
+          try{rendered=UI.fromData(image.text);}catch(_){}
+        }
+        if(rendered){
+          captcha=await input('图形验证码','输入图片中的字符',false,
+            {kind:'captcha',image:rendered});
+        }else{
+          // Older host versions still have the native image preview and
+          // native text input fallback; never silently omit the challenge.
+          await QuickLook.present(Image.fromData(image.text));
+          captcha=await input('图形验证码','输入刚才图片中的字符',false,
+            {kind:'captcha'});
+        }
+      }
     }
     onStage(interactive?'本机加密登录密码（原生安全随机数）':'使用 Keychain 凭据进行本机密码加密');
     const encrypted=await encryptPassword(password,fields.salt);password='';
