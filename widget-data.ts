@@ -235,7 +235,7 @@ export function buildHistoricalPreview(state,now=Date.now()){
   const at=now instanceof Date?now.getTime():Number(now);
   if(!Number.isFinite(at))throw Error('WIDGET_TIME');
   const src=state?.preview;
-  if(!src||src.term!==WIDGET_PREVIEW_TERM||!Array.isArray(src.events))return null;
+  if(!src||src.term!=='2024-2025-2'||!Array.isArray(src.events))return null;
   const valid=[];
   for(const e of src.events){
     if(!e||typeof e.start!=='string'||typeof e.end!=='string')continue;
