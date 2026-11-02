@@ -245,46 +245,21 @@ test('missing official semester dates fails closed without importing or guessing
  a.equal(e.state.anchors['140'],undefined);
 });
 
-test('foreground management exposes locked-state recovery without waiting for acquire',async()=>{
- const e=await env({hostEnv:'index'});
- e.store.write(e.state);
+test('settings menu contains only credentials and the calendar, with no advanced actions',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
  e.keys.set('NUFE.Local.v1.cookies','[]');
- const lockPath=e.store.path('run-lock.json');
- const lockBefore=e.files.get(lockPath);
- const actions=[];
- let presented=0,confirmations=0;
- e.sandbox.Alert=class{
-  constructor(){this.actions=[];}
-  addAction(label){this.actions.push(label);}
-  addCancelAction(){}
-  async presentSheet(){actions.push(this.actions.slice());return [1,2,2][presented++]??-1;}
-  async presentAlert(){return 0;}
+ e.state.calendarId=e.calendar.identifier;
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async options=>{
+   menus.push(options.actions.map(x=>x.label));
+   return menus.length===1?1:null;
  };
- e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;return false;};
  await e.m.run();
- a.ok(actions[1].includes('更多操作'));
- a.ok(actions[2].includes('检查同步锁'));
- a.equal(confirmations,1);
- a.equal(e.files.get(lockPath),lockBefore);
+ a.deepEqual(menus[0],['立即刷新','账号与日历设置','运行状态']);
+ a.deepEqual(menus[1],['自动登录凭据','课表日历']);
  a.equal(e.requests.length,0);
+ a.equal(e.store.read().failures,0);
 });
-test('verified cancellation leaves the original lock untouched',async()=>{
- const e=await env();
- const path=e.store.path('run-lock.json'),before=e.files.get(path);
- e.sandbox.__sdk.Dialog.confirm=async()=>false;
- await e.m.repairSyncLock(e.store);
- a.equal(e.files.get(path),before);
-});
-test('explicit user approval removes only unchanged lock, never the timetable',async()=>{
- const e=await env();const path=e.store.path('run-lock.json');
- e.store.write(e.state);
- e.sandbox.__sdk.Dialog.confirm=async()=>true;
- e.sandbox.__sdk.Dialog.alert=async()=>{};
- await e.m.repairSyncLock(e.store);
- a.equal(e.files.has(path),false);
- a.ok([...e.files.keys()].some(x=>x.endsWith('.json')));
-});
-
 test('project metadata uses stable NUFE-Schedule branding',()=>{
  const project=JSON.parse(fs.readFileSync(__dirname+'/../script.json','utf8'));
  a.equal(project.name,'NUFE-Schedule');
