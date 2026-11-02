@@ -529,15 +529,13 @@ async function fieldsFrom(html,id) {
 // The form sends the result WHILE the WebView is still presented; accessing
 // the DOM after closing the sheet can hang because WebKit suspends detached views.
 // A legacy native prompt fallback keeps login usable if the WebView cannot load.
-async function fallbackCredentialForm({title='NUFE 登录',showRemember=false}={}){
+async function fallbackCredentialForm({title='NUFE 登录'}={}){
   const username=(await input(title,'NUFE 学号')).trim();
   const password=await input(title,'NUFE 密码（安全输入）',true);
   if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
-  const remember=showRemember&&await confirm('保存自动登录凭据？',
-    '将学号和密码保存到 iCloud 钥匙串，供 Cookie 失效时自动登录。');
-  return {username,password,remember};
+  return {username,password};
 }
-async function credentialForm({title='NUFE 登录',showRemember=false}={}){
+async function credentialForm({title='NUFE 登录'}={}){
   let w=null;
   try{
     w=new WebView();
@@ -551,7 +549,7 @@ async function credentialForm({title='NUFE 登录',showRemember=false}={}){
       if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
       const username=value.username.trim(),password=value.password;
       if(!username||username.length>100||!password||password.length>512)return false;
-      submitted={username,password,remember:showRemember&&value.remember===true};
+      submitted={username,password};
       // Close only AFTER data crossed to native code. Do not evaluate JS
       // in a view already dismissed / suspended by WebKit.
       try{w.inner.dismiss();}catch(_){}
@@ -564,19 +562,17 @@ async function credentialForm({title='NUFE 登录',showRemember=false}={}){
       '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
       'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
       'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
-      '.choice{display:flex;align-items:center;gap:10px;margin-top:20px;font-size:14px;line-height:1.4}.choice input{width:20px;height:20px;flex:none}',
       'button{display:block;width:100%;background:#1769dd;color:white;font:600 17px -apple-system;padding:13px;border:0;border-radius:12px;margin-top:22px}',
       'button:disabled{opacity:.55}.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:14px}</style></head><body>',
       '<h2>NUFE 统一身份认证</h2>',
       '<label class="label" for="account">学号</label><input id="account" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
       '<label class="label" for="secret">密码</label><input id="secret" type="password" maxlength="512" autocomplete="off">',
-      showRemember?'<label class="choice"><input id="remember" type="checkbox">保存到 iCloud 钥匙串（自动登录）</label>':'',
       '<button type="button" id="submit">确认</button>',
-      '<p class="hint" id="hint">点按「确认」提交；关闭页面则取消。</p>',
+      '<p class="hint" id="hint">认证成功后自动保存至 iCloud 钥匙串；关闭页面则取消。</p>',
       '<script>(function(){const button=document.getElementById("submit"),hint=document.getElementById("hint");',
       'button.addEventListener("click",async()=>{const username=document.getElementById("account").value.trim(),password=document.getElementById("secret").value;',
       'if(!username||!password){hint.textContent="请输入学号和密码。";return;}button.disabled=true;',
-      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password,remember:!!document.getElementById("remember")?.checked});',
+      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password});',
       'if(!ok){hint.textContent="请检查输入内容。";button.disabled=false;}}',
       'catch(_){hint.textContent="未能提交登录信息，请重试。";button.disabled=false;}});})();</script></body></html>'
     ].join('');
@@ -589,7 +585,7 @@ async function credentialForm({title='NUFE 登录',showRemember=false}={}){
     // Only technical WebView errors use the two native secure prompts;
     // a user cancellation never triggers fallback.
     if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
-      return await fallbackCredentialForm({title,showRemember});
+      return await fallbackCredentialForm({title});
     }
     throw e;
   }finally{
@@ -620,12 +616,13 @@ async function mfa(http,r) {
   const service=reauthValue(r.text,'service')||SSO;assert(service===SSO,'DOMAIN_BLOCKED');
   function endpoint(suffix, fallback){const m=new RegExp('["\']([^"\']*'+suffix.replace('.','\\.')+')["\']').exec(r.text);let u=m?m[1]:fallback;if(u.startsWith('/')&&!u.startsWith('/authserver/'))u=AUTH+u;else u=resolveURL(r.url,u);assert(safeURL(u).host==='authserver.nufe.edu.cn','DOMAIN_BLOCKED');return u;}
   if(type==='3') {
-    if(!await confirm('短信验证','学校要求短信验证，点击确认向绑定手机发送一次验证码。'))fail('CANCELLED');
     const j=await http.authJSON(endpoint('getDynamicCodeByReauth.do',AUTH+'/dynamicCode/getDynamicCodeByReauth.do'),{body:form({userName:reauthValue(r.text,'reAuthUserId'),authCodeTypeName:'reAuthDynamicCodeType'})});assert(['success','other_success'].includes(j.res),'MFA_SEND');
   }
   const code=await input('学校二次认证',type==='3'?'短信验证码':'身份验证器动态口令');
   const data={service,reAuthType:type,isMultifactor:reauthValue(r.text,'isMultifactor')||'true',password:'',dynamicCode:type==='3'?code:'',uuid:'',answer1:'',answer2:'',otpCode:type==='10'?code:''};
-  if(reauthValue(r.text,'isSleepAccount')==='0')data.skipTmpReAuth=(await confirm('信任这台设备','是否在学校认证系统中信任这台 iPhone？'))?'true':'false';
+  // Use the school's existing trusted-device flag when offered. Only the
+  // school determines its lifetime; the script does not guarantee 180 days.
+  if(reauthValue(r.text,'isSleepAccount')==='0')data.skipTmpReAuth='true';
   const j=await http.authJSON(endpoint('reAuthSubmit.do',AUTH+'/reAuthCheck/reAuthSubmit.do'),{body:form(data)});assert(!['reAuth_failed','reAuth_unauthorized'].includes(j.code),'MFA_FAILED');
   await http.get(AUTH+'/login?'+form({service}));
 }
@@ -680,10 +677,11 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
   onStage('等待输入学校登录信息');
-  const account=await credentialForm({title:'NUFE 登录',showRemember:true});
+  const account=await credentialForm({title:'NUFE 登录'});
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
-  // Save only after school confirms authentication succeeded.
-  if(account.remember)saveCredentials(account.username,account.password);
+  // Save only AFTER the school confirms successful authentication. The
+  // user's configured default is automatic Keychain storage.
+  saveCredentials(account.username,account.password);
   return page;
 }
 // Immutable generation files: a new file is written and read back before old versions
