@@ -222,7 +222,7 @@ test('widget UI uses four rolling columns with legible multi-line names and clas
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
  a.match(ui,/model\.days\.map\(day/);
- a.match(ui,/lineLimit=\{compact\?3:4\}/);
+ a.match(ui,/lineLimit=\{compact\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
@@ -362,19 +362,46 @@ test('widget renders the expanded today pair with a subtle historical-test marke
  a.match(ui,/focus\.hiddenAfter>0/);
  a.match(ui,/\+\{focus\.hiddenAfter\}节课/);
  a.match(ui,/expanded&&day\.today/);
- a.match(ui,/2024-2025-2 测试/);
+ a.match(ui,/preview\?' · 测试':''/);
+ a.match(ui,/preview=\{Boolean\(model\.previewTerm\)\}/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/safeInset=medium\?18:22/);
+ a.match(ui,/safeInset=medium\?8:14/);
  a.match(ui,/padding=\{safeInset\}/);
- a.match(ui,/width-2\*safeInset/);
+ a.match(ui,/width-2\*safeInset-gap\*3-extraGap/);
+ a.doesNotMatch(ui,/width-2\*safeInset-24/);
+ a.match(ui,/lineLimit=\{compact\?2:1\}/);
+ a.match(ui,/lineLimit=\{2\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
  a.match(ui,/doneBg:'#E5E7EB'/);
  a.match(ui,/nextBg:'#EFF4FA'/);
  a.match(ui,/activeBg:'#D9E9FF'/);
  a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
+});
+test('medium layout uses real width without overflow for four or five course slots',()=>{
+ const widgetWidth=[270,300,320,350];
+ const safeInset=8,gap=3;
+ for(const width of widgetWidth){
+   for(const expanded of [false,true]){
+     const slots=expanded?5:4;
+     const extraGap=expanded?gap:0;
+     const colWidth=Math.max(24,Math.floor((width-2*safeInset-gap*3-extraGap)/slots));
+     const todayWidth=expanded?colWidth*2+extraGap:colWidth;
+     const occupied=2*safeInset+colWidth*(expanded?3:4)+
+       (expanded?todayWidth:0)+gap*3;
+     a.ok(occupied<=width,'columns must fit measured content area');
+     if(expanded&&width===300)a.ok(colWidth>=54,'course cards reclaim the old unused space');
+   }
+ }
+});
+test('medium details wrap within their cards rather than truncating at one line',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/course\.startLabel\+'\\n'\+course\.endLabel/);
+ a.match(ui,/fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ a.match(ui,/padding=\{compact\?4:7\}/);
+ a.match(ui,/padding=\{\{top:1,bottom:3\}\}/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});
