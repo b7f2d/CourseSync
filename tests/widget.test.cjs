@@ -429,8 +429,9 @@ test('course card retains comfortable internal padding independent of widget out
 });
 test('all widget families retain an opaque white background',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.equal((ui.match(/widgetBackground=\\{\\{light:'#FFFFFF',dark:'#FFFFFF'\\}\\}/g)||[]).length,3);
- a.doesNotMatch(ui,/Widget\\.isTransparentMode|Widget\\.isBlurMode|Widget\\.isTransparentBackground|OPAQUE_CANVAS/);
+ const literal="widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}";
+ a.equal(ui.split(literal).length-1,3);
+ a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
 });
 test('all day card widths are explicit and centered within four equal slots',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
