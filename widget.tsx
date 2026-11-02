@@ -20,7 +20,6 @@ function CourseCard({course,compact=false}){
       padding={compact?5:7}
       background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
       frame={{maxWidth:'infinity',alignment:'topLeading'}}>
-    {current?<Text font={9} fontWeight="bold" foregroundStyle={COLORS.blue}>● 上课中</Text>:null}
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
       lineLimit={compact?3:4} foregroundStyle={fg}>{course.title}</Text>
     <Text font={compact?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
@@ -72,16 +71,8 @@ function RollingPanel({model,family}){
         padding={safeInset}
         widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-        <HStack alignment="center" spacing={5}
-          frame={{maxWidth:'infinity',alignment:'leading'}}>
-          <Text font={medium?13:15} fontWeight="bold" foregroundStyle={COLORS.dark}>
-            近日课表
-          </Text>
-          <Spacer/>
-          <Text font={10} foregroundStyle={COLORS.faint}>
-            自动更新
-          </Text>
-        </HStack>
+        <Text font={medium?13:15} fontWeight="bold"
+          foregroundStyle={COLORS.dark}>近日课表</Text>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
           {model.days.map(day=><DayColumn key={String(day.index)} day={day}
@@ -104,15 +95,12 @@ function SmallPanel({model}){
     <Text font={14} fontWeight="bold" foregroundStyle={COLORS.dark}>
       今日课程
     </Text>
-    <Text font={11} foregroundStyle={COLORS.faint}>{today?'周'+('一二三四五六日'[today.index]):'周末'} · {classes.length} 节课</Text>
     <Spacer minLength={0}/>
     {chosen?<VStack alignment="leading" spacing={5}
-      background={{style:chosen.status==='current'?COLORS.activeBg:COLORS.nextBg,
+      background={{style:chosen.status==='done'?COLORS.doneBg:
+        chosen.status==='current'?COLORS.activeBg:COLORS.nextBg,
         shape:{type:'rect',cornerRadius:10}}}
       padding={9}>
-      <Text font={10} foregroundStyle={chosen.status==='done'?COLORS.muted:COLORS.blue}>
-        {chosen.status==='current'?'正在上课':chosen.status==='done'?'今日已结束':'下一节'}
-      </Text>
       <Text font={13} fontWeight="semibold" lineLimit={2}
         foregroundStyle={chosen.status==='done'?COLORS.muted:COLORS.dark}>{chosen.title}</Text>
       <Text font={10} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
