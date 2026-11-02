@@ -8,13 +8,13 @@ const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
   dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
   faint:'#727E91', finished:'#929AA7',
-  doneBg:'#E5E7EB', nextBg:'#EFF4FA',
-  activeBg:'#D9E9FF'
+  doneBg:'#E5E7EB', nextBg:'#EBF4FF',
+  activeBg:'#238BFF'
 };
 
 function CourseCard({course,compact=false,width}){
   const done=course.status==='done',current=course.status==='current';
-  const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
+  const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
       padding={compact?6:8}
@@ -22,7 +22,7 @@ function CourseCard({course,compact=false,width}){
       frame={width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'}}>
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
       lineLimit={compact?4:5} foregroundStyle={fg}>{course.title}</Text>
-    <Text font={compact?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
+    <Text font={compact?8:9} foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
       lineLimit={2}>{course.startLabel}–{course.endLabel}</Text>
     {course.location?<Text font={compact?8:9}
       foregroundStyle={done?COLORS.muted:COLORS.faint}
