@@ -818,27 +818,53 @@ test('environment inspection only reads existing local state and never mutates d
  a.equal(e.db.length,oldEvents);
  a.equal(e.requests.length,0);
 });
-test('successful past authentication is shown as historical success, not unexplained question mark',async()=>{
- const e=await env();
- e.state.lastCheck='2026-11-02T10:00:00.000Z';e.state.runStatus='success';
- let checks=await e.m.inspectEnvironment(e.state,e.store);
- let auth=checks.find(x=>x.name==='最近认证');
- a.equal(auth.level,'正常');
- a.match(auth.detail,/上次成功同步时认证正常/);
- a.match(auth.detail,/未检查当前会话/);
- a.doesNotMatch(e.m.environmentCheckText(checks,e.state),/\? 最近认证/);
- e.state.authPaused=true;
- checks=await e.m.inspectEnvironment(e.state,e.store);
- auth=checks.find(x=>x.name==='最近认证');
- a.equal(auth.level,'注意');
- a.match(auth.detail,/前台重新认证/);
-});
-test('a missing authentication history stays unverified, not falsely successful',async()=>{
- const e=await env();
+test('live school session probe verifies authentication using existing cookies',async()=>{
+ const e=await env(),seen=[];
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'local-test-cookie',domain:'jwxt.nufe.edu.cn',hostOnly:true,path:'/',expires:0}]));
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push({url,options});
+   return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',
+     text:async()=>'<html>var personId=100;var currentSemester={"id":161};</html>'};
+ };
  const checks=await e.m.inspectEnvironment(e.state,e.store);
- const auth=checks.find(x=>x.name==='最近认证');
- a.equal(auth.level,'待确认');
- a.match(auth.detail,/尚无成功同步记录/);
+ const auth=checks.find(x=>x.name==='登录会话');
+ a.equal(auth.level,'正常');a.match(auth.detail,/刚刚使用本机 Cookie 验证成功/);
+ a.equal(seen.length,1);a.ok(seen[0].options.headers.Cookie.includes('SESSION=local-test-cookie'));
+ a.equal(seen[0].options.method,'GET');a.equal(seen[0].options.body,undefined);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
+ a.equal(e.state.runStatus,undefined);
+});
+test('login-required redirect is classified as expired instead of successful',async()=>{
+ const e=await env();
+ e.sandbox.fetchImpl=async(url,options)=>{
+   if(options.handleRedirect)await options.handleRedirect({url:'https://authserver.nufe.edu.cn/authserver/login'});
+   throw Error('redirect intercepted');
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'注意');
+ a.match(checks.find(x=>x.name==='登录会话').detail,/重新认证/);
+});
+test('unclassifiable page remains unverified even with HTTP 200',async()=>{
+ const e=await env();
+ e.sandbox.fetchImpl=async()=>({status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>hello</html>'});
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'待确认');
+ a.equal(checks.find(x=>x.name==='学校连接').level,'正常');
+});
+test('authentication probe never submits a stored password or follows untrusted URLs',async()=>{
+ const e=await env();
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials',JSON.stringify({version:1,username:'student',password:'SECRET'}));
+ const seen=[];
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push({url,options});
+   if(options.handleRedirect)await options.handleRedirect({url:'https://external.invalid/login'});
+   throw Error('redirect intercepted');
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'待确认');
+ a.equal(seen.length,1);
+ a.ok(!JSON.stringify(seen[0]).includes('SECRET'));
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),true);
 });
 test('self-check distinguishes an inaccessible original calendar from a healthy one',async()=>{
  const e=await env();
