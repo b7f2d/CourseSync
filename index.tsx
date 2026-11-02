@@ -1667,13 +1667,17 @@ async function inspectEnvironment(state,store){
   }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
 
   let jar=null;
-  try{
+  if(state.signedOut){
+    jar=new CookieJar();
+    put('Cookie 存储','正常','已退出登录；自检不读取或发送先前的学校会话 Cookie');
+  }else try{
     jar=readCookieJar();
     put('Cookie 存储','正常','本次读取及格式检查通过');
   }catch(_){put('Cookie 存储','注意','本机 Cookie 异常，未清理；无法携带原会话验证');}
   const session=await probeSchoolSession(jar);
   put('学校连接',session.connection.level,session.connection.detail);
-  if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
+  if(state.signedOut)put('登录会话',state.lastError==='LOGOUT_INCOMPLETE'?'注意':'正常',state.lastError==='LOGOUT_INCOMPLETE'?'退出凭据清除未完成，但本次没有发送原会话 Cookie':'已退出，本次没有发送原会话 Cookie');
+  else if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
   else if(state.authPaused&&session.auth.level==='正常')
     put('登录会话','注意','当前会话验证通过，但此前登录暂停记录尚未解除；请手动刷新确认');
   else put('登录会话',session.auth.level,session.auth.detail);
@@ -2120,6 +2124,12 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   }
   return 'still-running';
 }
+function canOfferSignOut(state){
+  if(!state.signedOut||state.lastError==='LOGOUT_INCOMPLETE')return true;
+  // After a crash between the logout marker and Keychain deletion, keep a
+  // visible retry path. An iCloud sync reappearance must not be hidden.
+  try{return Keychain.contains(KEY)||hasSavedCredentials();}catch(_){return true;}
+}
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();
@@ -2138,7 +2148,7 @@ async function run() {
       const menu=new Alert();menu.title='NUFE 课表';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
-      if(!state.signedOut||state.lastError==='LOGOUT_INCOMPLETE')menu.addDestructiveAction('退出登录');
+      if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
