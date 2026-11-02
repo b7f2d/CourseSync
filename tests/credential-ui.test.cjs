@@ -83,3 +83,15 @@ test('progress overlay keeps one stable label until auth completes and prevents 
  assert.match(whole,/if\(label===lastPainted\)break/);
  assert.doesNotMatch(whole,/latest=safeProgressLabel\(message\)/);
 });
+
+test('native progress uses no WebView, percent, network or stage animations',()=>{
+ const native=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
+ assert.match(native,/ProgressView progressViewStyle="circular"/);
+ assert.match(native,/Navigation\.present\(\{/);
+ assert.match(native,/session\.suppressed=true/);
+ assert.match(native,/session\.revision\+\+/);
+ assert.match(native,/pause\(\)/);
+ assert.match(native,/resume\(\)/);
+ assert.match(native,/finish\(\)/);
+ assert.doesNotMatch(native,/WebView|loadHTML|evaluateJavaScript|fetch\(|Clipboard|password|Cookie|setInterval/);
+});
