@@ -304,7 +304,8 @@ test('preview uses actual courses from a rich 2025-2026-2 teaching week, aligned
  a.equal(m.days[3].courses[0].title,'春季周三课程');
  a.equal(m.courses.some(c=>c.title==='其他教学周周一'),false);
  const focus=core.selectVisibleCourses(m.days[1],1);
- a.equal(focus.courses[0].title,'春季周一第二节');
+ a.equal(focus.courses[0].title,'春季周一第一节');
+ a.equal(focus.hiddenAfter,1);
  a.equal(m.nextAt,date('2026-11-02T07:00:00Z'));
 });
 
