@@ -1388,18 +1388,21 @@ function safeProgressLabel(message){
 }
 function createProgress(state,store,interactive){
   let view=null,closed=false,paused=false,visible=false,generation=0;
-  let latest='正在准备刷新',started=false,painting=false,pending=false;
-  let loadFailure=null;
+  let latest='正在刷新课表',started=false,painting=false,pending=false;
+  let loadFailure=null,dismissedByUser=false,awaitingVerification=false,lastPainted=null;
   function show(){
-    if(!view||closed||paused||visible)return;
-    visible=true;const id=++generation;
+    // A single presentation stays alive for the whole noninteractive phase.
+    // User-dismissed progress must never reappear on the next stage update.
+    if(!view||closed||paused||visible||dismissedByUser)return;
+    visible=true;lastPainted=null;const id=++generation;
     try{Promise.resolve(view.present({fullscreen:false,navigationTitle:'正在刷新课表'}))
-      .then(()=>{if(generation===id)visible=false;})
-      .catch(()=>{if(generation===id){visible=false;loadFailure='PROGRESS_PRESENT';}});}
-    catch(_){visible=false;loadFailure='PROGRESS_PRESENT';}
+      .then(()=>{if(generation===id){visible=false;dismissedByUser=true;}})
+      .catch(()=>{if(generation===id){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}});}
+    catch(_){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}
   }
   function hide(){
-    paused=true;generation++;visible=false;
+    if(paused)return;
+    paused=true;generation++;visible=false;lastPainted=null;
     try{view?.dismiss();}catch(_){}
   }
   async function paint(){
@@ -1411,7 +1414,9 @@ function createProgress(state,store,interactive){
         pending=false;
         // Never queue hundreds of JS bridge calls during HTTP/event updates.
         const label=latest;
+        if(label===lastPainted)break;
         await view.evaluateJavaScript('return window.updateStage('+JSON.stringify(label)+')');
+        lastPainted=label;
       }while(pending&&view&&!closed&&!paused);
     }catch(_){loadFailure='PROGRESS_STAGE';}
     finally{painting=false;}
@@ -1419,13 +1424,22 @@ function createProgress(state,store,interactive){
   const stage=message=>{
     stampStage(state,store,message);
     if(!interactive||closed)return;
-    latest=safeProgressLabel(message);
-    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(String(message))){
-      hide();return;
+    const name=String(message);
+    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(name)){
+      awaitingVerification=true;hide();return;
     }
-    paused=false;
+    // The login/MFA pipeline has many intermediate HTTP stages. Do not reopen
+    // the progress page between native credential, SMS and CAPTCHA sheets.
+    // Resume once after authentication or when calendar work actually begins.
+    if(awaitingVerification){
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(name))return;
+      awaitingVerification=false;paused=false;
+    }
+    // Keep one stable visible label while detailed steps remain in local logs.
+    // This avoids a flashing title every time a semester changes phase.
+    latest='正在刷新课表';
     if(started)show();
-    paint();
+    if(visible)void paint();
   };
   stage.start=async()=>{
     if(!interactive||closed||started)return;
@@ -1447,8 +1461,8 @@ function createProgress(state,store,interactive){
         '.spinner{width:34px;height:34px;border:3px solid #8a8a8a44;border-top-color:#2476e3;border-radius:50%;margin:auto;animation:spin .85s linear infinite}',
         '@keyframes spin{to{transform:rotate(360deg)}}small{display:block;margin-top:14px;color:GrayText}</style></head>',
         '<body><div class="wrap"><div class="spinner" role="progressbar" aria-label="刷新中"></div>',
-        '<h1>正在刷新课表</h1><p id="stage">正在准备刷新</p>',
-        '<small>课程较多时需要一些时间</small></div>',
+        '<h1>正在同步</h1><p id="stage">正在刷新课表</p>',
+        '<small>完成后会显示结果</small></div>',
         '<script>window.updateStage=function(s){document.getElementById("stage").textContent=String(s).slice(0,80);return true;};</script>',
         '</body></html>'
       ].join('');
