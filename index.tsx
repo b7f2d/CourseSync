@@ -584,23 +584,52 @@ async function credentialForm({title='NUFE 登录'}={}){
   if(!consent)fail('CANCELLED');
   return await fallbackCredentialForm({title});
 }
+function validSliderResult(value) {
+  if(!value||value.canvasLength!==280||!Number.isFinite(value.moveLength)||
+     value.moveLength<=0||value.moveLength>240)return false;
+  const tracks=value.tracks;
+  return Array.isArray(tracks)&&tracks.length>=2&&tracks.length<=1000&&
+    tracks.every(t=>t&&['a','b','c'].every(k=>Number.isFinite(t[k]))&&
+      t.a>=0&&t.a<=240&&Math.abs(t.b)<=800&&t.c>=0&&t.c<=600000);
+}
 async function humanSlider(http) {
   await http.get(AUTH+'/common/toSliderCaptcha.htl',{ajax:true});
   const j=await http.authJSON(AUTH+'/common/openSliderCaptcha.htl?_='+Date.now());
   assert(typeof j.bigImage==='string'&&typeof j.smallImage==='string'&&j.bigImage.length<700000&&j.smallImage.length<700000,'CAPTCHA');
   const small=Array.from(Data.fromBase64String(j.smallImage).getBytes());const key=String.fromCharCode(...small.slice(-16));assert(/^[A-Za-z0-9]{16}$/.test(key),'CAPTCHA');
   const imageType=s=>s.startsWith('iVBOR')?'image/png':s.startsWith('/9j/')?'image/jpeg':fail('CAPTCHA');
-  const w=new WebView();w.shouldAllowRequest=r=>/^(?:about:blank|data:image\/(?:png|jpeg);base64,)/.test(String(r.url||''));
-  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动滑块，松开后点击右上角完成。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><p id="status"></p><script>
+  const w=new WebView();
+  let submitted=null;
+  try {
+    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
+    await bounded(w.inner.addScriptMessageHandler('nufeSlider',payload=>{
+      // Local drag data is untrusted: reject malformed or oversized trajectories
+      // instead of encrypting arbitrary WebKit messages for the school server.
+      if(submitted||!validSliderResult(payload))return false;
+      submitted=payload;
+      try{w.inner.dismiss();}catch(_){}
+      return true;
+    }),12000,'WEBVIEW_TIMEOUT');
+  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动滑块，松开后点击右上角完成。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><script>
   const bg=document.getElementById('bg'),piece=document.getElementById('piece'),knob=document.getElementById('knob');
   bg.onload=piece.onload=()=>{piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
   bg.src=${JSON.stringify('data:'+imageType(j.bigImage)+';base64,'+j.bigImage)};piece.src=${JSON.stringify('data:'+imageType(j.smallImage)+';base64,'+j.smallImage)};
   let active=false,x=0,y=0,lastAt=0,last=null,tracks=[];window.result=null;
   knob.onpointerdown=e=>{e.preventDefault();knob.setPointerCapture(e.pointerId);active=true;x=e.clientX;y=e.clientY;lastAt=Date.now();last=null;tracks=[{a:0,b:0,c:0}];window.result=null;};
   knob.onpointermove=e=>{if(!active)return;const dx=e.clientX-x,dy=e.clientY-y;if(dx<0||dx+40>280)return;knob.style.left=Math.max(0,dx-1)+'px';piece.style.left=dx+'px';const now=Date.now(),dt=now-lastAt;if(dt<20)return;const p={a:dx,b:dy,c:dt};if(last&&Math.hypot(p.a-last.a,p.b-last.b)<2)return;tracks.push(p);last=p;lastAt=now;};
-  knob.onpointerup=e=>{if(!active)return;active=false;const dx=e.clientX-x;if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击完成提交。';};knob.onpointercancel=()=>{active=false;window.result=null;};</script>`;
-  await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');await w.present();const result=await bounded(w.evaluateJavaScript('window.result'),12000,'WEBVIEW_TIMEOUT');assert(result&&result.tracks,'CANCELLED');
-  const sign=await encryptPassword(JSON.stringify(result),key);const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});assert(answer.errorCode===1,'CAPTCHA');
+  knob.onpointerup=e=>{if(!active)return;active=false;const dx=e.clientX-x;if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击提交验证。';document.getElementById('submit').disabled=false;};knob.onpointercancel=()=>{active=false;window.result=null;document.getElementById('submit').disabled=true;};document.getElementById('submit').onclick=async()=>{if(!window.result)return;const button=document.getElementById('submit');button.disabled=true;try{const ok=await window.webkit.messageHandlers.nufeSlider.postMessage(window.result);if(!ok){button.disabled=false;document.getElementById('status').textContent='滑动数据无效，请重新拖动。';}}catch(_){button.disabled=false;}};</script>`;
+    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
+    await w.present();
+    if(!submitted)fail('CANCELLED');
+    const sign=await encryptPassword(JSON.stringify(submitted),key);
+    const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});
+    assert(answer.errorCode===1,'CAPTCHA');
+  }finally{
+    // WebKit may suspend JS immediately after dismissal. Never evaluate
+    // JavaScript after present(), and always release the ephemeral controller.
+    try{w.inner.dispose();}catch(_){}
+    __webviews.delete(w.inner);
+  }
 }
 function reauthValue(html,key) {const m=new RegExp('"'+key+'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(html);return m?JSON.parse('"'+m[1]+'"'):'';}
 async function mfa(http,r) {
@@ -2225,7 +2254,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,safeProgressLabel,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,safeProgressLabel,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
 else await run();
 
 /*
