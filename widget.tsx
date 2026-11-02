@@ -5,8 +5,11 @@ import { FileManager, Widget, Text, VStack, HStack, Spacer, Script } from 'scrip
 import { loadWidgetState, buildWeek, widgetReloadDate, formatWeekLabel } from './widget-data';
 
 const COLORS={
-  dark:'#203451',blue:'#2C69D1',muted:'#9BA3AF',
-  faint:'#727E91',finished:'#A3A9B2',
+  dark:{light:'#203451',dark:'#EAF2FF'},
+  blue:{light:'#2C69D1',dark:'#96C1FF'},
+  muted:{light:'#9BA3AF',dark:'#8E99AA'},
+  faint:{light:'#727E91',dark:'#A4B2C5'},
+  finished:{light:'#A3A9B2',dark:'#8C96A4'},
   doneBg:{light:'#EEF0F3',dark:'#2B3039'},
   nextBg:{light:'#FFFFFF',dark:'#263348'},
   activeBg:{light:'#DDEBFF',dark:'#28466E'},
