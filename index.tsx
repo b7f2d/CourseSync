@@ -1249,24 +1249,33 @@ function safeProgressLabel(message){
 }
 function createProgress(state,store,interactive){
   let view=null,closed=false,paused=false,visible=false,generation=0;
-  let latest='正在准备刷新',started=false;
+  let latest='正在准备刷新',started=false,painting=false,pending=false;
+  let loadFailure=null;
   function show(){
     if(!view||closed||paused||visible)return;
     visible=true;const id=++generation;
-    try{Promise.resolve(view.present({navigationTitle:'正在刷新课表'}))
+    try{Promise.resolve(view.present({fullscreen:false,navigationTitle:'正在刷新课表'}))
       .then(()=>{if(generation===id)visible=false;})
-      .catch(()=>{if(generation===id)visible=false;});}
-    catch(_){visible=false;}
+      .catch(()=>{if(generation===id){visible=false;loadFailure='PROGRESS_PRESENT';}});}
+    catch(_){visible=false;loadFailure='PROGRESS_PRESENT';}
   }
   function hide(){
     paused=true;generation++;visible=false;
     try{view?.dismiss();}catch(_){}
   }
-  function paint(){
+  async function paint(){
     if(!view||closed||paused)return;
-    try{Promise.resolve(view.evaluateJavaScript(
-      'return window.updateStage('+JSON.stringify(latest)+')'))
-      .catch(()=>{});}catch(_){}
+    if(painting){pending=true;return;}
+    painting=true;
+    try{
+      do{
+        pending=false;
+        // Never queue hundreds of JS bridge calls during HTTP/event updates.
+        const label=latest;
+        await view.evaluateJavaScript('return window.updateStage('+JSON.stringify(label)+')');
+      }while(pending&&view&&!closed&&!paused);
+    }catch(_){loadFailure='PROGRESS_STAGE';}
+    finally{painting=false;}
   }
   const stage=message=>{
     stampStage(state,store,message);
@@ -1286,7 +1295,9 @@ function createProgress(state,store,interactive){
     if(typeof Controller!=='function')return;
     try{
       view=new Controller({ephemeral:true});
-      view.shouldAllowRequest=async r=>String(r?.url||'')==='about:blank';
+      // This HTML is self-contained and CSP blocks ALL outgoing requests.
+      // Do not install a navigation blocker: WebKit internally navigates
+      // through non-about:blank URLs when loading raw HTML on some versions.
       const html=[
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
@@ -1302,12 +1313,25 @@ function createProgress(state,store,interactive){
         '<script>window.updateStage=function(s){document.getElementById("stage").textContent=String(s).slice(0,80);return true;};</script>',
         '</body></html>'
       ].join('');
-      if(!await view.loadHTML(html))throw Error('PROGRESS_LOAD');
+      if(await view.loadHTML(html)===false)throw Error('PROGRESS_LOAD');
       if(closed){view.dispose();view=null;return;}
-      show();paint();
-    }catch(_){
+      show();void paint();
+      // Yield to the Scripting UI loop before the first network request.
+      await new Promise(resolve=>Timer.schedule(120,false,resolve));
+      if(loadFailure)throw Error(loadFailure);
+    }catch(e){
+      const code=String(e?.message||'PROGRESS_UI_FAILED').slice(0,50);
+      loadFailure=code;
       try{view?.dispose();}catch(__){}
-      view=null; // Progress UI must never prevent a calendar refresh.
+      view=null;
+      // An invisible UI must never look like a frozen sync.
+      // Keep this error local; the main school/calendar operation still runs.
+      if(interactive)try{
+        await HostDialog.alert({
+          title:'无法显示刷新进度',
+          message:'进度页加载异常（'+code+'）。课程仍可继续同步；若持续发生，请反馈此错误代码。'
+        });
+      }catch(__){}
     }
   };
   stage.finish=()=>{
