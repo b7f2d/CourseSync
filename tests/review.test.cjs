@@ -64,6 +64,20 @@ test('native foreground progress shows once, pauses for verification and resumes
  a.equal(e.state.stageHistory.at(-1).stage,'写入学期 162 的日历事件');
 });
 
+test('progress stage returns a dismissal promise before opening native challenges',async()=>{
+ const e=await env({hostEnv:'index'});let done;
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show(){},pause(){return new Promise(resolve=>{done=resolve;});},
+   resume(){},finish(){}
+ });
+ const p=e.m.createProgress(e.state,e.store,true);
+ await p.start();
+ const release=p('等待输入学校登录信息');
+ a.equal(typeof release?.then,'function');
+ done();await release;
+ p.finish();
+});
 test('native progress can be hidden for CAPTCHA and never reopens between requests',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
@@ -456,7 +470,12 @@ test('production ordinary-script entry runs even with process and module compati
 test('storage-constructor failures now reach startup error UI',async()=>{const e=await env(),alerts=[];e.store.release();e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);e.sandbox.__NUFE_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(alerts.length,1);a.match(alerts[0].title,/启动失败/);a.match(alerts[0].message,/STARTUP_TYPE/);a.doesNotMatch(alerts[0].message,/private native detail/);});
 test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
-test('widget degrades gracefully when ListWidget is not defined',async()=>{const e=await env();e.sandbox.config.runsInWidget=true;await a.doesNotReject(async()=>{await e.m.run();});});
+test('widget has a single dedicated Scripting entry with no legacy ListWidget renderer',()=>{
+ const native=fs.readFileSync(__dirname+'/../index.tsx','utf8');
+ const widget=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.doesNotMatch(native,/ListWidget|runsInWidget|widgetParameter|async function widget\(/);
+ a.match(widget,/Widget\.present\(/);
+});
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
 test('every manual refresh checks all available semesters, including already synced historical ones',async()=>{
