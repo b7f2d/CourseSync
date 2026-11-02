@@ -1577,7 +1577,7 @@ function statusText(state){
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
     '\n课表日历：'+calendar+
-    (state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
+    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+noticeWarning+
@@ -2136,7 +2136,7 @@ async function run() {
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const menu=new Alert();menu.title='NUFE 课表';
-      menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
+      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
       if(!state.signedOut||state.lastError==='LOGOUT_INCOMPLETE')menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
@@ -2163,7 +2163,7 @@ async function run() {
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.
-    if(Keychain.contains(CRED_KEY)){
+    if(!state.signedOut&&Keychain.contains(CRED_KEY)){
       try{
         const migrated=migrateSavedCredentials();
         state.credentialCloudStatus=migrated==='conflict'?'conflict':'synced';
