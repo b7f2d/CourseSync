@@ -141,9 +141,8 @@ test('compact status shows outcome and hides technical diagnostics',async()=>{
  e.state.runStatus='success';e.state.lastCheck='2026-11-02T06:30:00.000Z';
  const concise=e.m.statusText(e.state);
  a.match(concise,/上次完成检查：2026-11-02 14:30/);
- a.match(concise,/非实时状态/);
- a.doesNotMatch(concise,/最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
- a.match(e.m.diagnosticHistoryText(e.state),/最近步骤（北京时间）/);
+ a.doesNotMatch(concise,/未实时核验|非实时状态|最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
+ a.match(concise,/课表日历：/);
  e.state.resultNoticeError='NOTIFICATION_FAILED';
  a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
 });
@@ -779,19 +778,21 @@ test('a malformed Cookie storage error offers only local session reset',async()=
  a.equal(e.state.nextAttempt,0);
  a.equal(e.state.lastError,null);
 });
-test('status offers only environment check; recovery belongs inside diagnostics',async()=>{
- const e=await env(),overview=[],diagnostics=[];
- e.sandbox.__sdk.Dialog.confirm=async o=>{overview.push(o);return true;};
- e.sandbox.__sdk.Dialog.actionSheet=async o=>{diagnostics.push(o);return o.actions.length>1?1:null;};
+test('status offers self-check with recovery only on a matching failure and never offers detailed logs',async()=>{
+ const e=await env(),confirms=[],alerts=[];
+ e.sandbox.__sdk.Dialog.confirm=async o=>{confirms.push(o);return true;};
+ e.sandbox.__sdk.Dialog.alert=async o=>{alerts.push(o);};
  e.state.lastError='COOKIE_STORAGE';e.state.runStatus='failed';
  a.equal(await e.m.showRunStatus(e.state,e.store),'cookie');
- a.equal(overview.length,1);
- a.equal(overview[0].confirmLabel,'环境自检');
- a.doesNotMatch(overview[0].message,/连续失败：|最近步骤/);
- a.deepEqual(Array.from(diagnostics[0].actions,x=>x.label),['查看详细运行记录','清除异常 Cookie']);
+ a.deepEqual(confirms.slice(0,2).map(o=>o.confirmLabel),['环境自检','清除异常 Cookie']);
+ a.doesNotMatch(confirms[0].message,/连续失败：|最近步骤|详细运行记录/);
+ a.doesNotMatch(confirms[1].message,/详细运行记录/);
  e.state.runStatus='success';
  a.equal(await e.m.showRunStatus(e.state,e.store),null);
- a.deepEqual(Array.from(diagnostics[1].actions,x=>x.label),['查看详细运行记录']);
+ a.equal(confirms.length,3); // Only the overview prompt; no recovery on success.
+ a.equal(alerts.length,1);
+ a.equal(alerts[0].title,'环境自检');
+ a.doesNotMatch(alerts[0].message,/详细运行记录/);
 });
 
 test('environment inspection only reads existing local state and never mutates data',async()=>{
@@ -807,6 +808,28 @@ test('environment inspection only reads existing local state and never mutates d
  a.equal(JSON.stringify([...e.files]),oldFiles);
  a.equal(e.db.length,oldEvents);
  a.equal(e.requests.length,0);
+});
+test('successful past authentication is shown as historical success, not unexplained question mark',async()=>{
+ const e=await env();
+ e.state.lastCheck='2026-11-02T10:00:00.000Z';e.state.runStatus='success';
+ let checks=await e.m.inspectEnvironment(e.state,e.store);
+ let auth=checks.find(x=>x.name==='最近认证');
+ a.equal(auth.level,'正常');
+ a.match(auth.detail,/上次成功同步时认证正常/);
+ a.match(auth.detail,/未检查当前会话/);
+ a.doesNotMatch(e.m.environmentCheckText(checks,e.state),/\? 最近认证/);
+ e.state.authPaused=true;
+ checks=await e.m.inspectEnvironment(e.state,e.store);
+ auth=checks.find(x=>x.name==='最近认证');
+ a.equal(auth.level,'注意');
+ a.match(auth.detail,/前台重新认证/);
+});
+test('a missing authentication history stays unverified, not falsely successful',async()=>{
+ const e=await env();
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ const auth=checks.find(x=>x.name==='最近认证');
+ a.equal(auth.level,'待确认');
+ a.match(auth.detail,/尚无成功同步记录/);
 });
 test('self-check distinguishes an inaccessible original calendar from a healthy one',async()=>{
  const e=await env();
