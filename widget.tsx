@@ -71,7 +71,7 @@ function RollingPanel({model,family}){
       const width=proxy.size.width,height=proxy.size.height;
       const pad=medium?8:10,gap=medium?5:7;
       const colWidth=Math.max(40,Math.floor((width-2*pad-24-gap*3)/4));
-      const maxRows=!medium&&height>=275?2:1;
+      const maxRows=!medium&&height>=320?2:1;
       return <VStack alignment="leading" spacing={medium?6:9}
         padding={pad}
         widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
