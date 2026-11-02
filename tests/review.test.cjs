@@ -3,7 +3,9 @@ const {test}=require('node:test');const a=require('node:assert/strict');const vm
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);');
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);')
+ .replace("import { createNativeProgressView } from './progress-native';",
+   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -36,90 +38,87 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('foreground progress uses real stage labels without false percentages or secret data',async()=>{
- const e=await env({hostEnv:'index'}),pages=[],evaluations=[],modal=[];
- e.sandbox.__sdk.WebViewController=class {
-   constructor(options){a.equal(options.ephemeral,true);pages.push(this);}
-   async loadHTML(html){a.match(html,/正在刷新课表/);a.doesNotMatch(html,/外部资源/);return true;}
-   present(opts){modal.push('open:'+opts.navigationTitle);return new Promise(resolve=>{this.resolve=resolve;});}
-   async evaluateJavaScript(code){evaluations.push(code);return true;}
-   dismiss(){modal.push('dismiss');this.resolve?.();this.resolve=null;}
-   dispose(){modal.push('dispose');}
- };
+test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show:()=>calls.push('show'),
+   pause:()=>calls.push('pause'),
+   resume:()=>calls.push('resume'),
+   finish:()=>calls.push('finish')
+ });
  const progress=e.m.createProgress(e.state,e.store,true);
  progress('检查目标日历');await progress.start();
- progress('读取学期 161');await Promise.resolve();
- a.ok(evaluations.some(x=>x.includes('正在刷新课表')));
- progress('等待输入学校登录信息');await Promise.resolve();
- a.ok(modal.includes('dismiss'));
- progress('提交学校认证请求');await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,1);
- progress('认证完成后读取课表页面');await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
- progress('读取学期 161');progress('写入学期 161 的日历事件');
- progress('读取学期 162');progress('写入学期 162 的日历事件');
- await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
- a.doesNotMatch(JSON.stringify(evaluations),/正在更新 Apple 日历|正在获取课程信息/);
+ progress('读取学期 161');
+ progress('等待输入学校登录信息');
+ progress('提交学校认证请求');
+ progress('等待二次认证');
+ progress('发送短信');
+ a.deepEqual(calls,['show','pause','pause']);
+ progress('认证完成后读取课表页面');
+ progress('写入学期 161 的日历事件');
+ progress('写入学期 162 的日历事件');
+ progress.finish();progress.finish();
+ a.deepEqual(calls,['show','pause','pause','resume','finish']);
+ a.equal(e.state.lastStage,'写入学期 162 的日历事件');
+ a.equal(e.state.stageHistory.at(-1).stage,'写入学期 162 的日历事件');
+});
+
+test('native progress can be hidden for CAPTCHA and never reopens between requests',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show:()=>calls.push('show'),pause:()=>calls.push('pause'),
+   resume:()=>calls.push('resume'),finish:()=>calls.push('finish')
+ });
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ progress('等待图形验证');
+ progress('查询是否需要验证码');
+ progress('本机加密登录密码（原生安全随机数）');
+ progress('提交学校认证请求');
+ a.deepEqual(calls,['show','pause']);
+ progress('读取学期 161');
  progress.finish();
- a.ok(modal.includes('dispose'));
- a.equal(e.m.safeProgressLabel('写入学期 161 的日历事件'),'正在更新 Apple 日历');
- a.doesNotMatch(JSON.stringify(evaluations),/password=|Cookie=|学号/);
+ a.deepEqual(calls,['show','pause','resume','finish']);
 });
-test('user-dismissed progress stays closed across multiple semester updates',async()=>{
- const e=await env({hostEnv:'index'});let opens=0;
- e.sandbox.__sdk.WebViewController=class{
-  async loadHTML(){return true;}
-  present(){opens++;return Promise.resolve();}
-  evaluateJavaScript(){return Promise.resolve(true);}
-  dismiss(){}dispose(){}
- };
- const p=e.m.createProgress(e.state,e.store,true);
- p('检查目标日历');await p.start();
- await Promise.resolve();
- p('读取学期 161');p('写入学期 161 的日历事件');
- p('读取学期 162');p('写入学期 162 的日历事件');
- a.equal(opens,1);
- p.finish();
-});
-test('progress HTML navigation stays internal and render loop gets a chance to show',async()=>{
- const e=await env({hostEnv:'index'}),views=[];
- e.sandbox.__sdk.WebViewController=class{
-   constructor(){views.push(this);}
-   async loadHTML(html){a.match(html,/Content-Security-Policy/);return true;}
-   present(options){a.equal(options.navigationTitle,'正在刷新课表');return Promise.resolve();}
-   evaluateJavaScript(){return Promise.resolve(true);}
-   dismiss(){}dispose(){}
- };
- const p=e.m.createProgress(e.state,e.store,true);
- p('检查目标日历');await p.start();p.finish();
- a.equal(views.length,1);
- a.equal(views[0].shouldAllowRequest,undefined); // Do not reject WebKit's HTML navigation.
-});
-test('when progress page cannot load, report the failure and still permit syncing',async()=>{
- const e=await env({hostEnv:'index'}),alerts=[];
- e.sandbox.__sdk.WebViewController=class{async loadHTML(){return false;}dispose(){}};
- e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();p('请求学期 161 课表数据');p.finish();
- a.equal(alerts.length,1);
- a.match(alerts[0].message,/PROGRESS_LOAD/);
+
+test('native progress unavailable never blocks foreground synchronization',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>{throw Error('UI_NOT_AVAILABLE');};
+ const progress=e.m.createProgress(e.state,e.store,true);
+ progress('检查目标日历');await progress.start();
+ progress('请求学期 161 课表数据');progress.finish();
  a.equal(e.state.lastStage,'请求学期 161 课表数据');
 });
-test('background sync never opens progress UI or adds modal prompts',async()=>{
- const e=await env({hostEnv:'intent'}),opens=[];
- e.sandbox.__sdk.WebViewController=class {constructor(){opens.push(true);}};
- const p=e.m.createProgress(e.state,e.store,false);
- p('读取学期 161');await p.start();p.finish();
- a.deepEqual(opens,[]);
+
+test('native progress requires a foreground Navigation API',async()=>{
+ const e=await env({hostEnv:'index'});let created=0;
+ e.sandbox.__progressUIFactory=()=>{created++;return {show(){},pause(){},resume(){},finish(){}};};
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();progress('读取学期 161');progress.finish();
+ a.equal(created,0);
  a.equal(e.state.lastStage,'读取学期 161');
 });
-test('progress UI failure never blocks actual foreground calendar synchronization',async()=>{
- const e=await env({hostEnv:'index'});
- e.sandbox.__sdk.WebViewController=class{constructor(){throw Error('webview unavailable');}};
- const p=e.m.createProgress(e.state,e.store,true);
- p('开始刷新');await p.start();p('完成本次同步');p.finish();
- a.equal(e.state.lastStage,'完成本次同步');
+
+test('background sync never opens any interactive progress UI',async()=>{
+ const e=await env({hostEnv:'intent'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>{calls.push('created');return {};};
+ const progress=e.m.createProgress(e.state,e.store,false);
+ progress('读取学期 161');await progress.start();progress.finish();
+ a.deepEqual(calls,[]);
+ a.equal(e.state.lastStage,'读取学期 161');
+});
+
+test('progress has no HTML and no artificial percentages',()=>{
+ const start=source.indexOf('function createProgress(state,store,interactive)');
+ const end=source.indexOf('// Recognize a previously bound calendar',start);
+ a.ok(start>0&&end>start);
+ const body=source.slice(start,end);
+ a.match(body,/createNativeProgressView\(\)/);
+ a.doesNotMatch(body,/WebView|loadHTML|evaluateJavaScript|window\.updateStage|percentage/);
 });
 test('widget mirror publishes only non-sensitive verified course fields',async()=>{
  const e=await env();
