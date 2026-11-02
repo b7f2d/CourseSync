@@ -294,104 +294,112 @@ test('verified duplicated legacy title is removed without touching kept lesson',
   a.equal(e.db.length,1);a.equal(e.db[0].identifier,good.identifier);
 });
 
-test('renaming a bound calendar retains its identifier and existing state',async()=>{
+test('renaming a bound calendar never triggers an automatic rename',async()=>{
  const e=await env({hostEnv:'index'});
- e.calendar.title='\u5357\u8d22\u8bfe\u8868';e.calendar.save=async()=>{};
+ e.calendar.title='My Calendar';let saves=0;e.calendar.save=async()=>{saves++;};
  e.state.calendarId=e.calendar.identifier;e.store.write(e.state);
- const selected=await e.m.pickCalendar(e.state,e.store,false);
- a.equal(selected.identifier,'calendar-dedicated');
- a.equal(selected.title,'课表');
- a.equal(e.store.read().calendarId,'calendar-dedicated');
+ const selected=await e.m.pickCalendar(e.state,e.store);
+ a.equal(selected.title,'My Calendar');a.equal(saves,0);
+ a.equal(e.store.read().calendarTitle,'My Calendar');
 });
-test('renamed calendar is selected using the stored identifier',async()=>{
- const e=await env();e.state.calendarId=e.calendar.identifier;e.calendar.title='课表';e.store.write(e.state);
- const picked=await e.m.pickCalendar(e.state,e.store,false);
- a.equal(picked.identifier,e.state.calendarId);
+test('calendar identity is independent of its title',async()=>{
+ const e=await env();e.state.calendarId=e.calendar.identifier;e.calendar.title='Study 2026';
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.identifier,e.state.calendarId);a.equal(picked.title,'Study 2026');
 });
-
-function missingCalendar(e,{failCreate=[],lost=false}={}){
+function missingCalendar(e,{lost=false}={}){
  const list=[e.other],created=[];
  e.sandbox.__sdk.Calendar.forEvents=async()=>list;
- e.sandbox.__sdk.Calendar.create=async o=>{created.push(o.sourceType);if(failCreate.includes(o.sourceType))throw Error('no source');return {identifier:'calendar-new',title:o.title,allowsContentModifications:true,isSubscribed:false,save:async function(){list.push(this);}};};
- e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter='setup';e.state.calendarId=lost?'calendar-gone':null;
+ e.sandbox.__sdk.Calendar.create=async o=>{
+   created.push(o);
+   return {identifier:'calendar-new',title:o.title,source:{type:'calDAV',title:'iCloud'},
+     allowsContentModifications:true,isSubscribed:false,save:async function(){list.push(this);}};
+ };
+ e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter='setup';
+ e.state.calendarId=lost?'calendar-gone':null;
  return {list,created};
 }
 const setConfirm=(e,answer)=>{const asked=[];e.sandbox.__sdk.Dialog.confirm=async o=>{asked.push(o);return answer;};return asked;};
-test('missing dedicated calendar is created in iCloud only after confirmation',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);
+const setName=(e,name='Custom lessons')=>{const asked=[];e.sandbox.__sdk.Dialog.prompt=async o=>{asked.push(o);return name;};return asked;};
+test('first setup creates a custom-named iCloud calendar and binds its ID',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e),prompt=setName(e,'Semester ✨');
  const picked=await e.m.pickCalendar(e.state,e.store);
- a.equal(asked.length,1);a.deepEqual(h.created,['calDAV']);
- a.equal(picked.identifier,'calendar-new');a.equal(e.store.read().calendarId,'calendar-new');
+ a.equal(prompt.length,1);a.equal(h.created.length,1);
+ a.equal(h.created[0].sourceType,'calDAV');a.equal(h.created[0].title,'Semester ✨');
+ a.equal(picked.title,'Semester ✨');a.equal(e.store.read().calendarId,'calendar-new');
 });
-test('declining calendar creation creates nothing and does not bind',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e);setConfirm(e,false);
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
- a.deepEqual(h.created,[]);a.equal(e.state.calendarId,null);
+test('canceling calendar naming never creates or binds a calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e,null);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_NAME'));
+ a.equal(h.created.length,0);a.equal(e.state.calendarId,null);
 });
-test('calendar creation falls back to local and reports failure when nothing is readable back',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{failCreate:['calDAV']});setConfirm(e,true);
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,'calendar-new');a.deepEqual(h.created,['calDAV','local']);
- const f=await env({hostEnv:'index'}),g=missingCalendar(f,{failCreate:['calDAV','local']});setConfirm(f,true);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CALENDAR_CREATE_FAILED'));a.equal(g.list.length,1);
+test('iCloud creation never falls back to a local calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e);
+ e.sandbox.__sdk.Calendar.create=async options=>{h.created.push(options);throw Error('calendar unavailable');};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
+ a.deepEqual(h.created.map(x=>x.sourceType),['calDAV']);
 });
-test('failed readback does not adopt an unrelated calendar or fall back twice',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);
- e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o.sourceType);return {identifier:'new-but-unconfirmed',title:o.title,save:async()=>{h.list.push({identifier:'older-hidden',title:'课表',allowsContentModifications:true,isSubscribed:false});}};};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
- a.equal(asked.length,1);a.deepEqual(h.created,['calDAV']);a.equal(e.state.calendarId,null);
+test('non-iCloud CalDAV creation must not silently bind a different account',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e);
+ e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o);return {identifier:'wrong-source',title:o.title,source:{type:'calDAV',title:'Other Account'},allowsContentModifications:true,isSubscribed:false,save:async function(){h.list.push(this);}};};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_NOT_ICLOUD'));
+ a.equal(e.state.calendarId,null);a.equal(h.created.length,1);
 });
-
-test('empty calendar list reports permission and never creates a calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);h.list.length=0;
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('failed create readback never adopts an unrelated same-name calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e,'School');
+ e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o);return {identifier:'uncertain',title:o.title,save:async()=>{h.list.push({identifier:'other',title:o.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false});}};};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
+ a.equal(h.created.length,1);a.equal(e.state.calendarId,null);
 });
-const revealOnAccess=(e,h,...cals)=>{h.list.length=0;e.sandbox.__sdk.Script.requestAccess=async apis=>{a.deepEqual([...apis],['calendar']);h.list.push(e.other,...cals);return apis;};};
-test('calendar revealed by the access request still needs binding confirmation',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
- a.equal(asked.length,1);a.match(asked[0].message,/专用课表日历模式/);a.deepEqual(h.created,[]);
- const f=await env({hostEnv:'index'}),g=missingCalendar(f);setConfirm(f,false);revealOnAccess(f,g,f.calendar);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CANCELLED'));a.equal(f.state.calendarId,null);a.deepEqual(g.created,[]);
+test('empty calendar list reports permission instead of creating',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);h.list.length=0;setName(e);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
+ a.equal(h.created.length,0);
 });
-test('calendar revealed by the access request still passes rebind checks',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);revealOnAccess(e,h,e.calendar);
- e.baseline([lesson()]);e.state.calendarId='calendar-gone';
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(e.state.calendarId,'calendar-gone');
- const f=await env({hostEnv:'index'}),g=missingCalendar(f,{lost:true});setConfirm(f,true);revealOnAccess(f,g,f.calendar);f.state.tx=tx([],[]);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(f.state.calendarId,'calendar-gone');
+test('missing former calendar permits choosing a matching owned calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
+ e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.calendar];
+ h.list.push(e.calendar);
+ const rec=lesson();e.baseline([rec]);e.add(rec);e.state.calendarId='calendar-gone';
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.identifier,e.calendar.identifier);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
 });
-test('bound calendar revealed by the access request is reused without prompting',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);e.state.calendarId=e.calendar.identifier;
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('missing former calendar blocks rebinding a personal calendar without owned lessons',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
+ e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.other];
+ e.baseline([lesson()]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
+ a.equal(e.state.calendarId,'calendar-gone');
 });
-test('pending transaction blocks creating a replacement calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);e.state.tx=tx([],[]);
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('missing calendar can create a replacement after a duplicate warning',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);setName(e,'Replacement');
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>1;
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.title,'Replacement');
+ a.equal(asked.length,1);a.match(asked[0].message,/重复/);
+ a.equal(e.state.calendarId,'calendar-new');
 });
-test('replacing a lost calendar warns about duplicates and rewrites every lesson into the new calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);
- const rec=e.m.expand(raw([activity({weekIndexes:[1]})]),161,'2026-09-07').events.map(x=>({...x,id:'lesson-1'}));
- e.baseline(rec);e.state.semesters['161'].index={'lesson-1':'event-in-gone-calendar'};
- e.sandbox.__sdk.Dialog.alert=async()=>{};
- loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
- a.match(asked[0].message,/重复/);a.deepEqual(h.created,['calDAV']);
- const s=e.store.read();a.equal(s.lastError,null);a.equal(s.runStatus,'success');a.equal(s.calendarId,'calendar-new');
- a.equal(e.db.length,1);a.equal(e.db[0].calendar.identifier,'calendar-new');
+test('pending transaction blocks selection or creation of a different calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setName(e);
+ e.state.tx=tx([],[]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
+ a.equal(h.created.length,0);
 });
-test('run superseded during the creation dialog does not create a calendar',async()=>{
+test('canceled calendar creation does not proceed after another run owns cancellation',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e);
- e.sandbox.__sdk.Dialog.confirm=async()=>{a.equal(e.store.requestCancelActive(),true);return true;};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('SYNC_SUPERSEDED'));a.deepEqual(h.created,[]);
+ e.sandbox.__sdk.Dialog.prompt=async()=>{a.equal(e.store.requestCancelActive(),true);return 'My schedule';};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('SYNC_SUPERSEDED'));
+ a.equal(h.created.length,0);
 });
 test('background sync never creates a calendar',async()=>{
  const e=await env(),created=[];e.state.calendarId='missing-calendar';
  e.sandbox.__sdk.Calendar.create=async o=>{created.push(o);throw Error('unexpected');};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_MISSING'));a.deepEqual(created,[]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_MISSING'));
+ a.equal(created.length,0);
 });
-
 test('school semester start automatically anchors historical spring timetable without prompting',async()=>{
  const e=await env({hostEnv:'intent'});
  const http={json:async url=>{
