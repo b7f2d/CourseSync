@@ -495,15 +495,10 @@ test('main menu exposes only refresh, run status and a destructive sign-out',asy
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('NUFE.Local.v1.cookies','[]');
- e.sandbox.Alert=class{
-  constructor(){this.actions=[];}addAction(t){this.actions.push({label:t,destructive:false});}
-  addDestructiveAction(t){this.actions.push({label:t,destructive:true});}
-  addCancelAction(){}
-  async presentSheet(){menus.push(this.actions);return -1;}
- };
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(menus[0].map(x=>x.label),['立即刷新','运行状态','退出登录']);
- a.deepEqual(menus[0].map(x=>x.destructive),[false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
@@ -790,9 +785,20 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(menus[0],['立即刷新','运行状态']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
+});
+test('successful verified synchronization clears signed-out state without changing calendar identity',async()=>{
+ const e=await env();e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'stale',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.baseline([lesson()]);e.add(lesson());
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await e.m.synchronize(e.state,e.store,e.calendar,true,false,()=>{});
+ a.equal(e.state.signedOut,false);
+ a.equal(e.state.authPaused,false);
+ a.equal(e.state.calendarId,e.calendar.identifier);
+ a.equal(e.db.length,1);
 });
 test('background sync after deliberate logout makes no school request or extra notification',async()=>{
  const e=await env();
