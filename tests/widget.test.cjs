@@ -222,7 +222,7 @@ test('widget UI uses four rolling columns with legible multi-line names and clas
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildRollingDays\(snapshot\.state/);
  a.match(ui,/model\.days\.map\(day/);
- a.match(ui,/lineLimit=\{compact\?4:6\}/);
+ a.match(ui,/lineLimit=\{compact\?3:4\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
