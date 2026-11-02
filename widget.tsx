@@ -39,10 +39,10 @@ function DayColumn({day,width,compact=false,maxRows=1}){
   return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
     frame={{width,alignment:'top'}}>
     <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}>
-      <Text font={compact?11:13} fontWeight="bold" foregroundStyle={dayColor}>
+      <Text font={compact?14:17} fontWeight="bold" foregroundStyle={dayColor}>
         {day.label}
       </Text>
-      <Text font={compact?8:9} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
+      <Text font={compact?9:10} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
     {window.courses.length?window.courses.map(c=>
@@ -67,12 +67,10 @@ function RollingPanel({model,family}){
       const safeInset=medium?18:22,gap=medium?5:7;
       const colWidth=Math.max(40,Math.floor((width-2*safeInset-24-gap*3)/4));
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
-      return <VStack alignment="leading" spacing={medium?7:10}
+      return <VStack alignment="leading" spacing={0}
         padding={safeInset}
         widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-        <Text font={medium?13:15} fontWeight="bold"
-          foregroundStyle={COLORS.dark}>近日课表</Text>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
           {model.days.map(day=><DayColumn key={String(day.index)} day={day}
@@ -92,8 +90,8 @@ function SmallPanel({model}){
   return <VStack alignment="leading" spacing={8} padding={20}
     widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-    <Text font={14} fontWeight="bold" foregroundStyle={COLORS.dark}>
-      今日课程
+    <Text font={18} fontWeight="bold" foregroundStyle={COLORS.dark}>
+      今天
     </Text>
     <Spacer minLength={0}/>
     {chosen?<VStack alignment="leading" spacing={5}
@@ -121,7 +119,7 @@ function EmptyPanel({kind='empty',code=''}) {
   return <VStack alignment="leading" spacing={9} padding={22}
     widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 近日课表</Text>
+    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE-Schedule</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
     <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
     {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
