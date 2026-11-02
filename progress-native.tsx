@@ -48,6 +48,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
 }
 
 export function createNativeProgressView(){
+  let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
     revision:0,dismiss:null,
@@ -63,7 +64,7 @@ export function createNativeProgressView(){
       const revision=++session.revision;
       session.shown=true;
       try {
-        void Promise.resolve(Navigation.present({
+        presented=Promise.resolve(Navigation.present({
           element:<ProgressScreen session={session}/>,
           modalPresentationStyle:'pageSheet',
         })).then(()=>{
@@ -85,11 +86,18 @@ export function createNativeProgressView(){
       }
     },
     pause(){
-      if(session.closed||session.hidden)return;
+      if(session.closed||session.hidden)return Promise.resolve();
       session.hidden=true;
       session.revision++;
       session.shown=false;
       closeVisible();
+      // Native presentation dismissal is asynchronous. Wait briefly for the
+      // actual sheet to leave before showing an SMS or password entry sheet.
+      // Never let a hung host UI block the school login indefinitely.
+      return Promise.race([
+        presented.then(()=>{},()=>{}),
+        new Promise<void>(resolve=>setTimeout(resolve,800)),
+      ]);
     },
     resume(){
       if(session.closed||!session.hidden)return;
