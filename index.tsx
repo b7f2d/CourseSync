@@ -1381,8 +1381,73 @@ function statusText(state){
     recent+noticeWarning+
     (hasIssue?'\n建议：打开「环境自检」定位问题':'\n需要处理：暂未记录异常');
 }
-// A read-only on-demand check: no calendar writes, cookie deletion, logins,
-// account/password submission, lock acquisition or state mutation.
+// A single authenticated GET checks the actual current school session without
+// asking for course-table JSON, changing cookies, or submitting credentials.
+// The result refers only to this request, not a promise of future validity.
+async function probeSchoolSession(jar){
+  const req=new Request(TABLE);
+  req.method='GET';req.timeoutInterval=7;
+  const cookie=jar?.header(TABLE)||'';
+  req.headers={Accept:'text/html, */*;q=0.8',...(cookie?{Cookie:cookie}:{})};
+  let redirected=null,html='';
+  req.onRedirect=next=>{redirected=String(next?.url||'');return null;};
+  try{html=await bounded(req.loadString(),8500,'NETWORK_TIMEOUT');}
+  catch(e){
+    if(!redirected)return {
+      connection:{level:'待确认',detail:'当前请求失败（'+networkErrorCode(e)+'）；请检查网络'},
+      auth:{level:'待确认',detail:'实时验证未完成；未提交账号密码'}
+    };
+  }
+  const status=Number(req.response?.statusCode);
+  if(redirected){
+    let destination;
+    try{destination=resolveURL(TABLE,redirected);}
+    catch(_){return {
+      connection:{level:'注意',detail:'学校入口返回异常跳转，已阻止继续跟随'},
+      auth:{level:'待确认',detail:'无法确认当前会话，未跟随未知跳转'}
+    };}
+    const url=safeURL(destination);
+    const login=url.host==='authserver.nufe.edu.cn'||
+      url.path==='/student/login'||url.path==='/student/sso/login';
+    return {
+      connection:{level:'正常',detail:'学校入口已响应跳转'},
+      auth:login?{level:'注意',detail:'当前 Cookie 未通过登录检查；学校要求重新认证'}:
+        {level:'待确认',detail:'学校入口发生站内跳转，未继续验证'}
+    };
+  }
+  if(status===401||status===403)return {
+    connection:{level:'正常',detail:'学校服务器已响应（HTTP '+status+'）'},
+    auth:{level:'注意',detail:'当前会话未通过认证检查（HTTP '+status+'）'}
+  };
+  if(status>=500)return {
+    connection:{level:'注意',detail:'学校服务器响应异常（HTTP '+status+'）'},
+    auth:{level:'待确认',detail:'服务器异常，本次无法验证登录'}
+  };
+  if(!(status>=200&&status<300))return {
+    connection:{level:'待确认',detail:'学校服务器返回 HTTP '+(Number.isFinite(status)?status:'未知')},
+    auth:{level:'待确认',detail:'当前登录状态无法确认'}
+  };
+  if(typeof html!=='string'||html.length>2*1024*1024)return {
+    connection:{level:'正常',detail:'学校服务器已响应'},
+    auth:{level:'待确认',detail:'返回内容无法安全核对身份'}
+  };
+  try{
+    pageInfo(html);
+    return {
+      connection:{level:'正常',detail:'学校课表入口可访问'},
+      auth:{level:'正常',detail:'刚刚使用本机 Cookie 验证成功；未获取课程或提交密码'}
+    };
+  }catch(_){
+    const login=/<form\b[^>]*\bid=["']pwdFromId["']|name=["'](?:password|username)["']/i.test(html);
+    return {
+      connection:{level:'正常',detail:'学校服务器已响应'},
+      auth:login?{level:'注意',detail:'学校返回登录页，当前 Cookie 需要重新认证'}:
+        {level:'待确认',detail:'返回页面未包含可验证的课表身份信息'}
+    };
+  }
+}
+// On-demand checks re-read live host APIs and attempt one read-only session
+// request. They never acquire a sync lock, save cookies, or modify calendars.
 async function inspectEnvironment(state,store){
   const checks=[],put=(name,level,detail)=>checks.push({name,level,detail});
   try{const fresh=store.read();validateState(fresh);put('本地状态','正常','状态文件可读取、结构有效');}
@@ -1399,13 +1464,17 @@ async function inspectEnvironment(state,store){
     }
   }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
 
-  // Use the last verified sync as evidence of historical authentication only.
-  // A read-only check does not log in or claim the session is valid now.
-  if(state.authPaused)put('最近认证','注意','当前有登录阻断记录，请前台重新认证');
-  else if(state.lastCheck)put('最近认证','正常','上次成功同步时认证正常（'+briefTime(state.lastCheck)+'）；未检查当前会话');
-  else put('最近认证','待确认','尚无成功同步记录；未验证当前登录会话');
-  try{readCookieJar();put('Cookie 存储','正常','格式有效；不代表学校会话尚未过期');}
-  catch(_){put('Cookie 存储','注意','本机 Cookie 存储异常，未进行清理');}
+  let jar=null;
+  try{
+    jar=readCookieJar();
+    put('Cookie 存储','正常','本次读取及格式检查通过');
+  }catch(_){put('Cookie 存储','注意','本机 Cookie 异常，未清理；无法携带原会话验证');}
+  const session=await probeSchoolSession(jar);
+  put('学校连接',session.connection.level,session.connection.detail);
+  if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
+  else if(state.authPaused&&session.auth.level==='正常')
+    put('登录会话','注意','当前会话验证通过，但此前登录暂停记录尚未解除；请手动刷新确认');
+  else put('登录会话',session.auth.level,session.auth.detail);
   try{
     const status=credentialStorageStatus();
     if(/不可读取|异常/.test(status))put('自动登录凭据','注意','钥匙串暂不可读取或格式异常');
@@ -1436,17 +1505,6 @@ async function inspectEnvironment(state,store){
     else put('本地备份','待确认','没有记录中的备份引用，不代表数据丢失');
   }catch(_){put('本地备份','待确认','无法检查备份引用');}
 
-  // A public GET without saved cookies or credentials. Do not use the HTTP
-  // authentication client, which would persist session cookies.
-  try{
-    safeURL(SSO);
-    const request=new Request(SSO);request.method='GET';request.timeoutInterval=5;
-    await bounded(request.loadString(),6500,'NETWORK_TIMEOUT');
-    const code=Number(request.response?.statusCode);
-    if(code>=200&&code<400)put('学校连接','正常','入口可访问；不代表已经登录');
-    else if(code>=400&&code<500)put('学校连接','待确认','服务器有响应（HTTP '+code+'），需要另外确认服务状态');
-    else put('学校连接','注意','服务器响应异常（HTTP '+(Number.isFinite(code)?code:'未知')+'）');
-  }catch(_){put('学校连接','待确认','本次探测失败；不等于学校服务已中断');}
   return checks;
 }
 function environmentCheckText(checks,state){
@@ -1962,7 +2020,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,statusText,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
