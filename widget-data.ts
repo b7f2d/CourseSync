@@ -225,7 +225,7 @@ export function selectVisibleCourses(day,limit=1){
 // TEMPORARY TEST MODE: set this to null to restore the live timetable.
 // Only the widget presentation is affected; the sync engine and Apple Calendar
 // continue to use real semester dates and the normal current schedule.
-const WIDGET_PREVIEW_TERM='2024-2025-2';
+const WIDGET_PREVIEW_TERM=null;
 
 // Shift the historical teaching week by an integral number of weeks so the
 // original weekdays and time-of-day are preserved. Choose a *real* teaching
