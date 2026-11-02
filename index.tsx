@@ -103,10 +103,12 @@ class Request{
  async loadString(){return this.execute(false);}async load(){return this.execute(true);}
 }
 class WebView{
- constructor(){this.inner=new (hostAPI('WebViewController'))({ephemeral:true});__webviews.add(this.inner);}
- set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
+ constructor(){
+   const Controller=hostAPI('WebViewController');
+   if(typeof Controller!=='function')fail('WEBVIEW_UNAVAILABLE');
+   this.inner=new Controller({ephemeral:true});__webviews.add(this.inner);
+ }
  async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
- async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
  async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
@@ -1336,16 +1338,6 @@ function stampStage(state,store,stage){
 // A foreground-only, local progress sheet. Stages are genuine completed
 // operations, not invented percentages. Keep it out of shortcut automations.
 // Native login, captcha and MFA must remain unobstructed by this sheet.
-function safeProgressLabel(message){
-  const m=String(message||'');
-  if(/读取学期|请求学期|课表数据/.test(m))return '正在获取课程信息';
-  if(/写入学期|更新课程|导入|保存/.test(m))return '正在更新 Apple 日历';
-  if(/核验|核对|检查旧|扫描专用日历/.test(m))return '正在核对日历内容';
-  if(/清理|移除/.test(m))return '正在整理旧课程';
-  if(/登录|认证|Cookie|设备指纹|验证码|密码/.test(m))return '正在连接学校认证服务';
-  if(/完成/.test(m))return '课表更新已完成';
-  return '正在刷新课表';
-}
 function createProgress(state,store,interactive){
   // Every detailed stage is still persisted for diagnostics. The native
   // progress sheet is intentionally not a fake percent-based progress bar.
@@ -2235,7 +2227,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,safeProgressLabel,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
 else await run();
 
 /*
