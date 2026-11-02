@@ -340,9 +340,9 @@ test('private mirror keeps live courses separate from 2024-2025-2 preview',()=>{
  a.equal(result.kind,'ready');
  a.equal(result.state.semesters.widget.events[0].title,'真实课表');
  a.equal(result.state.preview.events[0].title,'历史学期');
- const bad=core.readWidgetMirror({get:()=>({...obj,preview:{term:'2025-2026-2',events:obj.preview.events}})});
- a.equal(bad.kind,'invalid');
- a.equal(bad.code,'STORAGE_SCHEMA');
+ const prior=core.readWidgetMirror({get:()=>({...obj,preview:{term:'2025-2026-2',events:obj.preview.events}})});
+ a.equal(prior.kind,'ready'); // Old test mode is not a corrupt live cache.
+ a.equal(prior.state.preview,null);
 });
 test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
