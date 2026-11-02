@@ -17,16 +17,17 @@ function CourseCard({course,compact=false}){
   const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
-      padding={compact?5:7}
-      background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
+      padding={compact?4:7}
+      background={{style:bg,shape:{type:'rect',cornerRadius:8}}}
       frame={{maxWidth:'infinity',alignment:'topLeading'}}>
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
-      lineLimit={compact?3:4} foregroundStyle={fg}>{course.title}</Text>
+      lineLimit={compact?4:5} fixedSize={{horizontal:false,vertical:true}} foregroundStyle={fg}>{course.title}</Text>
     <Text font={compact?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
-      lineLimit={1}>{course.startLabel}–{course.endLabel}</Text>
+      lineLimit={compact?2:1} fixedSize={{horizontal:false,vertical:true}}>
+      {compact?course.startLabel+'\n'+course.endLabel:course.startLabel+'–'+course.endLabel}</Text>
     {course.location?<Text font={compact?8:9}
       foregroundStyle={done?COLORS.muted:COLORS.faint}
-      lineLimit={compact?1:2}>{course.location}</Text>:null}
+      lineLimit={2} fixedSize={{horizontal:false,vertical:true}}>{course.location}</Text>:null}
     {course.teacher?<Text font={compact?8:9}
       foregroundStyle={done?COLORS.muted:COLORS.faint}
       lineLimit={1}>{course.teacher}</Text>:null}
@@ -36,9 +37,9 @@ function CourseCard({course,compact=false}){
 function DayColumn({day,width,compact=false,maxRows=1}){
   const window=selectVisibleCourses(day,maxRows);
   const dayColor=day.today?COLORS.blue:COLORS.dark;
-  return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
+  return <VStack key={String(day.index)} alignment="center" spacing={compact?2:4}
     frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}>
+    <VStack spacing={1} frame={{width}} padding={{top:1,bottom:3}}>
       <Text font={compact?14:17} fontWeight="bold" foregroundStyle={dayColor}>
         {day.label}
       </Text>
@@ -57,18 +58,17 @@ function DayColumn({day,width,compact=false,maxRows=1}){
 
 // Two actual course columns inside an expanded today area, not an
 // animated/scrolling list. The second card owns the remaining-course count.
-function TodayPairColumn({day,width,compact=false,gap=5}){
+function TodayPairColumn({day,width,compact=false,gap=3,preview=false}){
   const focus=selectTodayPair(day);
-  const cardWidth=Math.max(25,Math.floor((width-gap)/2));
-  return <VStack alignment="center" spacing={compact?4:5}
+  const cardWidth=Math.max(12,Math.floor((width-gap)/2));
+  return <VStack alignment="center" spacing={compact?2:4}
       frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}>
+    <VStack spacing={1} frame={{width}} padding={{top:1,bottom:3}}>
       <Text font={compact?14:17} fontWeight="bold" foregroundStyle={COLORS.blue}>
         {day.label}
       </Text>
       <Text font={compact?9:10} foregroundStyle={COLORS.blue}
-        lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
-      <Text font={8} foregroundStyle={COLORS.faint}>2024-2025-2 测试</Text>
+        lineLimit={1}>{day.weekday} {day.dateLabel}{preview?' · 测试':''}</Text>
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
@@ -91,17 +91,19 @@ function RollingPanel({model,family}){
   return <GeometryReader>
     {proxy=>{
       const width=proxy.size.width,height=proxy.size.height;
-      // Keep both header edges and all four columns clear of rounded corners.
-      const safeInset=medium?18:22,gap=medium?5:7;
+      // The widget already provides a constrained content rectangle; avoid double
+      // reserving the system margin. Leave a small symmetric corner inset.
+      const safeInset=medium?8:14,gap=medium?3:6;
       const today=model.days.find(d=>d.today);
       const expanded=(today?.courses?.length||0)>1;
-      // Five equally-sized course slots when today has multiple classes:
+      // Five course slots when today has multiple classes, without an extra
+      // fixed-width reserve that would truncate every card:
       // yesterday / today-current / today-next / tomorrow / day-after.
       // Otherwise keep the original four balanced day columns.
       const slots=expanded?5:4;
       const extraGap=expanded?gap:0;
-      const colWidth=Math.max(32,Math.floor(
-        (width-2*safeInset-24-gap*3-extraGap)/slots));
+      const colWidth=Math.max(24,Math.floor(
+        (width-2*safeInset-gap*3-extraGap)/slots));
       const todayWidth=expanded?colWidth*2+extraGap:colWidth;
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       return <VStack alignment="leading" spacing={0}
@@ -112,7 +114,8 @@ function RollingPanel({model,family}){
           frame={{maxWidth:'infinity',alignment:'leading'}}>
           {model.days.map(day=>expanded&&day.today
             ?<TodayPairColumn key="today-pair" day={day}
-              width={todayWidth} compact={medium} gap={gap}/>
+              width={todayWidth} compact={medium} gap={gap}
+              preview={Boolean(model.previewTerm)}/>
             :<DayColumn key={String(day.index)} day={day}
               width={colWidth} compact={medium} maxRows={maxRows}/> )}
         </HStack>
