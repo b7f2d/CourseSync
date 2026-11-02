@@ -1374,45 +1374,13 @@ function statusText(state){
     '\n通知：有发送异常（不影响已完成的课表同步）':'';
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
-    '\n课表日历：'+calendar+'（未实时核验）'+
+    '\n课表日历：'+calendar+
     (state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+noticeWarning+
-    (hasIssue?'\n建议：打开「环境自检」定位问题':'\n需要处理：暂未记录异常')+
-    '\n\n以上为本地记录，非实时状态。';
+    (hasIssue?'\n建议：打开「环境自检」定位问题':'\n需要处理：暂未记录异常');
 }
-// Kept for user-requested deep diagnostics, never displayed in the default view.
-function diagnosticHistoryText(state){
-  const s=Object.values(state.semesters||{}).map(t=>(t.name||'学期')+'：'+(t.events||[]).length+' 节，成功同步 '+(t.lastSuccess?localDateTime(t.lastSuccess):'待确认')+(t.pending?'；待核对删除':'')+'；未排课 '+(t.skipped||[]).length).join('\n');
-  const recent=state.lastFailure||null;
-  const running=state.runStatus==='running'&&state.runStartedAt;
-  const elapsed=running?Math.max(0,Math.floor((Date.now()-Date.parse(state.lastStageAt||state.runStartedAt))/1000)):0;
-  return (s?s+'\n':'')+
-    '已配置日历：'+(state.calendarId?'是':'否')+
-    '\n本次运行：'+(state.runStatus==='running'?(elapsed>120?'超过 2 分钟无阶段更新（可能仍在执行或已被 iOS 终止）':'运行中或上次被中断'):({success:'刷新成功',partial:'部分完成',failed:'刷新失败',cancelled:'已取消'}[state.runStatus]||'尚未开始'))+
-    '\n本次开始：'+briefTime(state.runStartedAt)+
-    '\n当前/最后阶段：'+(state.lastStage||'未知')+
-    '\n最后进展：'+briefTime(state.lastStageAt)+
-    '\n事务：'+(state.tx?'待恢复':'无')+'\n取消变动：自动同步（专用课表日历）'+
-    '\n登录会话：'+(state.authPaused?'需要人工处理':'未检测到强制重新登录')+
-    '\n下次自动尝试：'+automaticRetryText(state)+
-    '\n自动登录凭据：'+credentialStorageStatus()+
-    '\n失效通知：'+(state.authExpiryNotifiedAt?'已提醒 '+briefTime(state.authExpiryNotifiedAt):(state.authNoticeError==='NOTIFICATION_FAILED'?'通知提交失败，请检查权限':'尚未触发'))+
-    '\n上次专用日历清理：'+(state.lastLegacyCleanupAt?briefTime(state.lastLegacyCleanupAt)+'，删除 '+(state.lastLegacyCleanupCount||0)+' 次，核验剩余 '+(state.lastLegacyCleanupRemaining||0)+' 条':'尚未执行')+
-    '\n刷新结果通知：'+(state.resultNoticeError?'发送失败，请检查通知权限（不影响已完成的课表同步）':'未检测到发送错误')+
-    '\n课程提醒：'+(state.reminderError?'提交失败，请检查通知权限':'未检测到提交错误')+
-    '\n连续失败：'+(state.failures||0)+
-    '\n最近一次失败：'+(recent?briefTime(recent.at):'无')+
-    '\n最近错误：'+(recent?recent.code:(state.lastError||'无（旧版记录）'))+
-    '\n失败所在阶段：'+(recent?recent.stage:'暂无本次失败记录')+
-    '\n原因：'+(recent?reasonFor(recent.code):'尚无可确认的最新错误')+
-    '\n建议：'+(recent?actionFor(recent.code):'若一直转圈，检查上方阶段及最近步骤')+
-    '\n最近步骤（北京时间）：'+(state.stageHistory||[]).slice(-10).map(x=>'\n'+briefTime(x.at)+' '+x.stage).join('')+
-    '\n已导入学期：'+Object.keys(state.semesters||{}).length+' / '+(state.availableSemesters||[]).length+
-    '\n学期读取失败：'+(state.termErrors||[]).map(x=>x.sid+' '+x.code).join('；');
-}
-
 // A read-only on-demand check: no calendar writes, cookie deletion, logins,
 // account/password submission, lock acquisition or state mutation.
 async function inspectEnvironment(state,store){
@@ -1431,8 +1399,11 @@ async function inspectEnvironment(state,store){
     }
   }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
 
-  if(state.authPaused)put('登录会话','注意','上次认证需要人工处理，未重新登录');
-  else put('登录会话','待确认','仅能确认本地没有登录阻断记录；未验证 Cookie 是否有效');
+  // Use the last verified sync as evidence of historical authentication only.
+  // A read-only check does not log in or claim the session is valid now.
+  if(state.authPaused)put('最近认证','注意','当前有登录阻断记录，请前台重新认证');
+  else if(state.lastCheck)put('最近认证','正常','上次成功同步时认证正常（'+briefTime(state.lastCheck)+'）；未检查当前会话');
+  else put('最近认证','待确认','尚无成功同步记录；未验证当前登录会话');
   try{readCookieJar();put('Cookie 存储','正常','格式有效；不代表学校会话尚未过期');}
   catch(_){put('Cookie 存储','注意','本机 Cookie 存储异常，未进行清理');}
   try{
@@ -1487,21 +1458,19 @@ function environmentCheckText(checks,state){
     lines.push('上次失败：'+state.lastError+' — '+reasonFor(state.lastError));
     lines.push('建议：'+actionFor(state.lastError));
   }
-  return title+'（? 表示未实时确认）\n\n'+lines.join('\n')+
+  return title+'（? 表示尚无法确认）\n\n'+lines.join('\n')+
     '\n\n只读检查；不会删除课程、清理 Cookie 或修改日历。';
 }
 async function showEnvironmentCheck(state,store){
   const checks=await inspectEnvironment(state,store);
-  const menu=new Alert();menu.title='环境自检';menu.message=environmentCheckText(checks,state);
-  menu.addAction('查看详细运行记录');
   const code=state.runStatus==='failed'?state.lastError:null;
   const recovery=availableRecovery(code,state,store);
-  if(recovery)menu.addAction(recovery.label);
-  menu.addCancelAction('关闭');
-  const selected=await menu.presentSheet();
-  if(selected===0){await notice('详细运行记录',diagnosticHistoryText(state));return null;}
-  if(recovery&&selected===1)return recovery.kind;
-  return null;
+  const report=environmentCheckText(checks,state);
+  // Routine results need a single acknowledgment, not a secondary log menu.
+  if(!recovery){await notice('环境自检',report);return null;}
+  const prompt=new Alert();prompt.title='环境自检';prompt.message=report;
+  prompt.addAction(recovery.label);prompt.addCancelAction('关闭');
+  return await prompt.presentAlert()===0?recovery.kind:null;
 }
 // Verified first teaching-week Mondays from the original project's semesters.json.
 // Keep this allow-list local: no additional server, tracking, or third-party endpoint.
@@ -1993,7 +1962,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,statusText,diagnosticHistoryText,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,statusText,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
