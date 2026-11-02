@@ -230,7 +230,7 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
+test('primary menu contains refresh credentials and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);a.equal(e.requests.length,0);});
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
@@ -330,7 +330,7 @@ test('first setup creates a custom-named iCloud calendar and binds its ID',async
 });
 test('canceling calendar naming never creates or binds a calendar',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e,null);
- await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_NAME'));
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
  a.equal(h.created.length,0);a.equal(e.state.calendarId,null);
 });
 test('iCloud creation never falls back to a local calendar',async()=>{
@@ -430,18 +430,17 @@ test('missing official semester dates fails closed without importing or guessing
  a.equal(e.state.anchors['140'],undefined);
 });
 
-test('settings menu contains only credentials and the calendar, with no advanced actions',async()=>{
+test('credentials open directly from the main menu without a settings submenu',async()=>{
  const e=await env({hostEnv:'index'}),menus=[];
- e.keys.set('NUFE.Local.v1.cookies','[]');
- e.state.calendarId=e.calendar.identifier;
- e.store.write(e.state);e.store.release();
+ e.keys.set('NUFE.Local.v1.cookies','[]');e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
    return menus.length===1?1:null;
  };
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);
- a.deepEqual(Array.from(menus[1]),['自动登录凭据','课表日历']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);
+ a.ok(menus[1].includes('保存账号与密码'));
+ a.ok(!menus[1].includes('课表日历'));
  a.equal(e.requests.length,0);
  a.equal(e.store.read().failures,0);
 });
@@ -515,11 +514,12 @@ test('credential form captures both fields before WebView dismissal',async()=>{
   dismiss(){dismissed=true;}
   dispose(){disposed=true;}
  };
- const result=await e.m.credentialForm({title:'NUFE 登录',showRemember:true});
- a.equal(result.username,'test-student');a.equal(result.password,'test-password');a.equal(result.remember,true);
+ const result=await e.m.credentialForm({title:'NUFE 登录'});
+ a.equal(result.username,'test-student');a.equal(result.password,'test-password');
+ a.equal(Object.hasOwn(result,'remember'),false);
  a.equal(presented,true);a.equal(dismissed,true);a.equal(disposed,true);a.equal(afterDismissEvaluated,false);
  a.ok(html.includes('type="password"'));a.ok(html.includes('id="account"'));
- a.ok(html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
+ a.ok(!html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
  a.equal(await requestGuard({url:'https://example.org'}),false);
  a.equal(await requestGuard({url:'about:blank'}),true);
 });
@@ -534,7 +534,7 @@ test('closing the credential form without submitting cancels without saving',asy
  await a.rejects(()=>e.m.credentialForm({showRemember:true}),code('CANCELLED'));
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
-test('credential form without opt-in does not save to iCloud',async()=>{
+test('credential form itself does not persist before school authentication',async()=>{
  const e=await env();let handler;
  e.sandbox.__sdk.WebViewController=class{
   async addScriptMessageHandler(_name,callback){handler=callback;}
@@ -543,8 +543,9 @@ test('credential form without opt-in does not save to iCloud',async()=>{
   dismiss(){}
   dispose(){}
  };
- const result=await e.m.credentialForm({showRemember:true});
- a.equal(result.remember,false);
+ const result=await e.m.credentialForm();
+ a.equal(result.username,'student');
+ a.equal(Object.hasOwn(result,'remember'),false);
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 
@@ -557,7 +558,7 @@ test('WebView initialization timeout safely falls back to native secure inputs',
  e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
  e.sandbox.__sdk.Dialog.confirm=async()=>false;
  const r=await e.m.credentialForm({showRemember:true});
- a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(r.remember,false);
+ a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(Object.hasOwn(r,'remember'),false);
  a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
 });
 
