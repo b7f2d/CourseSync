@@ -4,10 +4,6 @@
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script } from 'scripting';
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, widgetReloadDate } from './widget-data';
 
-// Scripting's three transparent widget modes must never receive an opaque canvas.
-const OPAQUE_CANVAS=(Widget.isTransparentMode||Widget.isBlurMode||Widget.isTransparentBackground)
-  ?undefined:{light:'#FFFFFF',dark:'#FFFFFF'};
-
 const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
   dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
@@ -114,7 +110,7 @@ function RollingPanel({model,family}){
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       return <VStack alignment="leading" spacing={0}
         padding={safeInset}
-        widgetBackground={OPAQUE_CANVAS}
+        widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
@@ -137,7 +133,7 @@ function SmallPanel({model}){
   const next=classes.find(x=>x.status==='upcoming');
   const chosen=current||next||classes[classes.length-1];
   return <VStack alignment="leading" spacing={8} padding={20}
-    widgetBackground={OPAQUE_CANVAS}
+    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
     <Text font={18} fontWeight="bold" foregroundStyle={COLORS.dark}>
       今天
@@ -166,7 +162,7 @@ function EmptyPanel({kind='empty',code=''}) {
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={22}
-    widgetBackground={OPAQUE_CANVAS}
+    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE-Schedule</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
