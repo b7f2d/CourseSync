@@ -194,7 +194,7 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
  a.match(e.m.reasonFor('HTTP_429'),/429/);
  a.match(e.m.actionFor('HTTP_429'),/限流/);
  a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
- a.match(e.m.actionFor('CALENDAR_READONLY'),/课表日历/);
+ a.match(e.m.actionFor('CALENDAR_READONLY'),/原日历/);
 });
 test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
@@ -234,7 +234,18 @@ test('primary menu contains refresh credentials and status',async()=>{const e=aw
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
-test('Scripting first provisioning goes directly to binding and sync, not a main menu',async()=>{const e=await env({hostEnv:'index'});e.state.calendarId=null;const alerts=[];e.sandbox.__sdk.Dialog.confirm=async()=>true;e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.ok(e.store.read().calendarId);a.equal(e.store.read().runStatus,'success');a.equal(alerts.length,1);a.match(alerts[0].title,/成功/);});
+test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
+ const e=await env({hostEnv:'index'});e.state.calendarId=null;const alerts=[],all=[e.other];
+ e.sandbox.__sdk.Calendar.forEvents=async()=>all;
+ e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'new-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
+ e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ a.equal(e.store.read().calendarId,'new-icloud');
+ a.equal(e.store.read().calendarTitle,'Custom Calendar');
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(alerts.length,1);a.match(alerts[0].title,/成功/);
+});
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);});
 test('Scripting native fetch cancels redirect and exposes parsed cookie metadata',async()=>{const e=await env();let stopped=false;e.sandbox.fetchImpl=async(url,opt)=>{a.equal(opt.allowInsecureRequest,false);a.equal(await opt.handleRedirect({url:'https://jwxt.nufe.edu.cn/student/login'}),null);stopped=true;return {status:302,headers:{forEach:fn=>{fn('/student/login','location');},get:()=>null},cookies:[{name:'school',value:'local-token',domain:'jwxt.nufe.edu.cn',path:'/',expiresDate:null}],mimeType:'text/html',text:async()=>''};};const req=new e.m.ScriptingAdapter.Request('https://jwxt.nufe.edu.cn/student/sso/login');let redirected='';req.onRedirect=r=>{redirected=r.url;return null;};await req.loadString();a.ok(stopped);a.equal(redirected,'https://jwxt.nufe.edu.cn/student/login');a.equal(req.response.cookies[0].name,'school');});
@@ -884,7 +895,7 @@ test('self-check flags pending transactions and does not clear their journal',as
  a.equal(e.files.get(e.store.path('run-lock.json')),before);
  a.match(e.m.statusText(e.state),/需要恢复上次写入/);
 });
-test('school connectivity probe carries neither saved Cookie nor passwords',async()=>{
+test('live school connectivity probe uses stored session Cookie but never saved password',async()=>{
  const e=await env(),seen=[];
  e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'secret',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
  e.sandbox.fetchImpl=async(url,options)=>{seen.push({url,options});return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>safe</html>'};};
@@ -892,8 +903,9 @@ test('school connectivity probe carries neither saved Cookie nor passwords',asyn
  a.equal(checks.find(x=>x.name==='学校连接').level,'正常');
  a.equal(seen.length,1);
  a.match(seen[0].url,/^https:\/\/jwxt\.nufe\.edu\.cn\//);
- a.ok(!seen[0].options.headers?.Cookie);
+ a.ok(seen[0].options.headers?.Cookie?.includes('SESSION=secret'));
  a.ok(!seen[0].options.body);
+ a.ok(!JSON.stringify(seen[0].options).includes('password'));
  a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
 });
 test('self-check failure report includes actionable error code without secrets',async()=>{
