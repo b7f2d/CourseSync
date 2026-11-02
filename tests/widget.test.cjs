@@ -448,7 +448,7 @@ test('widget keeps white canvas, distinct colored cards and symmetric rounded-co
  a.match(ui,/doneBg:'#E5E7EB'/);
  a.match(ui,/nextBg:'#EFF4FA'/);
  a.match(ui,/activeBg:'#D9E9FF'/);
- a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.equal((ui.match(/widgetBackground=\{OPAQUE_CANVAS\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
