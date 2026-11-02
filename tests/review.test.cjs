@@ -461,7 +461,22 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);});
 test('Scripting native fetch cancels redirect and exposes parsed cookie metadata',async()=>{const e=await env();let stopped=false;e.sandbox.fetchImpl=async(url,opt)=>{a.equal(opt.allowInsecureRequest,false);a.equal(await opt.handleRedirect({url:'https://jwxt.nufe.edu.cn/student/login'}),null);stopped=true;return {status:302,headers:{forEach:fn=>{fn('/student/login','location');},get:()=>null},cookies:[{name:'school',value:'local-token',domain:'jwxt.nufe.edu.cn',path:'/',expiresDate:null}],mimeType:'text/html',text:async()=>''};};const req=new e.m.ScriptingAdapter.Request('https://jwxt.nufe.edu.cn/student/sso/login');let redirected='';req.onRedirect=r=>{redirected=r.url;return null;};await req.loadString();a.ok(stopped);a.equal(redirected,'https://jwxt.nufe.edu.cn/student/login');a.equal(req.response.cookies[0].name,'school');});
-test('Scripting WebView expressions use explicit return function body',async()=>{const e=await env();e.sandbox.__sdk.WebViewController=class{async loadHTML(){return true;}async evaluateJavaScript(js){return js;}dispose(){}};const w=new e.m.ScriptingAdapter.WebView();w.shouldAllowRequest=r=>r.url==='about:blank';a.equal(await w.inner.shouldAllowRequest({url:'https://evil.test'}),false);a.equal(await w.evaluateJavaScript('window.result'),'return (window.result);');});
+test('remaining slider WebView is ephemeral, does not expose JS evaluation and presents only local HTML',async()=>{
+ const e=await env();let initialized=null;
+ e.sandbox.__sdk.WebViewController=class{
+   constructor(options){initialized=options;}
+   async loadHTML(html){a.match(html,/Content-Security-Policy/);return true;}
+   async present(options){a.equal(options.navigationTitle,'滑块验证');}
+   dispose(){}
+ };
+ const w=new e.m.ScriptingAdapter.WebView();
+ a.equal(initialized.ephemeral,true);
+ a.equal(typeof w.evaluateJavaScript,'undefined');
+ a.equal(typeof w.shouldAllowRequest,'undefined');
+ await w.loadHTML('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">');
+ await w.present('滑块验证');
+ w.inner.dispose();
+});
 test('Scripting recurrence flag detects even a single visible series instance',async()=>{const e=await env();const old=e.add(lesson());old.hasRecurrenceRules=true;old.recurrenceRules=[{frequency:'weekly',interval:1}];e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,old.identifier);});
 test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__NUFE_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__NUFE_LAUNCH__;})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
 
