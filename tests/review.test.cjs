@@ -185,6 +185,7 @@ test('retry guidance shows a concrete Beijing-time estimate without changing sch
  const now=Date.parse('2026-11-02T00:00:00.000Z');
  e.state.nextAttempt=now+90*60000;
  a.match(e.m.automaticRetryText(e.state,now),/2026-11-02 09:30/);
+ e.state.nextAttempt=Date.now()+90*60000;
  a.match(e.m.statusText(e.state),/下次自动尝试：/);
  e.state.authPaused=true;
  a.match(e.m.automaticRetryText(e.state,now),/手动处理/);
