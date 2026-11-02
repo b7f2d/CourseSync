@@ -12,8 +12,8 @@ const form=source.slice(begin,end);
 test('credential form has username and password together in one offline WebView',()=>{
  assert.match(form,/new WebView\(\)/);
  assert.match(form,/addScriptMessageHandler\('nufeCredentials'/);
- assert.match(form,/<input id="account" type="text"/);
- assert.match(form,/<input id="secret" type="password"/);
+ assert.match(form,/<input id="account" name="username" type="text"/);
+ assert.match(form,/<input id="secret" name="password" type="password"/);
  assert.match(form,/connect-src \\'none\\'/);
  assert.match(form,/form-action \\'none\\'/);
  assert.doesNotMatch(form,/shouldAllowRequest/);
