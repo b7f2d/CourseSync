@@ -31,8 +31,10 @@ export function readWidgetMirror(storage){
     events.push(e);
   }
   let preview=null;
-  if(obj.preview!=null){
-    if(!obj.preview||obj.preview.term!=='2024-2025-2'||
+  // Ignore caches from the previous 2025-2026-2 preview; the next
+  // opening of the main project regenerates the newly chosen test term.
+  if(obj.preview!=null&&obj.preview.term==='2024-2025-2'){
+    if(!obj.preview||
        !Array.isArray(obj.preview.events)||obj.preview.events.length>400)
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
     const items=[];
