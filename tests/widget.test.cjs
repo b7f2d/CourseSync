@@ -441,14 +441,15 @@ test('all day card widths are explicit and centered within four equal slots',()=
  a.match(ui,/width=\{cardWidth\}/);
  a.match(ui,/frame=\{width\?\{width,alignment:'topLeading'\}/);
 });
+test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/current\?'#F0F7FF':done\?COLORS.muted/); });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/safeInset=medium\?9:12/);
  a.match(ui,/padding=\{safeInset\}/);
  a.match(ui,/width-2\*safeInset/);
  a.match(ui,/doneBg:'#E5E7EB'/);
- a.match(ui,/nextBg:'#EFF4FA'/);
- a.match(ui,/activeBg:'#D9E9FF'/);
+ a.match(ui,/nextBg:'#EBF4FF'/);
+ a.match(ui,/activeBg:'#238BFF'/);
  a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
 });
