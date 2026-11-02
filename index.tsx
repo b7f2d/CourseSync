@@ -1881,7 +1881,26 @@ function selectTermIds(info,state,allTerms){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   const rest=available.filter(sid=>sid!==info.current);
-  if(allTerms)return [info.current,...rest];
+  if(allTerms){
+    // Manual "立即刷新" must not rewrite every historical semester on
+    // every invocation: a long transcript of fully synchronized old terms
+    // can generate thousands of needless EventKit operations.
+    // Import never-synced terms once, then prioritize the current term and
+    // at most one historical term whose last successful check is stale.
+    const missing=rest.filter(id=>!state.semesters?.[String(id)]?.lastSuccess);
+    if(missing.length)return [info.current,...missing];
+    const errorIds=new Set((state.termErrors||[]).map(e=>String(e.sid)));
+    const now=Date.now(),period=7*DAY;
+    const stale=rest.filter(id=>{
+      const checked=Date.parse(state.semesters?.[String(id)]?.lastSuccess||'');
+      return errorIds.has(String(id))||!Number.isFinite(checked)||now-checked>=period;
+    }).sort((a,b)=>{
+      const ta=Date.parse(state.semesters?.[String(a)]?.lastSuccess||'');
+      const tb=Date.parse(state.semesters?.[String(b)]?.lastSuccess||'');
+      return (Number.isFinite(ta)?ta:0)-(Number.isFinite(tb)?tb:0);
+    });
+    return stale.length?[info.current,stale[0]]:[info.current];
+  }
   if(!rest.length)return [info.current];
   const start=((Number(state.cursor)||0)%rest.length+rest.length)%rest.length;
   const count=Math.min(2,rest.length);
