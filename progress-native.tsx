@@ -92,7 +92,7 @@ export function createNativeProgressView(){
       session.shown=false;
       closeVisible();
       // Native presentation dismissal is asynchronous. Wait briefly for the
-      // actual sheet to leave before showing an SMS or password entry sheet.
+      // actual sheet to leave before presenting verification input.
       // Never let a hung host UI block the school login indefinitely.
       return Promise.race([
         presented.then(()=>{},()=>{}),
