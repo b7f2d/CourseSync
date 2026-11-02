@@ -694,7 +694,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
     if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      await await onStage('等待二次认证');await mfa(http,r);
+      await onStage('等待二次认证');await mfa(http,r);
     }else if(safeURL(r.url).host==='authserver.nufe.edu.cn'&&/\/login(?:\?|$)/.test(r.url)){
       fail(interactive?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
     }
@@ -713,7 +713,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    await await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
+    await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   if(!interactive){
     const saved=readSavedCredentials();
