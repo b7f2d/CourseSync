@@ -303,6 +303,17 @@ test('old private cached preview is ignored, never shifted into the current time
  a.equal(model.days[1].courses.length,1);
  a.equal(model.days[1].courses[0].title,'真实课表');
 });
+test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
+  a.match(ui,/font=\{compact\?14:17\}/);
+  a.match(ui,/day\.label/);
+  a.match(ui,/day\.weekday/);
+  a.match(ui,/day\.dateLabel/);
+  a.match(ui,/\+\{window\.hiddenAfter\}节课/);
+  a.match(ui,/chosen\.status==='done'\?COLORS\.doneBg/);
+  a.match(ui,/foregroundStyle=\{fg\}/);
+});
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/safeInset=medium\?18:22/);
