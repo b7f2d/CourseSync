@@ -718,7 +718,7 @@ class Store {
   }
   // Only a user-requested cancellation of the SAME token may take over a
   // demonstrably unresponsive task. Never blindly delete a healthy live lock.
-  recoverStalledCancellation(minIdleMs=120000){
+  recoverStalledCancellation(minIdleMs=90000){
     const p=this.path('run-lock.json'),cancel=this.path('run-cancel.json');
     if(!this.fm.fileExists(p)||!this.fm.fileExists(cancel))return false;
     let raw,l,c;
@@ -736,6 +736,9 @@ class Store {
     let lastActivity=l.at;
     if(hb&&hb.token===l.token&&Number.isFinite(hb.at))
       lastActivity=Math.max(lastActivity,hb.at);
+    // Fast path: an actively pulsing writer is not an orphan. Avoid parsing
+    // multi-year local state on every polling iteration.
+    if(Date.now()-lastActivity<Math.max(60000,minIdleMs))return false;
     // Legacy installations do not yet write a heartbeat. The last recorded
     // sync stage is another reliable sign that the previous run is moving.
     try{const state=this.read();const stageAt=Date.parse(state.lastStageAt||'');
@@ -2162,6 +2165,9 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
       }
     }
     await new Promise(resolve=>Timer.schedule(poll,false,resolve));
+    try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+  }
+  if(interactive&&store.recoverStalledCancellation()){
     try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   }
   return 'still-running';
