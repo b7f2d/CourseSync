@@ -33,8 +33,8 @@ let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')
 const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu':'sync')).trim().toLowerCase()==='menu'?'menu':'sync';
 let __shortcutOutput=null;
 const __webviews=new Set();
-const config={runsInApp:HostScript.env==='index',runsInWidget:false,runsWithSiri:true};
-const args={shortcutParameter:__mode==='menu'?'':'sync',widgetParameter:''};
+const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
+const args={shortcutParameter:__mode==='menu'?'':'sync'};
 const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutput=String(value);},complete:()=>{
   for(const w of __webviews)try{w.dispose();}catch(_){}
   HostScript.exit(__intent?.text?__intent.text(__shortcutOutput||'处理完成'):__shortcutOutput);
@@ -662,9 +662,9 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     const need=await http.authJSON(AUTH+'/checkNeedCaptcha.htl?'+form({username,_:Date.now()}));assert(typeof need.isNeed==='boolean','CAPTCHA');
     let captcha='';if(need.isNeed||/\b_badCredentialsCount\s*=\s*["']?0\b/.test(r.text)) {
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){onStage('等待图形验证');await humanSlider(http);}
+      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){await onStage('等待图形验证');await humanSlider(http);}
       else {
-        onStage('等待图形验证');
+        await onStage('等待图形验证');
         const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});
         assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');
         // Keep the school image in memory. Show it together with the input
@@ -692,7 +692,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
     if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      onStage('等待二次认证');await mfa(http,r);
+      await await onStage('等待二次认证');await mfa(http,r);
     }else if(safeURL(r.url).host==='authserver.nufe.edu.cn'&&/\/login(?:\?|$)/.test(r.url)){
       fail(interactive?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
     }
@@ -711,7 +711,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
+    await await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   if(!interactive){
     const saved=readSavedCredentials();
@@ -719,7 +719,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
-  onStage('等待输入学校登录信息');
+  await onStage('等待输入学校登录信息');
   const account=await credentialForm({title:'NUFE 登录'});
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
   // Save only AFTER the school confirms successful authentication. The
@@ -1356,8 +1356,8 @@ function createProgress(state,store,interactive){
     const label=String(message||'');
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
-      ui.pause(); // Free the modal presentation slot for native input.
-      return;
+      // Caller awaits the native sheet dismissal before presenting another.
+      return ui.pause();
     }
     if(waitingForVerification){
       // Never flash the sheet between captcha, SMS and login HTTP requests.
@@ -2034,25 +2034,6 @@ async function loginPreflight(state,store,progress){
   if(!f.execution)fail('LOGIN_EXECUTION_MISSING');
   return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
 }
-async function widget(store) {
-  if(typeof ListWidget==='undefined'){
-    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不提供旧版小组件接口，已跳过小组件输出');
-    return;
-  }
-  const state=store.read(),w=new ListWidget(),now=Date.now(),local=new Date(now+8*3600000),day=local.toISOString().slice(0,10),mode=String(args.widgetParameter||'today');
-  const midnight=Date.parse(day+'T00:00:00+08:00');let start=midnight,end=start+DAY;
-  if(mode==='tomorrow'){start+=DAY;end+=DAY;}if(mode==='week'){start-=((local.getUTCDay()+6)%7)*DAY;end=start+7*DAY;}
-  const events=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
-  let selected=events.filter(e=>Date.parse(e.start)>=start&&Date.parse(e.start)<end);
-  if(mode==='current')selected=events.filter(e=>Date.parse(e.start)<=now&&Date.parse(e.end)>now);
-  if(mode==='next')selected=events.filter(e=>Date.parse(e.start)>now).slice(0,1);
-  const family=config.widgetFamily||'medium',small=family.startsWith('accessory');
-  w.addText('NUFE · '+(mode==='week'?'本周':mode==='tomorrow'?'明天':mode==='next'?'下一节':mode==='current'?'当前':'今天')).font=Font.boldSystemFont(small?12:15);
-  for(const e of selected.slice(0,small?1:family==='large'?9:3)){if(!small)w.addSpacer(5);w.addText((Date.parse(e.start)<=now&&Date.parse(e.end)>now?'● ':'')+localDateTime(e.start).slice(mode==='week'?5:11)+' '+e.title).font=Font.systemFont(small?11:13);if(!small)w.addText(e.location).font=Font.systemFont(11);}
-  if(!selected.length)w.addText('此范围暂无课程');
-  if(!small){w.addSpacer();const success=Object.values(state.semesters).map(s=>s.lastSuccess).filter(Boolean).sort()[0];w.addText(state.tx?'同步待恢复':!success||now-Date.parse(success)>2*DAY?'课表可能过期，点按刷新':'仅本地缓存').font=Font.systemFont(10);}
-  w.url=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});w.refreshAfterDate=new Date(now+30*60000);Script.setWidget(w);
-}
 // Credentials are opt-in and iCloud-synchronizable; cookies and device IDs stay device-only.
 // install only trusted scripts, and do not export keys/values to diagnostics.
 async function manageSavedCredentials(state,store){
@@ -2147,7 +2128,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
 }
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
-  const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
+  const store=new Store();
   let firstSetup=false;
   if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
