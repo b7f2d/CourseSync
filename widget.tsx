@@ -1,6 +1,6 @@
 // @ts-nocheck
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
-// no authentication, network requests, Keychain access or calendar writes.
+// renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, Script } from 'scripting';
 import { loadWidgetState, buildWeek, widgetReloadDate, formatWeekLabel } from './widget-data';
 
