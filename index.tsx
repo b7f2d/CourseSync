@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: simplify settings to credentials and calendar; retain safe single-writer sync.
+// Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -1235,6 +1235,72 @@ async function pickCalendar(state,store,force=false){
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
   store.write(state);return await alignBoundCalendarName(picked,state,store);
 }
+// Present recovery controls only for a matching failure. The main menu and
+// routine status screen remain limited to daily-use functions.
+function availableRecovery(code,state,store){
+  if(code==='COOKIE_STORAGE')return {kind:'cookie',label:'清除异常 Cookie'};
+  if(code==='LOCK_CORRUPT')return {kind:'lock',label:'检查并修复异常同步锁'};
+  if(['BACKUP_FAILED','CALENDAR_VERIFY','LEGACY_VERIFY','LEGACY_CHANGED','CLEANUP_REMOVE_FAILED','STATE_CORRUPT','MARKER_CORRUPT'].includes(code)){
+    const names=[state?.lastSyncBackupName,state?.lastLegacyBackupName,state?.lastLegacyReportName].filter(Boolean);
+    if(names.some(n=>/^[^/\\]+$/.test(n)&&store.fm.fileExists(store.path(n))))
+      return {kind:'backup',label:'导出恢复备份'};
+  }
+  return null;
+}
+async function clearBrokenCookies(state,store){
+  if(Keychain.contains(KEY))Keychain.remove(KEY);
+  // A credential-based automatic login can be attempted on the next refresh.
+  state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;
+  state.lastError=null;store.write(state);
+  await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程日历均已保留，下次刷新将重新认证。');
+}
+async function exportRecoveryBackups(state,store){
+  const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName]
+    .filter(n=>n&&/^[^/\\]+$/.test(n)&&store.fm.fileExists(store.path(n)));
+  if(!names.length){await notice('没有可用备份','未发现可导出的同步备份；请保留当前课表日历。');return;}
+  const files=[...new Set(names)].map(n=>({name:n,data:Data.fromFile(store.path(n))}));
+  await hostAPI('DocumentPicker').exportFiles({files});
+}
+async function repairAbnormalLock(store){
+  const path=store.path('run-lock.json');
+  if(!store.fm.fileExists(path)){await notice('同步锁已恢复','当前已无运行锁，可尝试重新同步。');return;}
+  const original=store.fm.readString(path);
+  let entry=null;try{entry=JSON.parse(original);}catch(_){}
+  // A valid, non-expired lock may still belong to an active task. Do not
+  // offer arbitrary deletion of another process's valid ownership.
+  if(entry&&typeof entry.token==='string'&&Number.isFinite(entry.at)&&Date.now()-entry.at<20*60000){
+    await notice('同步仍受保护','同步锁仍处于有效期，不能直接清除。请等待运行完成；如任务已退出，锁会在超时后失效。');
+    return;
+  }
+  if(!await confirm('确认修复异常同步锁',
+    '请确认所有 Scripting 同步任务和快捷指令自动化均已停止。本操作只移除异常的锁文件，不删除账号凭据或日历课程。'))return;
+  if(!store.fm.fileExists(path)||store.fm.readString(path)!==original){
+    await notice('暂未处理','同步锁在确认期间发生变化，未修改锁文件。');return;
+  }
+  store.fm.remove(path);
+  await notice('同步锁已修复','异常同步锁已清除。请重新尝试同步。');
+}
+async function applyRecovery(kind,state,store){
+  if(kind==='cookie')return clearBrokenCookies(state,store);
+  if(kind==='backup')return exportRecoveryBackups(state,store);
+  if(kind==='lock')return repairAbnormalLock(store);
+}
+async function showRunStatus(state,store){
+  const code=state.runStatus==='failed'?state.lastError:null;
+  const recovery=availableRecovery(code,state,store);
+  if(!recovery){await notice('运行状态',statusText(state));return;}
+  const a=new Alert();a.title='运行状态';a.message=statusText(state);
+  a.addAction(recovery.label);a.addCancelAction('关闭');
+  if(await a.presentAlert()===0)return recovery.kind;
+  return null;
+}
+async function showFailureRecovery(error,state,store){
+  const code=diagnosticCode(error),recovery=availableRecovery(code,state,store);
+  if(!recovery){await notice(code==='CANCELLED'?'已取消':'刷新失败',errorMessage(error,state));return;}
+  const a=new Alert();a.title='刷新失败';a.message=errorMessage(error,state);
+  a.addAction(recovery.label);a.addCancelAction('关闭');
+  if(await a.presentAlert()===0)return applyRecovery(recovery.kind,state,store);
+}
 function statusText(state){
   const s=Object.values(state.semesters||{}).map(t=>(t.name||'学期')+'：'+(t.events||[]).length+' 节，成功同步 '+(t.lastSuccess?localDateTime(t.lastSuccess):'待确认')+(t.pending?'；待核对删除':'')+'；未排课 '+(t.skipped||[]).length).join('\n');
   const recent=state.lastFailure||null;
@@ -1647,7 +1713,12 @@ async function run() {
       menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       ['立即刷新','账号与日历设置','运行状态'].forEach(x=>menu.addAction(x));menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
-      if(selected===2){await notice('运行状态',statusText(state));return;}
+      if(selected===2){
+        const recovery=await showRunStatus(state,store);
+        if(!recovery)return;
+        if(recovery==='cookie')action=5;
+        else {await applyRecovery(recovery,state,store);return;}
+      }
       if(selected===1){
         const settings=new Alert();settings.title='账号与日历设置';
         ['自动登录凭据','课表日历'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
@@ -1682,6 +1753,7 @@ async function run() {
       await refreshReminders(state,store);
     }
     if(action===13){await manageSavedCredentials(state,store);return;}
+    if(action===5){await clearBrokenCookies(state,store);return;}
     if(action===7){const c=await pickCalendar(state,store,true);await notice('日历已绑定',c.title+'：只用于可替换的课表。旧内容会在新课表写入核验后自动清理。');return;}
     if(!interactive){
       if(state.authPaused){await refreshResult(false,state.lastError||'AUTH_REQUIRED');if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
@@ -1718,12 +1790,15 @@ async function run() {
     }
     if(!interactive){try{await refreshResult(false,code);}catch(_){if(state&&locked){state.authNoticeError='NOTIFICATION_FAILED';try{store.write(state);}catch(__){}}}}
     if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[NUFE] '+code+' · '+(state&&state.lastStage||'未知阶段'));
-    if(interactive)await notice(code==='CANCELLED'?'已取消':'刷新失败',errorMessage(e,state));
+    if(interactive){
+      try{await showFailureRecovery(e,state,store);}
+      catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
+    }
     else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*

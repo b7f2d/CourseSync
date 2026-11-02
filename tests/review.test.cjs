@@ -579,3 +579,51 @@ test('waiting task acquires lock only after original run releases it',async()=>{
  a.doesNotThrow(()=>second.check());
  second.release();
 });
+
+test('no recovery buttons are offered for successful runs or ordinary network failure',async()=>{
+ const e=await env();
+ a.equal(e.m.availableRecovery(null,e.state,e.store),null);
+ a.equal(e.m.availableRecovery('NETWORK',e.state,e.store),null);
+ a.equal(e.m.availableRecovery('LOGIN_SCHEMA',e.state,e.store),null);
+});
+test('a malformed Cookie storage error offers only local session reset',async()=>{
+ const e=await env();
+ const r=e.m.availableRecovery('COOKIE_STORAGE',e.state,e.store);
+ a.equal(r.kind,'cookie');a.equal(r.label,'清除异常 Cookie');
+ e.keys.set('NUFE.Local.v1.cookies','local-bad-cookie');
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials',JSON.stringify({version:1,username:'sample',password:'fake'}));
+ e.state.authPaused=true;e.state.nextAttempt=Date.now()+100000;e.state.lastError='COOKIE_STORAGE';
+ e.store.write(e.state);e.sandbox.__sdk.Dialog.alert=async()=>{};
+ await e.m.applyRecovery('cookie',e.state,e.store);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),true);
+ a.equal(e.state.authPaused,false);
+ a.equal(e.state.nextAttempt,0);
+ a.equal(e.state.lastError,null);
+});
+test('the status screen shows a recovery option only for the active recorded error',async()=>{
+ const e=await env();let prompts=[];
+ e.sandbox.__sdk.Dialog.confirm=async o=>{prompts.push(o);return false;};
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ e.state.lastError='COOKIE_STORAGE';e.state.runStatus='failed';
+ a.equal(await e.m.showRunStatus(e.state,e.store),null);
+ a.equal(prompts.length,1);
+ a.equal(prompts[0].confirmLabel,'清除异常 Cookie');
+ e.state.runStatus='success';await e.m.showRunStatus(e.state,e.store);
+ a.equal(prompts.length,1);
+});
+test('invalid lock recovery cannot clear a live valid lock',async()=>{
+ const e=await env(),path=e.store.path('run-lock.json'),before=e.files.get(path);
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ e.sandbox.__sdk.Dialog.confirm=async()=>{throw Error('should not ask to clear active lock');};
+ await e.m.applyRecovery('lock',e.state,e.store);
+ a.equal(e.files.get(path),before);
+});
+test('recovery backup option appears only when the matching backup exists',async()=>{
+ const e=await env();
+ e.state.lastSyncBackupName='known.json';
+ a.equal(e.m.availableRecovery('CALENDAR_VERIFY',e.state,e.store),null);
+ e.files.set(e.store.path('known.json'),'{}');
+ a.equal(e.m.availableRecovery('CALENDAR_VERIFY',e.state,e.store).kind,'backup');
+ a.equal(e.m.availableRecovery('NETWORK',e.state,e.store),null);
+});
