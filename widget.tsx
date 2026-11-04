@@ -4,12 +4,19 @@
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
 
+// Scripting resolves DynamicShapeStyle against the current system appearance.
 const COLORS={
-  // Opaque white canvas in all appearance modes; only course statuses tint.
-  dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
-  faint:'#727E91', finished:'#929AA7',
-  doneBg:'#E5E7EB', nextBg:'#EBF4FF',
-  activeBg:'#238BFF'
+  canvas:{light:'#FFFFFF',dark:'#111827'},
+  dark:{light:'#203451',dark:'#F3F4F6'},
+  blue:{light:'#2C69D1',dark:'#7DB4FF'},
+  muted:{light:'#9BA3AF',dark:'#AEB8C8'},
+  faint:{light:'#727E91',dark:'#BBC6D7'},
+  finished:{light:'#929AA7',dark:'#A7B2C3'},
+  doneBg:{light:'#E5E7EB',dark:'#343D4C'},
+  nextBg:{light:'#EBF4FF',dark:'#243449'},
+  activeBg:{light:'#238BFF',dark:'#2467C6'},
+  activeDetail:{light:'#F0F7FF',dark:'#E7F2FF'},
+  white:'#FFFFFF'
 };
 
 // Narrow neighbor columns need explicit CJK line breaks. SwiftUI otherwise
@@ -36,10 +43,10 @@ function CourseCard({course,compact=false,width,density='normal'}){
   const detailSize=smallText?(compact?9:10):largeText?(compact?12:13):(compact?11:12);
   const cardPadding=isSide?4:smallText?5:compact?7:8;
   const sideFont=compact?12:13,sideDetailFont=compact?9:10;
-  const detailsColor=course.status==='current'?'#F0F7FF':
+  const detailsColor=course.status==='current'?COLORS.activeDetail:
     course.status==='done'?COLORS.muted:COLORS.faint;
   const done=course.status==='done',current=course.status==='current';
-  const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
+  const fg=done?COLORS.finished:current?COLORS.white:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   // Modifier order matters: paint the rounded background AFTER sizing the
   // card. Previously the visible background used its intrinsic text width
@@ -150,7 +157,7 @@ function RollingPanel({model,family}){
       const showAllToday=!medium&&height>=290;
       return <VStack alignment="leading" spacing={0}
         padding={safeInset}
-        widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
+        widgetBackground={COLORS.canvas}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
@@ -169,33 +176,48 @@ function RollingPanel({model,family}){
   </GeometryReader>;
 }
 
+// systemSmall has much less vertical space than medium widgets. Avoid a
+// centered intrinsic-width card or Spacer stacks that steal its available room.
 function SmallPanel({model}){
   const today=model.days.find(d=>d.today);
   const classes=today?.courses||[];
   const current=classes.find(x=>x.status==='current');
   const next=classes.find(x=>x.status==='upcoming');
   const chosen=current||next||classes[classes.length-1];
-  return <VStack alignment="leading" spacing={8} padding={20}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
-    frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-    <Text font={18} fontWeight="bold" foregroundStyle={COLORS.dark}>
-      今天
-    </Text>
-    <Spacer minLength={0}/>
-    {chosen?<VStack alignment="leading" spacing={5}
-      background={{style:chosen.status==='done'?COLORS.doneBg:
-        chosen.status==='current'?COLORS.activeBg:COLORS.nextBg,
-        shape:{type:'rect',cornerRadius:10}}}
-      padding={9}>
-      <Text font={15} fontWeight="semibold" lineLimit={2}
-        foregroundStyle={chosen.status==='done'?COLORS.muted:chosen.status==='current'?'#FFFFFF':COLORS.dark}>{chosen.title}</Text>
-      <Text font={11} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
-      <Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.location}</Text>
-      {chosen.teacher?<Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.teacher}</Text>:null}
-    </VStack>:
-    <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
-    <Spacer minLength={0}/>
-  </VStack>;
+  const remaining=chosen?classes.filter(x=>x.status==='upcoming'&&x!==chosen).length:0;
+  const done=chosen?.status==='done',active=chosen?.status==='current';
+  const bg=done?COLORS.doneBg:active?COLORS.activeBg:COLORS.nextBg;
+  const fg=done?COLORS.finished:active?COLORS.white:COLORS.dark;
+  const detail=active?COLORS.activeDetail:done?COLORS.muted:COLORS.faint;
+  return <GeometryReader>
+    {proxy=>{
+      const width=proxy.size.width,height=proxy.size.height;
+      const inset=12,cardWidth=Math.max(80,width-2*inset);
+      const tight=height<160;
+      // Card background is applied after its explicit frame, like medium cards.
+      const cardStyle=modifiers().padding(tight?7:9)
+        .frame({width:cardWidth,alignment:'topLeading'})
+        .background({style:bg,shape:{type:'rect',cornerRadius:10}});
+      return <VStack alignment="leading" spacing={tight?5:7} padding={inset}
+        widgetBackground={COLORS.canvas}
+        frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+        <Text font={tight?17:19} fontWeight="bold" foregroundStyle={COLORS.dark}>今天</Text>
+        {chosen?<VStack alignment="leading" spacing={tight?3:4} modifiers={cardStyle}>
+          <Text font={tight?12:13} fontWeight="semibold" lineLimit={2}
+            minScaleFactor={0.85} multilineTextAlignment="leading"
+            foregroundStyle={fg}>{chosen.title}</Text>
+          <Text font={tight?10:11} lineLimit={1} minScaleFactor={0.85}
+            foregroundStyle={detail}>{chosen.startLabel}–{chosen.endLabel}</Text>
+          {chosen.location?<Text font={tight?10:11} lineLimit={1}
+            minScaleFactor={0.85} foregroundStyle={detail}>{chosen.location}</Text>:null}
+        </VStack>:
+        <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
+        {remaining>0?<Text font={10} foregroundStyle={COLORS.faint}>
+          +{remaining}节课
+        </Text>:null}
+      </VStack>;
+    }}
+  </GeometryReader>;
 }
 
 function EmptyPanel({kind='empty',code=''}) {
@@ -205,7 +227,7 @@ function EmptyPanel({kind='empty',code=''}) {
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 CourseSync 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={22}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
+    widgetBackground={COLORS.canvas}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>CourseSync</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
