@@ -59,6 +59,7 @@ function CourseCard({course,compact=false,width,density='normal'}){
       modifiers={cardStyle}>
     <Text font={isSide?sideFont:titleSize} fontWeight={current?'bold':'semibold'}
       lineLimit={smallText?4:5} minScaleFactor={isSide?0.85:1}
+      fixedSize={{horizontal:false,vertical:true}}
       multilineTextAlignment="leading" foregroundStyle={fg}>
       {isSide?formatSideTitle(course.title):course.title}
     </Text>
@@ -68,7 +69,8 @@ function CourseCard({course,compact=false,width,density='normal'}){
     </Text>
     {course.location?<Text font={isSide?sideDetailFont:detailSize}
       foregroundStyle={detailsColor}
-      lineLimit={2}>{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
+      lineLimit={isSide?2:3} fixedSize={{horizontal:false,vertical:true}}
+      multilineTextAlignment="leading">{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
   </VStack>;
 }
 
@@ -146,9 +148,10 @@ function RollingPanel({model,family}){
       const todayFocus=selectTodayPair(today);
       const expanded=todayFocus.courses.length>1;
       const usableWidth=Math.max(96,width-2*safeInset-2*gap);
-      // Three equal widths for a single today card. A visible pair gets
-      // half of the available width; each neighbor gets one quarter.
-      const sideWidth=Math.floor(usableWidth/(expanded?4:3));
+      // Prefer today's full course name and room over unused vertical space.
+      // Keep enough width for neighboring day cards on medium and large.
+      const sideShare=expanded?0.24:medium?0.30:0.265;
+      const sideWidth=Math.floor(usableWidth*sideShare);
       const todayWidth=usableWidth-sideWidth*2;
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       const showAllToday=!medium&&height>=290;
