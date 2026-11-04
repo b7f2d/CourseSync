@@ -6,7 +6,7 @@ import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectToda
 
 // Scripting resolves DynamicShapeStyle against the current system appearance.
 const COLORS={
-  canvas:{light:'#FFFFFF',dark:'#111827'},
+  canvas:{light:'#FFFFFF',dark:'#000000'},
   dark:{light:'#203451',dark:'#F3F4F6'},
   blue:{light:'#2C69D1',dark:'#7DB4FF'},
   muted:{light:'#9BA3AF',dark:'#AEB8C8'},
@@ -155,12 +155,16 @@ function RollingPanel({model,family}){
       const todayWidth=usableWidth-sideWidth*2;
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       const showAllToday=!medium&&height>=290;
-      return <VStack alignment="leading" spacing={0}
-        padding={safeInset}
+      // Paint the full measured widget rectangle first; only the inner
+      // layout receives insets. This prevents an exposed host-color strip.
+      return <VStack spacing={0}
         widgetBackground={COLORS.canvas}
+        background={{style:COLORS.canvas}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-        <HStack alignment="top" spacing={gap}
-          frame={{maxWidth:'infinity',alignment:'leading'}}>
+        <VStack alignment="leading" spacing={0} padding={safeInset}
+          frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+          <HStack alignment="top" spacing={gap}
+            frame={{maxWidth:'infinity',alignment:'leading'}}>
           {days.map(day=>day.today&&expanded
             ?<TodayPairColumn key="today-pair" day={day}
               width={todayWidth} compact={medium} gap={gap}
@@ -170,7 +174,8 @@ function RollingPanel({model,family}){
               width={day.today?todayWidth:sideWidth}
               compact={medium} maxRows={maxRows}
               emphasize={day.today&&!expanded}/> )}
-        </HStack>
+          </HStack>
+        </VStack>
       </VStack>;
     }}
   </GeometryReader>;
@@ -198,9 +203,12 @@ function SmallPanel({model}){
       const cardStyle=modifiers().padding(tight?7:9)
         .frame({width:cardWidth,alignment:'topLeading'})
         .background({style:bg,shape:{type:'rect',cornerRadius:10}});
-      return <VStack alignment="leading" spacing={tight?5:7} padding={inset}
+      return <VStack spacing={0}
         widgetBackground={COLORS.canvas}
+        background={{style:COLORS.canvas}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+        <VStack alignment="leading" spacing={tight?5:7} padding={inset}
+          frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <Text font={tight?17:19} fontWeight="bold" foregroundStyle={COLORS.dark}>今天</Text>
         {chosen?<VStack alignment="leading" spacing={tight?3:4} modifiers={cardStyle}>
           <Text font={tight?12:13} fontWeight="semibold" lineLimit={2}
@@ -215,6 +223,7 @@ function SmallPanel({model}){
         {remaining>0?<Text font={10} foregroundStyle={COLORS.faint}>
           +{remaining}节课
         </Text>:null}
+        </VStack>
       </VStack>;
     }}
   </GeometryReader>;
@@ -226,13 +235,17 @@ function EmptyPanel({kind='empty',code=''}) {
   const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 CourseSync，自动建立组件缓存':
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 CourseSync 完成首次课表同步';
-  return <VStack alignment="leading" spacing={9} padding={22}
+  return <VStack spacing={0}
     widgetBackground={COLORS.canvas}
+    background={{style:COLORS.canvas}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
+    <VStack alignment="leading" spacing={9} padding={22}
+      frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>CourseSync</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
     <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
     {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
+    </VStack>
   </VStack>;
 }
 
