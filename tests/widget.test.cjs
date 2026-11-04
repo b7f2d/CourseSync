@@ -341,14 +341,14 @@ test('large today layout has one focus card on the left, future stack on the rig
   a.ok(!ui.includes('course={visible[2]}'));
 });
 
-test('single visible today lesson gets large text and three equal day widths',()=>{
+test('single visible today lesson gets larger title and wider today column',()=>{
  const sample=core.selectTodayPair({today:true,courses:[{title:'只上一节',status:'current'}]});
  a.equal(sample.courses.length,1);
  a.equal(sample.hiddenAfter,0);
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/expanded=todayFocus\.courses\.length>1/);
  a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
- a.match(ui,/sideWidth=Math\.floor\(usableWidth\/\(expanded\?4:3\)\)/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
  a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
  a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
  a.match(ui,/density=\{emphasize\?'single':'side'\}/);
@@ -598,4 +598,23 @@ test('all widget sizes hide teacher names without stripping teacher data from th
  a.match(ui,/course\.startLabel/);
  const model=core.buildWidgetModel(make([ev('a','课程','2026-11-04T00:20:00Z','2026-11-04T03:25:00Z')]),date('2026-11-04T01:00:00Z'));
  a.equal(model.days[1].courses[0].title,'课程');
+});
+
+test('large widget reserves wider today column and vertically expands details',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/const sideShare=expanded\?0\.24:medium\?0\.30:0\.265/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
+ a.match(ui,/lineLimit=\{isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ a.match(ui,/lineLimit=\{smallText\?4:5\}[\s\S]{0,160}fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ for(const usableWidth of [280,320,540,600]){
+   for(const expanded of [false,true]){
+     for(const medium of [false,true]){
+       const share=expanded?0.24:medium?0.30:0.265;
+       const sideWidth=Math.floor(usableWidth*share);
+       const todayWidth=usableWidth-sideWidth*2;
+       a.equal(sideWidth*2+todayWidth,usableWidth);
+       a.ok(todayWidth>sideWidth);
+     }
+   }
+ }
 });
