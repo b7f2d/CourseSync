@@ -847,27 +847,34 @@ async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
     await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
-  if(!interactive){
-    const saved=readSavedCredentials();
-    if(!saved)fail('AUTH_REQUIRED');
-    onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
-    return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
-  }
-  // Credentials were entered in the second step of the manual refresh sheet.
-  // Reuse takes the stored credentials only if the verified cookie has expired.
-  await onStage('等待输入学校登录信息');
-  let account=null,shouldSave=false;
-  if(manualAuth?.kind==='credentials'){
-    account=manualAuth;shouldSave=true;
-  }else if(manualAuth?.kind==='reuse'){
-    account=readSavedCredentials();
-  }
+  // Reuse the verified on-device/Keychain credentials without showing the
+  // school/account wizard again. Foreground still permits a native CAPTCHA/MFA
+  // challenge when the school explicitly requires it.
+  let account=manualAuth?.kind==='credentials'?manualAuth:readSavedCredentials();
+  let shouldSave=manualAuth?.kind==='credentials';
   if(!account){
+    if(!interactive)fail('AUTH_REQUIRED');
+    onStage('学校会话已过期，需要输入账号密码');
     account=await credentialForm({title:'CourseSync 登录'});
     shouldSave=true;
+  }else{
+    onStage('Cookie 已失效，使用 Keychain 凭据自动登录');
   }
-  const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
-  // Save only AFTER the school confirms successful authentication.
+  let page;
+  try{
+    page=await passwordLogin(http,r,account.username,account.password,interactive,onStage);
+  }catch(e){
+    // A rejected stored password is not an excuse to repeat it forever.
+    // Ask once in the foreground, and only for a verified login rejection.
+    if(!interactive||shouldSave||!['LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e?.code))throw e;
+    onStage('已保存的密码未通过学校验证，等待重新输入');
+    account=await credentialForm({title:'更新 CourseSync 登录信息'});
+    shouldSave=true;
+    // Restart the CAS form to get fresh execution/salt values.
+    const fresh=await http.get(SSO);
+    page=await passwordLogin(http,fresh,account.username,account.password,true,onStage);
+  }
+  // Never persist credentials before the school has verified this login.
   if(shouldSave)saveCredentials(account.username,account.password);
   if(manualAuth?.kind==='credentials')manualAuth.password='';
   return page;
@@ -2356,8 +2363,17 @@ async function run() {
     if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(interactive&&action===0){
-      manualAuth=await prepareManualRefresh(state);
-      if(!manualAuth)return; // Cancel was handled within the native sheet.
+      // First-time setup (or explicit logout) is the only routine path to
+      // the school/account wizard. A configured user refreshes in one tap.
+      // Older installations without SCHOOL_KEY still use the only whitelisted
+      // school automatically, without invalidating verified stored credentials.
+      const needsSetup=state.signedOut||!hasSavedCredentials();
+      if(needsSetup){
+        manualAuth=await prepareManualRefresh(state);
+        if(!manualAuth)return; // Cancelled onboarding; no sync was started.
+      }else if(!Keychain.contains(SCHOOL_KEY)){
+        Keychain.set(SCHOOL_KEY,loadSelectedSchool());
+      }
     }
     if(!interactive){
       // Manual logout is intentional and must never cause background login or warning spam.

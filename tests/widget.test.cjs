@@ -242,9 +242,9 @@ test('course overflow stays chronological and reports remaining count',()=>{
  }
  a.equal(core.selectVisibleCourses({courses:[]},1).hiddenAfter,0);
 });
-test('widget has a pure white canvas and simple plus-N remaining classes',()=>{
+test('widget has an adaptive canvas and simple plus-N remaining classes',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.match(ui,/\+\{window\.hiddenAfter\}节课/);
  a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
 });
@@ -427,7 +427,7 @@ test('widget labels only dates and useful class details, not redundant auto-upda
   a.match(ui,/day\.weekday/);
   a.match(ui,/day\.dateLabel/);
   a.match(ui,/\+\{window\.hiddenAfter\}节课/);
-  a.match(ui,/chosen\.status==='done'\?COLORS\.doneBg/);
+  a.match(ui,/const bg=done\?COLORS\.doneBg:active\?COLORS\.activeBg:COLORS\.nextBg/);
   a.match(ui,/foregroundStyle=\{fg\}/);
 });
 test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
@@ -456,9 +456,9 @@ test('course card retains comfortable internal padding independent of widget out
  a.match(ui,/\.padding\(cardPadding\)/);
  a.match(ui,/safeInset=medium\?9:12/);
 });
-test('all widget families retain an opaque white background',()=>{
+test('all widget families use the adaptive opaque canvas',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- const literal="widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}";
+ const literal="widgetBackground={COLORS.canvas}";
  a.equal(ui.split(literal).length-1,3);
  a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
 });
@@ -491,8 +491,8 @@ test('readable three-day widget uses larger but density-aware typography',()=>{
  a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,2);
  a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{day\.today/);
  a.match(ui,/font=\{12\} foregroundStyle=\{COLORS\.muted\}>无课/);
- a.match(ui,/<Text font=\{15\} fontWeight="semibold" lineLimit=\{2\}/);
- a.match(ui,/foregroundStyle=\{chosen\.status==='done'\?COLORS\.muted:chosen\.status==='current'\?'#FFFFFF':COLORS\.dark\}/);
+ a.match(ui,/<Text font=\{tight\?12:13\} fontWeight="semibold" lineLimit=\{2\}/);
+ a.match(ui,/const fg=done\?COLORS\.finished:active\?COLORS\.white:COLORS\.dark/);
 });
 test('README documents the three-day UI without screenshots',()=>{
  const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
@@ -509,7 +509,7 @@ test('README documents the three-day UI without screenshots',()=>{
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });
-test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/course.status==='current'\?'#F0F7FF':/); });
+test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
 test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   const start=ui.indexOf('function formatSideTitle(title){');
@@ -530,15 +530,15 @@ test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   a.ok(ui.includes('course.teacher&&!isSide'));
 });
 
-test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
+test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/safeInset=medium\?9:12/);
  a.match(ui,/padding=\{safeInset\}/);
  a.match(ui,/width-2\*safeInset/);
- a.match(ui,/doneBg:'#E5E7EB'/);
- a.match(ui,/nextBg:'#EBF4FF'/);
- a.match(ui,/activeBg:'#238BFF'/);
- a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.match(ui,/doneBg:\{light:'#E5E7EB',dark:'#343D4C'\}/);
+ a.match(ui,/nextBg:\{light:'#EBF4FF',dark:'#243449'\}/);
+ a.match(ui,/activeBg:\{light:'#238BFF',dark:'#2467C6'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
@@ -548,4 +548,26 @@ test('missing cache is an honest empty state; widget never writes, authenticates
   const widget=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.match(widget,/Widget\.present\(/);
   a.doesNotMatch(widget,/\bKeychain\b|\bCalendarEvent\b|fetch\(/);
+});
+
+test('systemSmall uses measured width and height without wasting space on spacers',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function EmptyPanel('));
+ a.match(section,/proxy\.size\.width,height=proxy\.size\.height/);
+ a.match(section,/cardWidth=Math\.max\(80,width-2\*inset\)/);
+ a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
+ a.doesNotMatch(section,/<Spacer/);
+ a.match(section,/lineLimit=\{2\}/);
+ a.match(section,/\+\{remaining\}节课/);
+ a.match(section,/chosen\.location\?/);
+ a.doesNotMatch(section,/chosen\.teacher/);
+});
+test('all course text and card surfaces adapt to dark mode',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ for(const key of ['canvas','dark','blue','muted','faint','finished','doneBg','nextBg','activeBg','activeDetail']){
+   a.match(ui,new RegExp(key+':\\{light:'));
+ }
+ a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#111827'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.doesNotMatch(ui,/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/);
 });
