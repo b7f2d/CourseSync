@@ -469,7 +469,7 @@ test('all three day sections center visible cards; expanded today remains symmet
  a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
  a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
  a.match(ui,/width=\{cardWidth\}/);
- a.match(ui,/const sideWidth=Math\.floor\(usableWidth\/\(expanded\?4:3\)\)/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
  a.match(ui,/const todayWidth=usableWidth-sideWidth\*2/);
  a.match(ui,/width=\{day\.today\?todayWidth:sideWidth\}/);
  a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
