@@ -69,9 +69,6 @@ function CourseCard({course,compact=false,width,density='normal'}){
     {course.location?<Text font={isSide?sideDetailFont:detailSize}
       foregroundStyle={detailsColor}
       lineLimit={2}>{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
-    {course.teacher&&!isSide?<Text font={detailSize}
-      foregroundStyle={detailsColor}
-      lineLimit={1}>{course.teacher}</Text>:null}
   </VStack>;
 }
 
