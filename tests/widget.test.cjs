@@ -567,7 +567,25 @@ test('all course text and card surfaces adapt to dark mode',()=>{
  for(const key of ['canvas','dark','blue','muted','faint','finished','doneBg','nextBg','activeBg','activeDetail']){
    a.match(ui,new RegExp(key+':\\{light:'));
  }
- a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#111827'\}/);
+ a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.doesNotMatch(ui,/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/);
+});
+
+test('dark mode has a pure black canvas with full-bleed root background for all families',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.equal((ui.match(/background=\{\{style:COLORS\.canvas\}\}/g)||[]).length,3);
+ for(const [start,end] of [
+  ['function RollingPanel(', 'function SmallPanel('],
+  ['function SmallPanel(', 'function EmptyPanel('],
+  ['function EmptyPanel(', 'const snapshot=']
+ ]){
+  const section=ui.slice(ui.indexOf(start),ui.indexOf(end));
+  const root=section.indexOf('widgetBackground={COLORS.canvas}');
+  const inner=section.indexOf('padding={',root);
+  a.ok(root>=0&&inner>root,'full widget background must wrap padded content');
+  a.match(section,/frame=\{\{maxWidth:'infinity',maxHeight:'infinity'/);
+ }
 });
