@@ -100,3 +100,25 @@ test('native progress replaces the HTML view with one stable system sheet',()=>{
  assert.match(create,/createNativeProgressView\(\)/);
  assert.doesNotMatch(create,/WebView|loadHTML|evaluateJavaScript/);
 });
+
+test('routine refresh skips the school/account wizard when credentials are stored',()=>{
+ const start=index.indexOf('if(interactive&&action===0){');
+ const end=index.indexOf('if(!interactive){',start);
+ const routine=index.slice(start,end);
+ assert.match(routine,/const needsSetup=state\.signedOut\|\|!hasSavedCredentials\(\)/);
+ assert.match(routine,/if\(needsSetup\)\{/);
+ assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
+ assert.match(routine,/Keychain\.set\(SCHOOL_KEY,loadSelectedSchool\(\)\)/);
+ assert.ok(routine.indexOf('if(needsSetup){')<routine.indexOf('manualAuth=await prepareManualRefresh(state)'));
+});
+test('expired foreground cookie automatically retries saved credentials',()=>{
+ const start=index.indexOf('async function coursePage(');
+ const end=index.indexOf('// Immutable generation files',start);
+ const login=index.slice(start,end);
+ assert.match(login,/manualAuth\?\.kind==='credentials'\?manualAuth:readSavedCredentials\(\)/);
+ assert.match(login,/passwordLogin\(http,r,account\.username,account\.password,interactive,onStage\)/);
+ assert.match(login,/if\(!interactive\)fail\('AUTH_REQUIRED'\)/);
+ assert.match(login,/if\(shouldSave\)saveCredentials\(account\.username,account\.password\)/);
+ assert.match(login,/\['LOGIN_FAILED','AUTO_LOGIN_REJECTED'\]/);
+ assert.match(login,/const fresh=await http\.get\(SSO\)/);
+});
