@@ -264,13 +264,13 @@ test('teacher names appear from new mirror or older semester cache',()=>{
  const legacy={...cached,events:[Object.fromEntries(Object.entries(cached.events[0]).filter(([k])=>k!=='teacher'))]};
  a.equal(core.readWidgetMirror({get:()=>legacy}).kind,'ready');
 });
-test('renderer measures actual widget geometry, omits overflow-prone footer and renders teacher',()=>{
+test('renderer measures actual widget geometry and omits overflow-prone footer',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/GeometryReader/);
  a.match(ui,/proxy\.size\.width/);
  a.match(ui,/proxy\.size\.height/);
  a.match(ui,/selectVisibleCourses\(day,maxRows\)/);
- a.match(ui,/course\.teacher/);
+ a.doesNotMatch(ui,/course\.teacher/);
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
@@ -527,7 +527,8 @@ test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   a.ok(!ui.includes("course.startLabel+'\\n'+course.endLabel"),
     'side card time range should not be forced into two lines');
   a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
-  a.ok(ui.includes('course.teacher&&!isSide'));
+  a.ok(!ui.includes('course.teacher&&!isSide'));
+  a.doesNotMatch(ui,/\{course\.teacher\}/);
 });
 
 test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
@@ -588,4 +589,13 @@ test('dark mode has a pure black canvas with full-bleed root background for all 
   a.ok(root>=0&&inner>root,'full widget background must wrap padded content');
   a.match(section,/frame=\{\{maxWidth:'infinity',maxHeight:'infinity'/);
  }
+});
+
+test('all widget sizes hide teacher names without stripping teacher data from the model',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.doesNotMatch(ui,/\{course\.teacher\}|\{chosen\.teacher\}|course\.teacher\s*&&|chosen\.teacher\s*&&/);
+ a.match(ui,/course\.location/);
+ a.match(ui,/course\.startLabel/);
+ const model=core.buildWidgetModel(make([ev('a','课程','2026-11-04T00:20:00Z','2026-11-04T03:25:00Z')]),date('2026-11-04T01:00:00Z'));
+ a.equal(model.days[1].courses[0].title,'课程');
 });
