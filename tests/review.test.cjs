@@ -44,7 +44,7 @@ test('foreground refresh uses one Live Activity through verification and dismiss
  const e=await env({hostEnv:'index'}),calls=[];
  e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>calls.push(['sheet']);
+ e.sandbox.__progressUIFactory=()=>({show:()=>calls.push(['sheet']),pause:()=>calls.push(['pause']),resume:()=>calls.push(['resume']),finish:()=>calls.push(['close'])});
  e.sandbox.__liveActivityFactory=()=>({
    async start(state){calls.push(['start',state.phase]);return true;},
    async update(state){calls.push(['update',state.phase]);},
@@ -59,7 +59,24 @@ test('foreground refresh uses one Live Activity through verification and dismiss
  await new Promise(resolve=>setImmediate(resolve));
  await progress.finish();
  await progress.finish();
- a.deepEqual(calls,[['start','connect'],['update','verify'],['update','sync'],['end','finish',0]]);
+ a.deepEqual(calls,[['sheet'],['start','connect'],['pause'],['update','verify'],['resume'],['update','sync'],['close'],['end','finish',0]]);
+});
+
+test('successful refresh updates the active island before ending it',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__liveActivityFactory=()=>({
+   async start(){return true;},
+   async update(state){calls.push(['update',state.phase]);},
+   async end(state){calls.push(['end',state.phase]);}
+ });
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ const finishing=progress.finish(true);
+ await new Promise(resolve=>setImmediate(resolve));
+ a.deepEqual(calls,[['update','complete']]);
+ await finishing;
+ a.deepEqual(calls,[['update','complete'],['end','complete']]);
 });
 
 test('foreground refresh falls back to the native sheet when Live Activity start is denied',async()=>{
@@ -71,7 +88,7 @@ test('foreground refresh falls back to the native sheet when Live Activity start
  const progress=e.m.createProgress(e.state,e.store,true);
  await progress.start();
  await progress.finish();
- a.deepEqual(calls,['start','sheet','close']);
+ a.deepEqual(calls,['sheet','start','close']);
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{

@@ -1542,35 +1542,42 @@ function createProgress(state,store,interactive){
   stage.start=async()=>{
     if(!interactive||started||closed)return;
     started=true;
-    if(CourseRefreshActivity&&await activityCall(()=>Scripting.LiveActivity.areActivitiesEnabled())){
-      let accepting=true;
-      const shown=await activityCall(async()=>{
-        const candidate=CourseRefreshActivity();
-        if(!await candidate.start({phase},{staleDate:Date.now()+5*60000}))return false;
-        if(closed||!accepting){
-          await candidate.end({phase:'finish'},{dismissTimeInterval:0});
-          return false;
-        }
-        activity=candidate;
-        return true;
-      });
-      accepting=false;
-      if(shown||closed)return;
-    }
     try{
-      if(typeof hostAPI('Navigation')?.present!=='function')return;
-      ui=createNativeProgressView();
-      ui.show();
-      await new Promise(resolve=>Timer.schedule(100,false,resolve));
+      if(typeof hostAPI('Navigation')?.present==='function'){
+        ui=createNativeProgressView();
+        ui.show();
+        await new Promise(resolve=>Timer.schedule(100,false,resolve));
+      }
     }catch(_){ui=null;}
+    if(closed||!CourseRefreshActivity||
+       !await activityCall(()=>Scripting.LiveActivity.areActivitiesEnabled()))return;
+    let accepting=true;
+    await activityCall(async()=>{
+      const candidate=CourseRefreshActivity();
+      if(!await candidate.start({phase},{staleDate:Date.now()+5*60000}))return;
+      if(closed||!accepting){
+        await candidate.end({phase:'finish'},{dismissTimeInterval:0});
+        return;
+      }
+      activity=candidate;
+    });
+    accepting=false;
   };
-  stage.finish=async()=>{
+  stage.finish=async(success=false)=>{
     if(closed)return;
     closed=true;
     try{ui?.finish();}catch(_){}
     if(activity){
       await updates;
-      await activityCall(()=>activity.end({phase:'finish'},{dismissTimeInterval:0}));
+      const finalPhase=success?'complete':'finish';
+      if(success){
+        // Show completion while the activity is still active in Dynamic Island.
+        const shown=await activityCall(async()=>{
+          return (await activity.update({phase:finalPhase}))!==false;
+        });
+        if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
+      }
+      await activityCall(()=>activity.end({phase:finalPhase},{dismissTimeInterval:0}));
     }
   };
   return stage;
@@ -2425,7 +2432,7 @@ async function run() {
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
     store.write(state);
-    if(progress)await progress.finish();
+    if(progress)await progress.finish(state.runStatus==='success');
     if(state.termErrors?.length){
       if(interactive)await notice('部分学期未同步','已更新可用学期，请在运行状态中查看详情。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
