@@ -727,24 +727,38 @@ test('widget has a single dedicated Scripting entry with no legacy ListWidget re
 });
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('every manual refresh checks all available semesters, including already synced historical ones',async()=>{
+test('manual refresh updates the current semester and only imports missing history',async()=>{
  const {m}=await env();
- const info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};
- const state={cursor:2,semesters:{
-  158:{lastSuccess:new Date().toISOString()},
-  159:{lastSuccess:new Date().toISOString()},
-  160:{lastSuccess:new Date().toISOString()}
- }};
+ const info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161},{id:158}]};
+ const state={semesters:{}};
  a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158,159,160]);
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158,159,160]);
- a.equal(state.cursor,2);
+ state.semesters[158]={lastSuccess:'verified'};
+ state.semesters[160]={lastSuccess:'verified'};
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,159]);
+ a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161]);
+ state.semesters[159]={lastSuccess:'verified'};
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
 });
-test('full foreground sync selects unique school-listed semester identifiers once',async()=>{
- const {m}=await env();
- const info={current:161,semesters:[{id:161},{id:158},{id:158},{id:159},{id:160}]};
- a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[161,158,159,160]);
+
+test('first manual sync imports history after the current term and later refreshes leave history intact',async()=>{
+ const e=await env(),fetched=[];
+ e.m.HTTP.prototype.get=async()=>({
+   url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
+   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="160">2025-2026-2</option><option value="161">2026-2027-1</option></select>'
+ });
+ e.m.HTTP.prototype.json=async url=>{
+   fetched.push(Number(new URL(url).searchParams.get('semesterId')));
+   return raw([activity({weekIndexes:[1]})]);
+ };
+ await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
+ a.deepEqual(fetched,[161,160]);
+ const historical=e.db.find(ev=>e.m.eventRecord(ev,e.state.owner,e.m.storedEventIndex(e.state))?.sid==='160');
+ a.ok(historical);
+ fetched.length=0;
+ await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
+ a.deepEqual(fetched,[161]);
+ a.ok(e.db.includes(historical));
 });
-test('background rotates over all school-listed older semesters',async()=>{const {m}=await env();const state={cursor:0},info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,158,159]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,160,158]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,159,160]);});
 
 test('readable event notes contain the synchronization timestamp only',async()=>{
  const {m}=await env();
@@ -972,7 +986,7 @@ test('successful verified synchronization clears signed-out state without changi
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
  const cookieHeaders=[];const get=e.m.HTTP.prototype.get;
  e.m.HTTP.prototype.get=async function(...args){cookieHeaders.push(this.jar.header('https://jwxt.nufe.edu.cn/student/for-std/course-table'));return get.apply(this,args);};
- await e.m.synchronize(e.state,e.store,e.calendar,true,false,()=>{});
+ await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
  a.ok(cookieHeaders.length>0);
  a.ok(cookieHeaders.every(header=>!header.includes('SESSION=stale')));
  a.equal(e.state.signedOut,false);

@@ -2146,22 +2146,15 @@ async function finishTx(state,store,adapter,budget) {
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
   await refreshReminders(state,store);
 }
-function selectTermIds(info,state,allTerms){
+function selectTermIds(info,state,interactive){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
-  const rest=available.filter(sid=>sid!==info.current);
-  // Foreground manual refresh: check every school-listed semester, every time.
-  // Progress feedback stays visible and each term still uses existing
-  // transaction recovery, ownership checks and school error handling.
-  if(allTerms)return [info.current,...rest];
-  if(!rest.length)return [info.current];
-  const start=((Number(state.cursor)||0)%rest.length+rest.length)%rest.length;
-  const count=Math.min(2,rest.length);
-  const selected=Array.from({length:count},(_,i)=>rest[(start+i)%rest.length]);
-  state.cursor=(start+count)%rest.length;
-  return [info.current,...selected];
+  // Import history during manual setup and resume any missing imports later.
+  // Scheduled refreshes keep their network and calendar work on the current term.
+  const missing=interactive?available.filter(sid=>sid!==info.current&&!state.semesters?.[sid]?.lastSuccess):[];
+  return [info.current,...missing];
 }
-async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null,manualAuth=null) {
+async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
@@ -2179,9 +2172,9 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   const accountKey='CourseSync.Local.v1.person';
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
-  // Foreground covers all school-listed terms; background rotates two older terms.
-  let sids=selectTermIds(info,state,allTerms);store.write(state);
+  let sids=selectTermIds(info,state,interactive);
   if(interrupted){assert(info.semesters.some(t=>String(t.id)===interrupted.sid),'TX_TERM_UNAVAILABLE');sids=[Number(interrupted.sid),...sids.filter(s=>String(s)!==interrupted.sid)];}
+  const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
   state.termErrors=[];
   for(const sid of sids) {
     try {
@@ -2204,14 +2197,16 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
     store.write(state);await finishTx(state,store,adapter,budget);
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
-      if(state.tx||(!allTerms&&sid===info.current)||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
+      if(state.tx||sid===info.current||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
       state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});store.write(state);
     }
   }
-  if(state.termErrors.length&&allTerms)fail('PARTIAL_SYNC');
-  // Never purge unrecognized content before every term has a verified baseline.
+  // Re-scan all historical calendar windows only after an import or when
+  // initial legacy cleanup still needs to complete.
   const allTermBaselinesReady=info.semesters.every(x=>state.semesters[String(x.id)]?.lastSuccess);
-  if(REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length){
+  const legacyCleanupPending=['running','unverified'].includes(state.legacyReplacement?.status);
+  if(REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length&&
+     (!state.lastCheck||importsNewTerm||legacyCleanupPending)){
     stage('全部学期核验完成后清理专用日历旧内容');
     await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
   }
@@ -2420,7 +2415,7 @@ async function run() {
     const calendar=await pickCalendar(state,store);
     await progress.start();
     progress('连接教务系统');
-    await synchronize(state,store,calendar,interactive,interactive,progress,manualAuth);
+    await synchronize(state,store,calendar,interactive,progress,manualAuth);
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
