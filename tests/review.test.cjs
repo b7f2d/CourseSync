@@ -727,37 +727,29 @@ test('widget has a single dedicated Scripting entry with no legacy ListWidget re
 });
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('manual refresh updates the current semester and only imports missing history',async()=>{
- const {m}=await env();
- const info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161},{id:158}]};
- const state={semesters:{}};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158,159,160]);
- state.semesters[158]={lastSuccess:'verified'};
- state.semesters[160]={lastSuccess:'verified'};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,159]);
- a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161]);
- state.semesters[159]={lastSuccess:'verified'};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
-});
-
-test('first manual sync imports history after the current term and later refreshes leave history intact',async()=>{
+test('first manual sync imports all history and subsequent refreshes rotate one term',async()=>{
  const e=await env(),fetched=[];
  e.m.HTTP.prototype.get=async()=>({
    url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
-   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="160">2025-2026-2</option><option value="161">2026-2027-1</option></select>'
+   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="160">2025-2026-2</option><option value="159">2025-2026-1</option><option value="161">2026-2027-1</option></select>'
  });
+ let failHistorical=false;
  e.m.HTTP.prototype.json=async url=>{
-   fetched.push(Number(new URL(url).searchParams.get('semesterId')));
+   const sid=Number(new URL(url).searchParams.get('semesterId'));
+   fetched.push(sid);
+   if(failHistorical&&sid===159)throw Object.assign(Error('offline'),{code:'NETWORK'});
    return raw([activity({weekIndexes:[1]})]);
  };
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched,[161,160]);
- const historical=e.db.find(ev=>e.m.eventRecord(ev,e.state.owner,e.m.storedEventIndex(e.state))?.sid==='160');
- a.ok(historical);
- fetched.length=0;
+ a.deepEqual(fetched.splice(0),[161,159,160]);
+ failHistorical=true;
+ await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
+ a.deepEqual(fetched.splice(0),[161,159]);
+ a.equal(e.state.termErrors[0].sid,'159');
+ a.equal(e.store.read().lastHistoryTerm,159);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched,[161]);
- a.ok(e.db.includes(historical));
+ a.deepEqual(fetched,[161,160]);
+ a.equal(e.state.termErrors.length,0);
 });
 
 test('readable event notes contain the synchronization timestamp only',async()=>{

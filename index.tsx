@@ -2149,10 +2149,14 @@ async function finishTx(state,store,adapter,budget) {
 function selectTermIds(info,state,interactive){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
-  // Import history during manual setup and resume any missing imports later.
-  // Scheduled refreshes keep their network and calendar work on the current term.
-  const missing=interactive?available.filter(sid=>sid!==info.current&&!state.semesters?.[sid]?.lastSuccess):[];
-  return [info.current,...missing];
+  const history=available.filter(sid=>sid!==info.current).sort((a,b)=>a-b);
+  if(!history.length)return [info.current];
+  // The initial manual sync imports all missing history. Subsequent runs
+  // share a persisted rotation, with at most one historical term per run.
+  if(interactive&&!Object.values(state.semesters||{}).some(term=>term.lastSuccess))
+    return [info.current,...history];
+  const next=history.find(sid=>sid>state.lastHistoryTerm)??history[0];
+  return [info.current,next];
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
@@ -2173,7 +2177,12 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
   let sids=selectTermIds(info,state,interactive);
-  if(interrupted){assert(info.semesters.some(t=>String(t.id)===interrupted.sid),'TX_TERM_UNAVAILABLE');sids=[Number(interrupted.sid),...sids.filter(s=>String(s)!==interrupted.sid)];}
+  if(interrupted){
+    const sid=Number(interrupted.sid);
+    assert(info.semesters.some(t=>t.id===sid),'TX_TERM_UNAVAILABLE');
+    // Recover the pending write before opening another calendar transaction.
+    if(sid!==info.current)sids=[sid,info.current];
+  }
   const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
   state.termErrors=[];
   for(const sid of sids) {
@@ -2198,7 +2207,12 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
       if(state.tx||sid===info.current||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
-      state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});store.write(state);
+      state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
+    }
+    if(sid!==info.current){
+      // Advance even on a recoverable historical error so one term cannot
+      // prevent the remaining terms from being checked.
+      state.lastHistoryTerm=sid;store.write(state);
     }
   }
   // Re-scan all historical calendar windows only after an import or when
