@@ -36,7 +36,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
       <ProgressView progressViewStyle="circular"/>
       <Text font="headline">正在刷新课表</Text>
       <Text foregroundStyle="secondaryLabel" font="subheadline">
-        完成后会显示结果
+        同步完成后自动收起
       </Text>
       <Spacer/>
       <Button title="收起" action={()=>{

@@ -3,6 +3,7 @@
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
 import { createNativeProgressView } from './progress-native';
+import { CourseRefreshActivity } from './live_activity';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
@@ -1504,49 +1505,73 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// A foreground-only, local progress sheet. Stages are genuine completed
-// operations, not invented percentages. Keep it out of shortcut automations.
-// Native login, captcha and MFA must remain unobstructed by this sheet.
+// Manual refresh shows coarse stages on the Lock Screen and Dynamic Island.
+// Detailed diagnostics stay in the app. Shortcuts never present progress UI.
 function createProgress(state,store,interactive){
-  // Every detailed stage is still persisted for diagnostics. The native
-  // progress sheet is intentionally not a fake percent-based progress bar.
-  let ui=null,closed=false,started=false,waitingForVerification=false;
+  let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
+  let phase='connect',updates=Promise.resolve();
+  const activityCall=async work=>{
+    try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
+    catch(_){return false;}
+  };
+  const setPhase=next=>{
+    if(next===phase)return;
+    phase=next;
+    if(!activity)return;
+    updates=updates.then(()=>{
+      if(!closed&&next===phase)return activityCall(()=>activity.update({phase:next}));
+    });
+  };
   const stage=message=>{
     stampStage(state,store,message);
-    if(!interactive||closed||!started||!ui)return;
+    if(!interactive||closed||!started)return;
     const label=String(message||'');
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
-      // Caller awaits the native sheet dismissal before presenting another.
-      return ui.pause();
+      setPhase('verify');
+      return ui?.pause();
     }
     if(waitingForVerification){
-      // Never flash the sheet between captcha, SMS and login HTTP requests.
       if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
       waitingForVerification=false;
-      ui.resume();
+      setPhase('connect');
+      ui?.resume();
     }
+    if(/^(读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))setPhase('sync');
   };
   stage.start=async()=>{
     if(!interactive||started||closed)return;
     started=true;
+    if(CourseRefreshActivity&&await activityCall(()=>Scripting.LiveActivity.areActivitiesEnabled())){
+      let accepting=true;
+      const shown=await activityCall(async()=>{
+        const candidate=CourseRefreshActivity();
+        if(!await candidate.start({phase},{staleDate:Date.now()+5*60000}))return false;
+        if(closed||!accepting){
+          await candidate.end({phase:'finish'},{dismissTimeInterval:0});
+          return false;
+        }
+        activity=candidate;
+        return true;
+      });
+      accepting=false;
+      if(shown||closed)return;
+    }
     try{
       if(typeof hostAPI('Navigation')?.present!=='function')return;
       ui=createNativeProgressView();
       ui.show();
-      // Yield to iOS once before network work; never block on modal dismissal.
       await new Promise(resolve=>Timer.schedule(100,false,resolve));
-    }catch(_){
-      // A progress display failure must never turn a valid calendar sync into
-      // a failure or trigger a second, overlapping progress window.
-      ui=null;
-    }
+    }catch(_){ui=null;}
   };
-  stage.finish=()=>{
+  stage.finish=async()=>{
     if(closed)return;
     closed=true;
     try{ui?.finish();}catch(_){}
-    ui=null;
+    if(activity){
+      await updates;
+      await activityCall(()=>activity.end({phase:'finish'},{dismissTimeInterval:0}));
+    }
   };
   return stage;
 }
@@ -2400,7 +2425,7 @@ async function run() {
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
     store.write(state);
-    if(progress)progress.finish();
+    if(progress)await progress.finish();
     if(state.termErrors?.length){
       if(interactive)await notice('部分学期未同步','已更新可用学期，请在运行状态中查看详情。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
@@ -2429,12 +2454,12 @@ async function run() {
     if(!interactive&&code!=='CANCELLED')await reportBackgroundFailure(code,state,store);
     if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[CourseSync] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
-      if(progress)progress.finish();
+      if(progress)await progress.finish();
       try{await showFailureRecovery(e,state,store);}
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
     else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
-  }finally{if(manualAuth?.password)manualAuth.password='';if(progress)progress.finish();if(locked)store.release();Script.complete();}
+  }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
 if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run};

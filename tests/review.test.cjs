@@ -5,7 +5,9 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
    'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
  .replace("import { createNativeProgressView } from './progress-native';",
-   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
+   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
+ .replace("import { CourseRefreshActivity } from './live_activity';",
+   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -37,6 +39,40 @@ const raw=(activities)=>({studentTableVms:[{code:'sample-local',activities}]});
 const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit:2,weekIndexes:[1,2],startTime:'08:00',endTime:'09:40',campus:'仙林',room:'教A101',teachers:[{name:'张老师(001)'}],...x});
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
+
+test('foreground refresh uses one Live Activity through verification and dismisses it on exit',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>calls.push(['sheet']);
+ e.sandbox.__liveActivityFactory=()=>({
+   async start(state){calls.push(['start',state.phase]);return true;},
+   async update(state){calls.push(['update',state.phase]);},
+   async end(state,options){calls.push(['end',state.phase,options.dismissTimeInterval]);}
+ });
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ progress('等待二次认证');
+ await new Promise(resolve=>setImmediate(resolve));
+ progress('读取学期 161');
+ progress('写入学期 161 的日历事件');
+ await new Promise(resolve=>setImmediate(resolve));
+ await progress.finish();
+ await progress.finish();
+ a.deepEqual(calls,[['start','connect'],['update','verify'],['update','sync'],['end','finish',0]]);
+});
+
+test('foreground refresh falls back to the native sheet when Live Activity start is denied',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('start');return false;}});
+ e.sandbox.__progressUIFactory=()=>({show:()=>calls.push('sheet'),finish:()=>calls.push('close')});
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ await progress.finish();
+ a.deepEqual(calls,['start','sheet','close']);
+});
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
