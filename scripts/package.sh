@@ -9,7 +9,7 @@ zip -q -X -j "$output" index.tsx intent.tsx widget.tsx widget-data.ts login-nati
 test "$(unzip -Z1 "$output" | wc -l | tr -d " ")" = "8"
 unzip -t "$output"
 # Verify the published archive contains exactly the intended entry points and
-# that its embedded version matches the single source of truth.
+# that its embedded metadata matches the repository source.
 python3 - "$output" <<'PY'
 import json
 from pathlib import Path
@@ -26,7 +26,7 @@ with ZipFile(sys.argv[1]) as archive:
         raise SystemExit("ZIP entry list differs from expected Scripting files")
     packed = json.loads(archive.read("script.json"))
     source = json.loads(Path("script.json").read_text(encoding="utf-8"))
-    if packed["version"] != source["version"] or packed["name"] != source["name"]:
+    if packed != source:
         raise SystemExit("ZIP metadata is inconsistent with repository script.json")
-print("Verified CourseSync ZIP entries and metadata version", source["version"])
+print("Verified CourseSync ZIP entries and metadata")
 PY

@@ -10,28 +10,21 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run all regressions before changing the published archive
+      - name: Run regressions
         run: node --test tests/*.test.cjs
-      - name: Package stable-name Scripting ZIP
+      - name: Package Scripting ZIP
         run: bash scripts/package.sh
-      - name: Read shared release version
-        run: echo "COURSESYNC_VERSION=$(node -p "require('./script.json').version")" >> "$GITHUB_ENV"
-      - name: Build unsigned iPhone preview
-        run: python3 ios/build.py --output dist/CourseSync-${COURSESYNC_VERSION}-unsigned.ipa
-      - name: Verify standalone synchronization
-        run: node ios/smoke.cjs
-      - name: Publish and document the stable distribution
+      - name: Publish stable ZIP only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Only the actual main branch may publish or move the stable tag.
           test "$GITHUB_REF" = "refs/heads/main"
           current_main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           if [ "$current_main" != "$GITHUB_SHA" ]; then
@@ -41,21 +34,22 @@ jobs:
 
           release_tag="stable"
           archive="dist/CourseSync.zip"
-          ipa="dist/CourseSync-${COURSESYNC_VERSION}-unsigned.ipa"
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release upload "$release_tag" "$archive" "$ipa" --clobber
+            gh release upload "$release_tag" "$archive" --clobber
             gh release edit "$release_tag" --target "$GITHUB_SHA" --title "CourseSync" --notes-file docs/release-notes.md
-            # Remove the superseded legacy asset only after the replacement is uploaded.
-            gh release delete-asset "$release_tag" "NUFE-Schedule.zip" --yes >/dev/null 2>&1 || true
+            # Remove all obsolete standalone app assets from the stable release.
+            for asset in $(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq '.assets[].name'); do
+              case "$asset" in
+                *.ipa|NUFE-Schedule.zip) gh release delete-asset "$release_tag" "$asset" --yes ;;
+              esac
+            done
           else
-            gh release create "$release_tag" "$archive" "$ipa" \
+            gh release create "$release_tag" "$archive" \
               --target "$GITHUB_SHA" \
               --title "CourseSync" \
               --notes-file docs/release-notes.md
           fi
 
-          # Advance stable only after tests, ZIP creation and release upload succeed.
-          # GitHub's automatic "Source code" archives resolve the tag commit.
           stable_sha=$(gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$release_tag" \
             -f sha="$GITHUB_SHA" -F force=true --jq '.object.sha')
           test "$stable_sha" = "$GITHUB_SHA"
