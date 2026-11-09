@@ -676,7 +676,10 @@ function attributes(tag) {
 function inputs(html){return [...html.matchAll(/<input\b[^>]*>/gi)].map(m=>attributes(m[0]));}
 const EXAM_PATH='/student/for-std/exam-arrange';
 const EXAM_MARKER='[COURSESYNC_EXAM ';
-const isExamEvent=ev=>String(ev?.notes||'').startsWith(EXAM_MARKER);
+const EXAM_ICON='📝 ';
+const isExamEvent=(ev,state)=>String(ev?.notes||'').startsWith(EXAM_MARKER)||
+  Object.prototype.hasOwnProperty.call(state?.examIndex||{},ev?.identifier)||
+  (String(ev?.title||'').startsWith(EXAM_ICON)&&/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(ev.notes||''));
 function examRows(html) {
   const clean=html.replace(/<!--[\s\S]*?-->/g,'');
   const table=[...clean.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table\s*>/gi)]
@@ -724,7 +727,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:'🌟 '+row.title,start,stop,location:row.location});
+    target.set(key,{title:EXAM_ICON+row.title,start,stop,location:row.location});
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
@@ -734,12 +737,15 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   const historical=new Set([...target.values()].filter(exam=>exam.start<now)
     .map(exam=>Math.floor(exam.start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
+  const index=Object.assign(Object.create(null),state.examIndex);
+  const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
   const read=async()=>{
     const owned=new Map();
     for(const [start,stop] of windows){
       store.check();
       for(const ev of await calendarRows(start,stop,calendar)){
-        if(String(ev.notes||'').startsWith(prefix)&&(target.has(ev.notes)||+ev.endDate>now)){
+        const key=keyOf(ev);
+        if(typeof key==='string'&&key.startsWith(prefix)&&(target.has(key)||+ev.endDate>now)){
           owned.set(occurrenceKey(ev),ev);
         }
       }
@@ -752,7 +758,8 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   for(const ev of rows){
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
-    if(!current.has(ev.notes))current.set(ev.notes,ev);
+    const key=keyOf(ev);
+    if(!current.has(key))current.set(key,ev);
   }
   const matches=(ev,exam)=>ev.title===exam.title&&+ev.startDate===exam.start&&
     +ev.endDate===exam.stop&&(ev.location||'')===exam.location;
@@ -766,19 +773,35 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
     await ev.save();
   }
   const written=await read();
-  for(const [key,exam] of target)assert(written.some(ev=>ev.notes===key&&matches(ev,exam)),'CALENDAR_VERIFY');
+  for(const [key,exam] of target)assert(written.some(ev=>keyOf(ev)===key&&matches(ev,exam)),'CALENDAR_VERIFY');
   const kept=new Set();
   for(const ev of written){
-    const exam=target.get(ev.notes);
-    if(exam&&matches(ev,exam)&&!kept.has(ev.notes)){kept.add(ev.notes);continue;}
+    const key=keyOf(ev),exam=target.get(key);
+    if(exam&&matches(ev,exam)&&!kept.has(key)){kept.add(key);continue;}
     store.check();
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
+    delete index[ev.identifier];
   }
   const final=await read();
-  assert(final.length===target.size&&new Set(final.map(ev=>ev.notes)).size===target.size&&
-    final.every(ev=>target.has(ev.notes)&&matches(ev,target.get(ev.notes))),'CALENDAR_VERIFY');
+  assert(final.length===target.size&&new Set(final.map(keyOf)).size===target.size&&
+    final.every(ev=>target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
+  // Save the identifier mapping before replacing recoverable markers with readable notes.
+  for(const ev of final)index[ev.identifier]=keyOf(ev);
+  state.examIndex=index;store.write(state);
+  const expectedNotes=readableNotes(null,new Date().toISOString());
+  for(const ev of final){
+    if(ev.notes===expectedNotes)continue;
+    store.check();
+    const oldId=ev.identifier,key=keyOf(ev);
+    ev.notes=expectedNotes;
+    await ev.save();
+    if(ev.identifier!==oldId){delete index[oldId];index[ev.identifier]=key;store.write(state);}
+  }
+  const polished=await read();
+  assert(polished.length===target.size&&new Set(polished.map(keyOf)).size===target.size&&
+    polished.every(ev=>ev.notes===expectedNotes&&target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
 }
 async function fieldsFrom(html,id) {
   // Limit the HTML parser to a document-sized page, never execute or load its resources.
@@ -1154,6 +1177,8 @@ function validateState(s){
   assert(s&&s.version===1&&s.semesters&&typeof s.semesters==='object'&&!Array.isArray(s.semesters)&&s.anchors&&typeof s.anchors==='object'&&!Array.isArray(s.anchors),'STATE_CORRUPT');
   const allIds=new Set();
   assert(s.owner===null||typeof s.owner==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(s.owner),'STATE_CORRUPT');
+  if(s.examIndex!=null)assert(s.owner&&typeof s.examIndex==='object'&&!Array.isArray(s.examIndex)&&
+    Object.entries(s.examIndex).every(([id,key])=>id&&typeof key==='string'&&key.startsWith(EXAM_MARKER+s.owner+'] ')),'STATE_CORRUPT');
   for(const [sid,t] of Object.entries(s.semesters)){
     assert(/^\d+$/.test(sid)&&t&&typeof t==='object','STATE_CORRUPT');validateRecords(t.events);
     for(const e of t.events){assert(s.owner&&s.calendarId&&e.sid===sid&&!allIds.has(e.id),'STATE_CORRUPT');allIds.add(e.id);}
@@ -1333,7 +1358,7 @@ function legacyLocationCompatible(a,b){
   const clean=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   return !clean(a)||!clean(b)||clean(a)===clean(b);
 }
-function selectLegacyDuplicates(rows,owner){
+function selectLegacyDuplicates(rows,owner,state){
   const managed=new Map(),duplicates=[], uncertain=[];
   for(const ev of rows){
     if(typeof ev.notes!=='string'||!ev.notes.startsWith('[NUFE_LOCAL_V1 '+owner+' '))continue;
@@ -1343,7 +1368,7 @@ function selectLegacyDuplicates(rows,owner){
   }
   for(const ev of rows){
     const key=legacyEventKey(ev);if(!key||!managed.has(key))continue;
-    if(isExamEvent(ev)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
+    if(isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
     if(Array.isArray(ev.attendees)&&ev.attendees.length)continue;
     const counterpart=managed.get(key).find(own=>legacyLocationCompatible(own.location,ev.location));
     if(counterpart)duplicates.push({ev,managed:counterpart,key});
@@ -1371,7 +1396,7 @@ async function scanLegacyDuplicates(calendar,state,progress=()=>{}){
       rows.set(e.identifier+'\u0000'+start+'\u0000'+end,e);
     }
   }
-  const allRows=[...rows.values()];return {...selectLegacyDuplicates(allRows,state.owner),rows:allRows,low:low-DAY,high:high+DAY};
+  const allRows=[...rows.values()];return {...selectLegacyDuplicates(allRows,state.owner,state),rows:allRows,low:low-DAY,high:high+DAY};
 }
 function backupLegacyICS(events){
   const safe=events.map((e,i)=>({
@@ -1421,7 +1446,7 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   const rows=await dedicatedRows(calendar,state,progress);
   await verifyBaseline(rows,state); // All retained new lessons must exist before deleting anything.
   const byNative=storedEventIndex(state);
-  const isLegacy=e=>!isExamEvent(e)&&!eventRecord(e,state.owner,byNative);
+  const isLegacy=e=>!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
   const legacy=rows.filter(isLegacy);
   if(!legacy.length){state.lastLegacyCleanupRemaining=0;store.write(state);return 0;}
   const stamp=new Date().toISOString(),base='专用日历清理前-'+stamp.replace(/[:.]/g,'-');
@@ -2173,8 +2198,8 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   // A no-op in the same minute is fine; the next minute is checked again.
   if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
-function matchesOldCourse(ev,rec){
-  if(!ev||isExamEvent(ev)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
+function matchesOldCourse(ev,rec,state){
+  if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
   const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   const before=norm(ev.title),after=norm(rec.title);
@@ -2197,7 +2222,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
   const keep=new Set(Object.values(term.index||{}));
   const candidates=[...rows.values()].filter(ev=>
     !keep.has(ev.identifier)&&ev.calendar?.identifier===state.calendarId&&!ev.attendees?.length&&
-    term.events.some(rec=>matchesOldCourse(ev,rec))
+    term.events.some(rec=>matchesOldCourse(ev,rec,state))
   );
   if(!candidates.length){term.legacyMatchedCleanAt=new Date().toISOString();store.write(state);return;}
   const stamp=new Date().toISOString(),base='重复旧课程清理前-'+stamp.replace(/[:.]/g,'-');
@@ -2212,7 +2237,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
     const old=rowsNow.find(x=>occurrenceKey(x)===occurrenceKey(original));
     if(!old)continue;
     assert(snapshotSignature(old)===snapshotSignature(original),'LEGACY_CHANGED');
-    const lesson=term.events.find(rec=>matchesOldCourse(old,rec));
+    const lesson=term.events.find(rec=>matchesOldCourse(old,rec,state));
     assert(lesson,'LEGACY_CHANGED');
     const keeper=rowsNow.find(x=>x.identifier===term.index[lesson.id]&&+x.startDate===Date.parse(lesson.start));
     assert(keeper&&eventRecord(keeper,state.owner,storedEventIndex(state)),'CALENDAR_VERIFY');
@@ -2223,7 +2248,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
   for(let at=low;at<high;at+=45*DAY){
     budget();for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))leftovers.set(occurrenceKey(ev),ev);
   }
-  assert(![...leftovers.values()].some(ev=>!keep.has(ev.identifier)&&term.events.some(rec=>matchesOldCourse(ev,rec))),'LEGACY_VERIFY');
+  assert(![...leftovers.values()].some(ev=>!keep.has(ev.identifier)&&term.events.some(rec=>matchesOldCourse(ev,rec,state))),'LEGACY_VERIFY');
   term.legacyMatchedCleanAt=new Date().toISOString();
   state.lastLegacyCleanupCount=(state.lastLegacyCleanupCount||0)+count;
   store.write(state);
