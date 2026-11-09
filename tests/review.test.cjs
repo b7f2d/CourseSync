@@ -697,11 +697,11 @@ test('manual refresh imports finished and upcoming exams and preserves history',
    return {url:url+'/info/123',text:'<table id="exams"><tbody>'+body+'</tbody></table>'};
  };
  await e.m.run();
- const exams=()=>e.db.filter(x=>x.title.startsWith('🌟 '));
+ const exams=()=>e.db.filter(x=>/^(📝|🌟) /u.test(x.title));
  a.equal(alerts.length,0,JSON.stringify(alerts));
  a.equal(exams().length,2);
- const upcoming=exams().find(x=>x.title==='🌟 测试 & 统计');
- const finished=exams().find(x=>x.title==='🌟 旧考试');
+ const upcoming=exams().find(x=>x.title==='📝 测试 & 统计');
+ const finished=exams().find(x=>x.title==='📝 旧考试');
  const ids=()=>exams().map(x=>x.identifier).sort();
  const initialIds=ids();
  a.equal(upcoming.calendar.identifier,e.calendar.identifier);
@@ -709,8 +709,17 @@ test('manual refresh imports finished and upcoming exams and preserves history',
  a.equal(upcoming.location,'教学楼 101');
  a.equal(upcoming.startDate.toISOString(),day+'T00:00:00.000Z');
  a.equal(finished.startDate.toISOString(),'2020-01-01T00:00:00.000Z');
+ a.match(finished.notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+ e.store.acquire();
+ const state=e.store.read();
+ finished.title='🌟 旧考试';
+ finished.notes=state.examIndex[finished.identifier];
+ delete state.examIndex[finished.identifier];
+ e.store.write(state);e.store.release();
  await e.m.run();
  a.deepEqual(ids(),initialIds);
+ a.equal(exams().find(x=>x.identifier===finished.identifier).title,'📝 旧考试');
+ a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
  e.store.acquire();
  try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
  finally{e.store.release();}
