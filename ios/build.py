@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import plistlib
+import json
 import re
 import subprocess
 import zipfile
@@ -58,8 +59,8 @@ def main():
         "CFBundleDisplayName": "CourseSync",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0.2",
-        "CFBundleVersion": "3",
+        "CFBundleShortVersionString": json.loads((source.parent / "script.json").read_text(encoding="utf-8"))["version"],
+        "CFBundleVersion": json.loads((source.parent / "script.json").read_text(encoding="utf-8"))["version"],
         "CFBundleSupportedPlatforms": ["iPhoneOS"],
         "MinimumOSVersion": "17.0",
         "UIDeviceFamily": [1],

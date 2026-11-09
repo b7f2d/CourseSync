@@ -11,8 +11,11 @@
 > 更名说明：Scripting 脚本名称、GitHub 仓库和稳定版 ZIP 文件名均为 `CourseSync`。老版本数据会在首次运行时尝试安全迁移；请核对后再停用旧项目。
 
 
-### 独立 iPhone 预览版 1.0.2
+### 独立 iPhone 预览版 1.0.3
 
-Release 同时提供 `CourseSync-1.0.2-unsigned.ipa`，适用于 iOS 17 及以上，需要自行签名后安装。此版本不依赖 Scripting；尚未提供桌面小组件、实时活动和快捷指令自动刷新，仍需实机验证。Scripting 用户继续使用 `CourseSync.zip`。
+Release 同时提供 `CourseSync-1.0.3-unsigned.ipa`，适用于 iOS 17 及以上，需要自行签名后安装。此版本不依赖 Scripting；尚未提供桌面小组件、实时活动和快捷指令自动刷新，仍需实机验证。Scripting 用户继续使用 `CourseSync.zip`。
 
 本次修复日历事件重复保存、响应头读取及小组件课程截断问题，并更新考试日历同步逻辑。
+
+
+版本规则：Scripting ZIP 与独立 IPA 共用 `script.json` 中的版本号。本次为 1.0.3；后续常规变更仅递增末位（1.0.4、1.0.5……），除非明确要求升级大版本。Scripting 的稳定更新地址保持不变。

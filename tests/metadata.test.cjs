@@ -10,7 +10,7 @@ const publicFiles=['script.json','docs/release-notes.md'];
 test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
   assert.equal(data.name,'CourseSync');
-  assert.equal(data.version,'0.0.0');
+  assert.match(data.version,/^1\.0\.[1-9]\d*$/);
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
