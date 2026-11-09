@@ -132,7 +132,7 @@ async function presentNativeTextForm({title,label,kind,image}) {
 }
 async function presentNativeRefreshForm(schools, selected, allowReuse) {
   const i=await dialog.actionSheet({title:'请选择你的学校',cancelButton:true,actions:schools.map(s=>({label:s.name}))});
-  if(i == null) return null;
+  if(!Number.isInteger(i) || i<0 || i>=schools.length) return null;
   const schoolId=schools[i].id;
   if(allowReuse && schoolId===selected && await dialog.confirm({title:'使用现有登录信息',confirmLabel:'继续',cancelLabel:'重新输入'}))
     return {kind:'reuse',schoolId};

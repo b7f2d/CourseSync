@@ -12,3 +12,21 @@ test('native response headers are normalized',async()=>{
  vm.createContext(context);const api=vm.runInContext(source+'\nScripting',context);
  const r=await api.fetch('https://example.invalid');assert.equal(r.headers.get('content-type'),'text/html');
 });
+
+test('native school picker treats invalid action indices as cancellation',async()=>{
+ for(const invalid of [-1,2,1.5,'0',null]){
+  const calls=[];
+  const context={
+   __native:()=>null,
+   __asyncNative:(operation,value,callback)=>{
+    calls.push(operation);
+    if(operation!=='dialog')throw Error('Invalid chooser must not request credentials');
+    callback(invalid,null);
+   }
+  };
+  vm.createContext(context);
+  const choose=vm.runInContext(source+'\n'+'presentNativeRefreshForm',context);
+  assert.equal(await choose([{id:'nufe',name:'南京财经大学'}],'nufe',true),null);
+  assert.deepEqual(calls,['dialog']);
+ }
+});

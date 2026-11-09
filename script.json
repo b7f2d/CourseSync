@@ -1,6 +1,6 @@
 {
   "name": "CourseSync",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "icon": "calendar",
   "color": "#2456A6",
   "description": "CourseSync：本地同步课程至 Apple 日历，支持快捷指令自动更新。",
