@@ -12,7 +12,7 @@ const NAMES = ['一','二','三','四','五','六','日'];
 // and unsupported/failed metadata calls used to mask readable caches.
 const MIRROR_KEY='CourseSync.Widget.Courses.v1';
 const LEGACY_MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
-// Storage is private to the NUFE-Schedule project (no shared:true). The
+// Storage is private to the CourseSync project (no shared:true). The
 // widget can use it even when the extension does not expose a FileManager
 // App Group root. The legacy file reader is a fallback for existing installs.
 export function readWidgetMirror(storage){
@@ -128,7 +128,7 @@ export function buildWeek(state,now=Date.now()){
     ?Object.values(state.semesters):[];
   for(const semester of semesters){
     if(!semester||!Array.isArray(semester.events))continue;
-    for(const ev of semester.events.slice(0,4000)){
+    for(const ev of semester.events){
       const course=safeCourse(ev,start,end);
       if(course)courses.push(course);
     }
@@ -158,7 +158,7 @@ export function buildWeek(state,now=Date.now()){
     updated:Number.isFinite(update)?update:null,outdated,empty:courses.length===0};
 }
 
-// A rolling four-day view: yesterday, today, tomorrow, the day after.
+// A rolling three-day view: yesterday, today, tomorrow.
 // It deliberately crosses semester week/month/year boundaries without using
 // the calendar week's Monday as a fixed display window.
 export function buildRollingDays(state,now=Date.now()){
@@ -172,7 +172,7 @@ export function buildRollingDays(state,now=Date.now()){
     ?Object.values(state.semesters):[];
   for(const semester of semesters){
     if(!semester||!Array.isArray(semester.events))continue;
-    for(const ev of semester.events.slice(0,4000)){
+    for(const ev of semester.events){
       const course=safeCourse(ev,start,end);
       if(course&&course.day<3)courses.push(course);
     }

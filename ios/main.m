@@ -1,0 +1,754 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#import <UIKit/UIKit.h>
+#import <JavaScriptCore/JavaScriptCore.h>
+#import <EventKit/EventKit.h>
+#import <Security/Security.h>
+#import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
+
+typedef void (^Reply)(id, NSString *);
+static id Null(id value) { return value ?: NSNull.null; }
+static NSString *Str(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
+static BOOL Bool(id value) { return [value respondsToSelector:@selector(boolValue)] && [value boolValue]; }
+static NSDate *Date(id value) { return [NSDate dateWithTimeIntervalSince1970:[value doubleValue] / 1000]; }
+static id Stamp(NSDate *date) { return date ? @([date timeIntervalSince1970] * 1000) : NSNull.null; }
+static NSDictionary *Error(NSString *code) { return @{@"error":code}; }
+
+@interface CourseApp : UIResponder <UIApplicationDelegate, NSURLSessionTaskDelegate, WKScriptMessageHandlerWithReply, WKNavigationDelegate>
+@property (nonatomic, strong) UIWindow *window;
+@property UIViewController *root;
+@property UIButton *button;
+@property UILabel *status;
+@property JSContext *context;
+@property EKEventStore *store;
+@property NSMutableDictionary<NSString *, EKEvent *> *events;
+@property NSString *directory;
+@property NSURLSession *session;
+@property UIViewController *sliderScreen;
+@property JSValue *sliderHandler;
+@property JSValue *sliderDone;
+@end
+
+@implementation CourseApp
+- (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
+    self.store = [EKEventStore new];
+    NSURL *base = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:nil];
+    self.directory = base.path;
+    self.root = [UIViewController new];
+    self.root.view.backgroundColor = UIColor.systemBackgroundColor;
+    UILabel *title = [UILabel new];
+    title.text = @"CourseSync";
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
+    self.status = [UILabel new];
+    self.status.text = @"南京财经大学 · 本地课表同步";
+    self.status.numberOfLines = 0;
+    self.button = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.button setTitle:@"打开课表同步" forState:UIControlStateNormal];
+    [self.button addTarget:self action:@selector(run) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title,self.status,self.button]];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.alignment = UIStackViewAlignmentCenter;
+    stack.spacing = 18;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.root.view addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.centerXAnchor constraintEqualToAnchor:self.root.view.centerXAnchor],
+        [stack.centerYAnchor constraintEqualToAnchor:self.root.view.centerYAnchor],
+        [stack.widthAnchor constraintLessThanOrEqualToAnchor:self.root.view.safeAreaLayoutGuide.widthAnchor multiplier:0.9]
+    ]];
+    self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    self.window.rootViewController = self.root;
+    [self.window makeKeyAndVisible];
+    NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+    configuration.HTTPCookieStorage = nil;
+    configuration.HTTPShouldSetCookies = NO;
+    configuration.URLCache = nil;
+    self.session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
+    return YES;
+}
+
+- (void)run {
+    if (self.context) return;
+    self.button.enabled = NO;
+    self.events = [NSMutableDictionary new];
+    JSContext *context = [JSContext new];
+    self.context = context;
+    __weak CourseApp *weakSelf = self;
+    __weak JSContext *weakContext = context;
+    context.exceptionHandler = ^(JSContext *ctx, JSValue *exception) {
+        if (weakSelf.context == ctx) [weakSelf finish:@"无法运行课表同步。"];
+    };
+    context[@"__native"] = ^id(NSString *operation, NSDictionary *value) {
+        return [weakSelf sync:operation value:value];
+    };
+    context[@"__asyncNative"] = ^(NSString *operation, NSDictionary *value, JSValue *callback) {
+        [weakSelf async:operation value:value reply:^(id result, NSString *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (weakSelf.context == callback.context)
+                    [callback callWithArguments:@[Null(result),Null(error)]];
+            });
+        }];
+    };
+    context[@"__delay"] = ^(double milliseconds, JSValue *callback) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, milliseconds) * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+            if (weakSelf.context == callback.context) [callback callWithArguments:@[]];
+        });
+    };
+    context[@"__slider"] = ^(NSString *html, NSString *title, JSValue *handler, JSValue *done) {
+        [weakSelf showSlider:html title:title handler:handler done:done];
+    };
+    context[@"__finish"] = ^(NSString *message) {
+        JSContext *finishingContext = weakContext;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (finishingContext && weakSelf.context == finishingContext) [weakSelf finish:message];
+        });
+    };
+    NSURL *script = [NSBundle.mainBundle URLForResource:@"CourseSync" withExtension:@"js"];
+    NSString *source = script ? [NSString stringWithContentsOfURL:script encoding:NSUTF8StringEncoding error:nil] : nil;
+    if (!source) { [self finish:@"应用资源缺失。"]; return; }
+    [context evaluateScript:source withSourceURL:script];
+}
+
+- (void)finish:(NSString *)message {
+    self.context = nil;
+    self.events = nil;
+    if (self.sliderScreen) [self closeSlider];
+    self.button.enabled = YES;
+    self.status.text = message.length ? message : @"南京财经大学 · 本地课表同步";
+}
+
+- (NSString *)path:(id)value {
+    NSString *path = Str(value).stringByStandardizingPath;
+    return [path hasPrefix:[self.directory stringByAppendingString:@"/"]] ? path : nil;
+}
+
+- (NSDictionary *)calendar:(EKCalendar *)calendar {
+    return @{@"identifier":calendar.calendarIdentifier, @"title":calendar.title ?: @"",
+             @"allowsContentModifications":@(calendar.allowsContentModifications), @"isSubscribed":@(calendar.subscribed),
+             @"source":@{@"title":calendar.source.title ?: @"", @"type":calendar.source.sourceType == EKSourceTypeCalDAV ? @"calDAV" : @"other"}};
+}
+
+- (NSDictionary *)event:(EKEvent *)event {
+    NSString *handle = NSUUID.UUID.UUIDString;
+    self.events[handle] = event;
+    return @{@"handle":handle, @"identifier":event.eventIdentifier ?: @"", @"calendar":[self calendar:event.calendar],
+             @"title":event.title ?: @"", @"notes":event.notes ?: @"", @"location":event.location ?: @"",
+             @"startDate":Stamp(event.startDate), @"endDate":Stamp(event.endDate), @"occurrenceDate":Stamp(event.occurrenceDate),
+             @"isAllDay":@(event.allDay), @"isDetached":@(event.isDetached), @"hasRecurrenceRules":@(event.hasRecurrenceRules),
+             @"recurrenceRules":event.hasRecurrenceRules ? @[@{}] : @[], @"attendees":event.hasAttendees ? @[@YES] : @[]};
+}
+
+- (id)sync:(NSString *)operation value:(NSDictionary *)v {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *path = [self path:v[@"path"]];
+    if ([operation isEqual:@"root"]) return self.directory;
+    if ([operation isEqual:@"uuid"]) return NSUUID.UUID.UUIDString;
+    if ([operation isEqual:@"random"]) {
+        NSUInteger count = MIN([v[@"count"] unsignedIntegerValue], 4096);
+        NSMutableData *bytes = [NSMutableData dataWithLength:count];
+        if (SecRandomCopyBytes(kSecRandomDefault, count, bytes.mutableBytes) != errSecSuccess) return Error(@"CRYPTO");
+        return [self byteArray:bytes];
+    }
+    if ([operation isEqual:@"bytes"]) return [self byteArray:[[NSData alloc] initWithBase64EncodedString:Str(v[@"base64"]) options:0]];
+    if ([operation isEqual:@"exists"]) return @(path && [files fileExistsAtPath:path]);
+    if ([operation isEqual:@"mkdir"]) return path && [files createDirectoryAtPath:path withIntermediateDirectories:[v[@"recursive"] boolValue] attributes:nil error:nil] ? @YES : Error(@"STATE_WRITE");
+    if ([operation isEqual:@"list"]) return (path ? [files contentsOfDirectoryAtPath:path error:nil] : nil) ?: Error(@"STATE_READ");
+    if ([operation isEqual:@"read"]) return (path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil) ?: Error(@"STATE_READ");
+    if ([operation isEqual:@"base64"]) return (path ? [[NSData dataWithContentsOfFile:path] base64EncodedStringWithOptions:0] : nil) ?: Error(@"STATE_READ");
+    if ([operation isEqual:@"write"]) return path && [Str(v[@"value"]) writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil] ? @YES : Error(@"STATE_WRITE");
+    if ([operation isEqual:@"unlink"]) return path && [files removeItemAtPath:path error:nil] ? @YES : Error(@"STATE_WRITE");
+    if ([operation isEqual:@"move"]) {
+        NSString *to = [self path:v[@"to"]];
+        return path && to && [files moveItemAtPath:path toPath:to error:nil] ? @YES : Error(@"BUSY");
+    }
+    if ([operation hasPrefix:@"key"]) return [self key:operation value:v];
+    if ([operation isEqual:@"progress"]) { self.status.text = Str(v[@"value"]); return @YES; }
+    if ([operation isEqual:@"removePending"]) {
+        [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:v[@"ids"]];
+        return @YES;
+    }
+    if ([operation isEqual:@"events"]) {
+        NSMutableArray *calendars = [NSMutableArray new];
+        for (NSString *identifier in v[@"calendars"]) {
+            EKCalendar *calendar = [self.store calendarWithIdentifier:identifier];
+            if (calendar) [calendars addObject:calendar];
+        }
+        if (!calendars.count) return Error(@"CALENDAR_MISSING");
+        NSPredicate *predicate = [self.store predicateForEventsWithStartDate:Date(v[@"start"]) endDate:Date(v[@"end"]) calendars:calendars];
+        NSMutableArray *result = [NSMutableArray new];
+        for (EKEvent *event in [self.store eventsMatchingPredicate:predicate]) [result addObject:[self event:event]];
+        return result;
+    }
+    if ([operation isEqual:@"saveEvent"] || [operation isEqual:@"removeEvent"]) {
+        NSString *handle = Str(v[@"handle"]);
+        EKEvent *event = handle.length ? self.events[handle] : nil;
+        if (handle.length && !event) return Error(@"CALENDAR_VERIFY");
+        if (event.hasRecurrenceRules || event.isDetached || event.hasAttendees) return Error(@"MANAGED_SERIES");
+        if ([operation isEqual:@"removeEvent"]) {
+            return event && [self.store removeEvent:event span:EKSpanThisEvent commit:YES error:nil] ? @YES : Error(@"CALENDAR_VERIFY");
+        }
+        EKCalendar *calendar = [self.store calendarWithIdentifier:Str(v[@"calendar"])];
+        if (!calendar.allowsContentModifications || calendar.subscribed) return Error(@"CALENDAR_READONLY");
+        if (event && ![event.calendar.calendarIdentifier isEqual:calendar.calendarIdentifier]) return Error(@"FOREIGN_EVENT");
+        event = event ?: [EKEvent eventWithEventStore:self.store];
+        event.calendar = calendar;
+        event.title = Str(v[@"title"]);
+        event.notes = Str(v[@"notes"]);
+        event.location = Str(v[@"location"]);
+        event.allDay = [v[@"isAllDay"] boolValue];
+        event.timeZone = [NSTimeZone timeZoneWithName:Str(v[@"timeZone"])];
+        event.startDate = Date(v[@"start"]);
+        event.endDate = Date(v[@"end"]);
+        if (![self.store saveEvent:event span:EKSpanThisEvent commit:YES error:nil]) return Error(@"CALENDAR_VERIFY");
+        if (!handle.length) handle = NSUUID.UUID.UUIDString;
+        self.events[handle] = event;
+        return @{@"identifier":event.eventIdentifier ?: @"", @"handle":handle};
+    }
+    return Error(@"NATIVE_UNAVAILABLE");
+}
+
+- (NSArray *)byteArray:(NSData *)data {
+    NSMutableArray *by…7041 tokens truncated…Sync/CourseSync-v2';
+  const files={
+    appGroupDocumentsDirectory:'/group',
+    existsSync:p=>p===dir,
+    readDirectorySync:()=>['state-0000000002.json','state-0000000001.json','run-lock.json'],
+    // Widget extension may not expose metadata queries; the reader must not require them.
+    readAsStringSync:path=>path.endsWith('0000000002.json')?'{broken':JSON.stringify(make([]))
+  };
+  const broken=core.loadWidgetState(files);
+  a.equal(broken.kind,'invalid');
+  a.equal(broken.code,'CACHE_JSON');
+  files.readAsStringSync=()=>JSON.stringify(make([]));
+  a.equal(core.loadWidgetState(files).kind,'ready');
+});
+
+test('widget reads the same shared directory and state file as the sync engine without statSync',()=>{
+ const target='/shared/CourseSync/CourseSync-v2';
+ const expected=target+'/state-0000000372.json',seen=[];
+ const f={
+   appGroupDocumentsDirectory:'/shared',
+   existsSync:p=>{seen.push('exists:'+p);return p===target;},
+   readDirectorySync:p=>{seen.push('list:'+p);return [expected,'run-lock.json'];},
+   readAsStringSync:p=>{seen.push('read:'+p);return JSON.stringify(make([
+     ev('course','正常课程','2026-11-03T02:00:00Z','2026-11-03T04:15:00Z')
+   ]));}
+ };
+ const result=core.loadWidgetState(f);
+ a.equal(result.kind,'ready');
+ a.equal(result.state.semesters['161'].events[0].title,'正常课程');
+ a.deepEqual(seen,['exists:'+target,'list:'+target,'read:'+expected]);
+});
+test('widget diagnoses each cache failure stage without exposing any file contents',()=>{
+ const dir='/shared/CourseSync/CourseSync-v2';
+ const base={
+   appGroupDocumentsDirectory:'/shared',
+   existsSync:()=>true,
+   readDirectorySync:()=>['state-0000000009.json'],
+   readAsStringSync:()=>JSON.stringify(make([]))
+ };
+ a.equal(core.loadWidgetState({...base,appGroupDocumentsDirectory:undefined}).code,'GROUP_PATH');
+ a.equal(core.loadWidgetState({...base,existsSync:()=>{throw Error('private path');}}).code,'CACHE_ACCESS');
+ a.equal(core.loadWidgetState({...base,readDirectorySync:()=>{throw Error('private path');}}).code,'CACHE_LIST');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>{throw Error('sensitive contents');}}).code,'CACHE_READ');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>'{private contents'}).code,'CACHE_JSON');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>JSON.stringify({version:2,semesters:{}})}).code,'CACHE_SCHEMA');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=> 'x'.repeat(4*1024*1024+1)}).code,'CACHE_SIZE');
+ a.equal(core.loadWidgetState({...base,readDirectorySync:()=>[]}).code,'NO_STATE');
+ const out=core.loadWidgetState({...base,existsSync:()=>false});
+ a.equal(out.kind,'empty');a.equal(out.code,'NO_CACHE_DIR');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/诊断：\{code\|\|'UNKNOWN'\}/);
+});
+test('private widget Storage mirror works even when FileManager has no App Group path',()=>{
+ const mirror={version:1,lastCheck:'2026-11-02T18:00:00Z',events:[
+   ev('a','今天上课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')
+ ]};
+ const files={appGroupDocumentsDirectory:undefined};
+ const storage={get:(key,opts)=>{a.equal(key,'CourseSync.Widget.Courses.v1');a.equal(opts,undefined);return mirror;}};
+ const result=core.loadBestWidgetState(files,storage);
+ a.equal(result.kind,'ready');
+ a.equal(result.state.semesters.widget.events[0].title,'今天上课');
+ const model=core.buildWeek(result.state,date('2026-11-03T06:10:00Z'));
+ a.equal(model.days[1].courses[0].status,'current');
+});
+test('missing private mirror explains opening the main project once',()=>{
+ const result=core.loadBestWidgetState({appGroupDocumentsDirectory:undefined},{get:()=>null});
+ a.equal(result.kind,'empty');a.equal(result.code,'OPEN_MAIN_ONCE');
+});
+test('broken Storage mirror never discloses data and can fall back to verified files',()=>{
+ const valid={version:1,lastCheck:'2026-11-02T18:00:00Z',events:[]};
+ a.equal(core.readWidgetMirror({get:()=>({events:[{password:'SECRET'}],version:1,lastCheck:valid.lastCheck})}).code,'STORAGE_SCHEMA');
+ a.equal(core.readWidgetMirror({get:()=>{throw Error('SECRET');}}).code,'STORAGE_READ');
+ const dir='/group/CourseSync/CourseSync-v2';
+ const files={
+   appGroupDocumentsDirectory:'/group',existsSync:path=>path===dir,
+   readDirectorySync:()=>['state-0000000001.json'],
+   readAsStringSync:()=>JSON.stringify(make([
+     ev('a','回退课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')
+   ]))
+ };
+ const fallback=core.loadBestWidgetState(files,{get:()=>null});
+ a.equal(fallback.kind,'ready');
+ a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
+});
+test('three-day timetable displays yesterday today tomorrow without day-after courses',()=>{
+ const now=date('2026-11-03T06:10:00Z');
+ const m=core.buildRollingDays(make([
+  ev('y','昨天','2026-11-02T02:00:00Z','2026-11-02T04:00:00Z'),
+  ev('t','今天','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
+  ev('n','明天','2026-11-04T02:00:00Z','2026-11-04T03:00:00Z'),
+  ev('a','后天不应显示','2026-11-05T02:00:00Z','2026-11-05T03:00:00Z')
+ ]),now);
+ a.equal(m.days.length,3);
+ a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天']);
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周一','周二','周三']);
+ a.deepEqual(Array.from(m.days,d=>d.dateLabel),['11/2','11/3','11/4']);
+ a.deepEqual(Array.from(m.days,d=>d.courses[0].status),['done','current','upcoming']);
+ a.equal(m.days[1].today,true);
+ a.equal(m.courses.length,3);
+ a.ok(m.courses.every(c=>c.title!=='后天不应显示'));
+ a.equal(m.nextAt,date('2026-11-03T06:55:00Z'));
+});
+test('Monday three-day view includes Sunday and Tuesday, not Wednesday',()=>{
+ const m=core.buildRollingDays(make([
+  ev('sun','周日课','2026-11-01T05:00:00Z','2026-11-01T06:00:00Z'),
+  ev('mon','周一课','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
+  ev('tue','周二课','2026-11-03T01:00:00Z','2026-11-03T02:00:00Z'),
+  ev('wed','周三课','2026-11-04T01:00:00Z','2026-11-04T02:00:00Z')
+ ]),date('2026-11-01T17:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周日','周一','周二']);
+ a.deepEqual(Array.from(m.days,d=>d.courses[0].title),['周日课','周一课','周二课']);
+ a.equal(m.courses.length,3);
+});
+test('Sunday three-day view crosses weeks and excludes Tuesday',()=>{
+ const m=core.buildRollingDays(make([
+  ev('sat','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
+  ev('mon','下周一','2026-11-09T01:00:00Z','2026-11-09T02:00:00Z'),
+  ev('tue','下周二不显示','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z')
+ ]),date('2026-11-08T10:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周六','周日','周一']);
+ a.equal(m.days[2].courses[0].title,'下周一');
+ a.equal(m.courses.length,2);
+});
+test('three-day view crosses the new year with accurate date labels',()=>{
+ const m=core.buildRollingDays(make([
+  ev('new-year','元旦课','2027-01-01T01:00:00Z','2027-01-01T02:00:00Z')
+ ]),date('2026-12-31T08:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.dateLabel),['12/30','12/31','1/1']);
+ a.equal(m.days[2].courses[0].title,'元旦课');
+});
+test('rolling view only greys classes after end time and changes at exact boundary',()=>{
+ const course=ev('active','中国税制','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z');
+ let m=core.buildRollingDays(make([course]),date('2026-11-02T11:37:00Z'));
+ a.equal(m.days[1].courses[0].status,'current');
+ a.equal(core.widgetReloadDate(m).getTime(),date('2026-11-02T12:50:01Z'));
+ m=core.buildRollingDays(make([course]),date('2026-11-02T12:50:00Z'));
+ a.equal(m.days[1].courses[0].status,'done');
+});
+
+test('widget UI renders only three day headings and keeps full course details',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/buildWidgetModel\(snapshot\.state/);
+ a.match(ui,/const days=model\.days\.slice\(0,3\)/);
+ a.match(ui,/\{days\.map\(day=>/);
+ a.match(ui,/lineLimit=\{smallText\?4:5\}/);
+ a.match(ui,/day\.weekday/);
+ a.match(ui,/day\.dateLabel/);
+ a.match(ui,/course\.location/);
+ a.doesNotMatch(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)/);
+ a.doesNotMatch(ui,/WeeklyPanel/);
+});
+test('course overflow stays chronological and reports remaining count',()=>{
+ const courses=['早课','第二节','第三节','第四节'].map((title,i)=>({
+   title,status:i<2?'done':i===2?'current':'upcoming'
+ }));
+ for(const index of [0,1,2,3]){
+   const day={index,today:index===1,courses};
+   const one=core.selectVisibleCourses(day,1);
+   a.equal(one.courses[0].title,'早课');
+   a.equal(one.hiddenAfter,3);
+   const two=core.selectVisibleCourses(day,2);
+   a.deepEqual(Array.from(two.courses,c=>c.title),['早课','第二节']);
+   a.equal(two.hiddenAfter,2);
+   const all=core.selectVisibleCourses(day,5);
+   a.equal(all.courses.length,4);a.equal(all.hiddenAfter,0);
+ }
+ a.equal(core.selectVisibleCourses({courses:[]},1).hiddenAfter,0);
+});
+test('widget has an adaptive canvas and simple plus-N remaining classes',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.match(ui,/\+\{window\.hiddenAfter\}节课/);
+ a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
+});
+test('teacher names appear from new mirror or older semester cache',()=>{
+ const base=make([ev('a','新课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
+ base.semesters['161'].events[0].teachers=['张老师','李老师'];
+ let m=core.buildRollingDays(base,date('2026-11-03T06:10:00Z'));
+ a.equal(m.days[1].courses[0].teacher,'张老师、李老师');
+ const cached={version:1,lastCheck:'2026-11-03T06:00:00Z',events:[{
+   id:'t',title:'统计学',location:'A101',teacher:'高老师',
+   start:'2026-11-03T05:30:00Z',end:'2026-11-03T06:55:00Z'
+ }]};
+ const read=core.loadBestWidgetState({appGroupDocumentsDirectory:undefined},{get:()=>cached});
+ a.equal(read.kind,'ready');
+ m=core.buildRollingDays(read.state,date('2026-11-03T06:10:00Z'));
+ a.equal(m.days[1].courses[0].teacher,'高老师');
+ const legacy={...cached,events:[Object.fromEntries(Object.entries(cached.events[0]).filter(([k])=>k!=='teacher'))]};
+ a.equal(core.readWidgetMirror({get:()=>legacy}).kind,'ready');
+});
+test('renderer measures actual widget geometry and omits overflow-prone footer',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/GeometryReader/);
+ a.match(ui,/proxy\.size\.width/);
+ a.match(ui,/proxy\.size\.height/);
+ a.match(ui,/selectVisibleCourses\(day,maxRows\)/);
+ a.doesNotMatch(ui,/course\.teacher/);
+ a.doesNotMatch(ui,/Widget\.displaySize/);
+ a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
+});
+test('production widget maps actual synced courses without invented timetable',()=>{
+  const now=date('2026-11-03T02:45:00Z'); // Tuesday 10:45 Beijing
+  const state=make([
+    ev('mon1','周一原课程','2026-11-02T00:30:00Z','2026-11-02T02:05:00Z'),
+    ev('tue1','第一节真实课程','2026-11-03T00:30:00Z','2026-11-03T02:05:00Z'),
+    ev('tue2','第二节真实课程','2026-11-03T02:20:00Z','2026-11-03T03:55:00Z'),
+    ev('tue3','第三节真实课程','2026-11-03T06:00:00Z','2026-11-03T07:35:00Z'),
+    ev('tue4','第四节真实课程','2026-11-03T07:50:00Z','2026-11-03T09:25:00Z'),
+    ev('wed1','周三原课程','2026-11-04T00:30:00Z','2026-11-04T02:05:00Z')
+  ]);
+  const model=core.buildWidgetModel(state,now);
+  a.deepEqual(Array.from(model.days,d=>d.label),['昨天','今天','明天']);
+  a.deepEqual(Array.from(model.days,d=>d.courses.length),[1,4,1]);
+  a.equal(model.days[0].courses[0].title,'周一原课程');
+  a.equal(model.days[2].courses[0].title,'周三原课程');
+  a.deepEqual(Array.from(model.days[1].courses,c=>c.status),
+    ['done','current','upcoming','upcoming']);
+  a.equal(model.at,now);
+  a.equal(model.previewTerm,undefined);
+  const large=core.selectTodayColumns(model.days[1],3);
+  a.equal(large.focus.title,'第二节真实课程');
+  a.deepEqual(Array.from(large.future,c=>c.title),
+    ['第三节真实课程','第四节真实课程']);
+  a.equal(large.hiddenAfter,0);
+  const medium=core.selectTodayColumns(model.days[1],1);
+  a.deepEqual(Array.from(medium.future,c=>c.title),['第三节真实课程']);
+  a.equal(medium.hiddenAfter,1);
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+  a.ok(ui.includes('buildWidgetModel(snapshot.state,Date.now())'));
+  a.ok(!ui.includes('SHOW_SAMPLE_COURSES'));
+  a.ok(!ui.includes('buildSamplePreview'));
+});
+
+test('today columns handle first lesson, a gap, last lesson and all finished',()=>{
+  const titles=['第一节','第二节','第三节','第四节'];
+  const courses=titles.map((title,i)=>({title,status:i===0?'current':'upcoming'}));
+  let result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第一节');
+  a.deepEqual(Array.from(result.future,c=>c.title),titles.slice(1));
+  courses[0].status='done';courses[1].status='done';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第三节');
+  a.deepEqual(Array.from(result.future,c=>c.title),['第四节']);
+  courses[2].status='done';courses[3].status='current';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第四节');
+  a.equal(result.future.length,0);
+  courses[3].status='done';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第四节');
+  a.equal(result.future.length,0);
+  a.equal(core.selectTodayColumns({courses:[]},3).focus,null);
+});
+
+test('large today layout has one focus card on the left, future stack on the right',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+  a.ok(ui.includes('const showAllToday=!medium&&height>=290;'));
+  a.ok(ui.includes('showAll={showAllToday}'));
+  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('course={columns.focus}'));
+  a.ok(ui.includes('columns.future.map(c=>'));
+  a.ok(ui.includes('course={c}'));
+  a.ok(ui.includes('columns.hiddenAfter>0'));
+  a.ok(!ui.includes('course={visible[0]}'));
+  a.ok(!ui.includes('course={visible[2]}'));
+});
+
+test('single visible today lesson gets larger title and wider today column',()=>{
+ const sample=core.selectTodayPair({today:true,courses:[{title:'只上一节',status:'current'}]});
+ a.equal(sample.courses.length,1);
+ a.equal(sample.hiddenAfter,0);
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/expanded=todayFocus\.courses\.length>1/);
+ a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
+ a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
+ a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
+ a.match(ui,/density=\{emphasize\?'single':'side'\}/);
+ a.match(ui,/largeText\?\(compact\?15:17\)/);
+});
+test('only two visible today cards activate smaller pair typography',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
+ a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
+ a.match(ui,/density="pair"/);
+ a.match(ui,/const titleSize=smallText\?\(compact\?10:11\):/);
+ a.match(ui,/const detailSize=smallText\?\(compact\?9:10\):/);
+ const courses=['早课','午课','晚课'].map((title,i)=>({title,status:i===2?'current':'done'}));
+ const focus=core.selectTodayPair({courses});
+ a.deepEqual(Array.from(focus.courses,x=>x.title),['晚课']);
+ a.equal(focus.courses.length>1,false);
+ courses[2].status='done';
+ a.deepEqual(Array.from(core.selectTodayPair({courses}).courses,x=>x.title),['晚课']);
+});
+test('when current class is last, today shows only that current class',()=>{
+ const c=['上完','正在上'].map((title,i)=>({title,status:i?'current':'done'}));
+ const pick=core.selectTodayPair({today:true,courses:c});
+ a.deepEqual(Array.from(pick.courses,x=>x.title),['正在上']);
+ a.equal(pick.hiddenAfter,0);
+});
+test('today pair advances after each class ends and keeps upcoming classes ordered',()=>{
+ const classes=['第一节','第二节','第三节'].map(title=>({title,status:'upcoming'}));
+ const pick=()=>Array.from(core.selectTodayPair({courses:classes}).courses,c=>c.title);
+ a.deepEqual(pick(),['第一节','第二节']);
+ classes[0].status='current';
+ a.deepEqual(pick(),['第一节','第二节']);
+ classes[0].status='done';
+ a.deepEqual(pick(),['第二节','第三节']);
+ classes[1].status='current';
+ a.deepEqual(pick(),['第二节','第三节']);
+ classes[1].status='done';
+ a.deepEqual(pick(),['第三节']);
+ classes[2].status='current';
+ a.deepEqual(pick(),['第三节']);
+ classes[2].status='done';
+ a.deepEqual(pick(),['第三节']);
+});
+test('production widget always ignores old preview payloads',()=>{
+  const now=date('2026-11-03T06:10:00Z');
+  const live=make([ev('real','当期课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
+  const original=core.buildWidgetModel(live,now);
+  a.equal(original.days[1].courses[0].title,'当期课程');
+  a.equal(original.days[1].courses[0].status,'current');
+  a.equal(original.at,now);
+  live.preview={term:'2024-2025-2',events:[
+    ev('past','历史学期','2025-03-03T05:30:00Z','2025-03-03T06:55:00Z')
+  ]};
+  const withPreview=core.buildWidgetModel(live,now);
+  a.deepEqual(Array.from(withPreview.days[1].courses,x=>x.title),['当期课程']);
+  a.equal(withPreview.previewTerm,undefined);
+  a.equal(core.buildWidgetModel({preview:live.preview,semesters:{live:{events:[]}}},now)
+    .days[1].courses.length,0);
+});
+
+test('private mirror reads real events and ignores legacy preview fields',()=>{
+  const obj={version:1,lastCheck:'2026-11-02T07:00:00Z',
+    events:[ev('real','真实课表','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')],
+    preview:{term:'2024-2025-2',events:[{invalid:'legacy-data'}]}
+  };
+  const result=core.readWidgetMirror({get:()=>obj});
+  a.equal(result.kind,'ready');
+  a.equal(result.state.semesters.widget.events[0].title,'真实课表');
+  a.equal(Object.hasOwn(result.state,'preview'),false);
+});
+
+test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+  a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
+  a.match(ui,/font=\{compact\?16:18\}/);
+  a.match(ui,/day\.label/);
+  a.match(ui,/day\.weekday/);
+  a.match(ui,/day\.dateLabel/);
+  a.match(ui,/\+\{window\.hiddenAfter\}节课/);
+  a.match(ui,/const bg=done\?COLORS\.doneBg:active\?COLORS\.activeBg:COLORS\.nextBg/);
+  a.match(ui,/foregroundStyle=\{fg\}/);
+});
+test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+  a.match(ui,/function TodayPairColumn/);
+  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('columns.future.map(c=>'));
+  a.match(ui,/\+\{columns\.hiddenAfter\}节课/);
+  a.match(ui,/day\.today&&expanded/);
+  a.doesNotMatch(ui,/>测试<\/Text>/);
+  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
+});
+test('card paints color after fixed-width frame so backgrounds center like headers',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ const start=ui.indexOf('const cardStyle=modifiers()');
+ const end=ui.indexOf('return <VStack key={course.id}',start);
+ a.ok(start>0&&end>start);
+ const pipeline=ui.slice(start,end);
+ a.ok(pipeline.indexOf('.padding(')<pipeline.indexOf('.frame('));
+ a.ok(pipeline.indexOf('.frame(')<pipeline.indexOf('.background('));
+ a.match(ui,/modifiers=\{cardStyle\}/);
+ a.match(ui,/HStack key=\{c\.id\}/);
+});
+test('course card retains comfortable internal padding independent of widget outer inset',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/\.padding\(cardPadding\)/);
+ a.match(ui,/safeInset=medium\?9:12/);
+});
+test('all widget families use the adaptive opaque canvas',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ const literal="widgetBackground={COLORS.canvas}";
+ a.equal(ui.split(literal).length-1,3);
+ a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
+});
+test('all three day sections center visible cards; expanded today remains symmetric',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal'\}\)/);
+ a.match(ui,/width=\{width-8\}/);
+ a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
+ a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
+ a.match(ui,/width=\{cardWidth\}/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
+ a.match(ui,/const todayWidth=usableWidth-sideWidth\*2/);
+ a.match(ui,/width=\{day\.today\?todayWidth:sideWidth\}/);
+ a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
+ a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
+});
+test('readable three-day widget uses larger but density-aware typography',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ const title=ui.match(/const titleSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
+ const detail=ui.match(/const detailSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
+ a.ok(title&&detail,'all course text variants must have explicit sizes');
+ const t=title.slice(1).map(Number),d=detail.slice(1).map(Number);
+ // Pair < normal < single for medium and large cards.
+ for(let i=0;i<2;i++){
+   a.ok(t[i]>=10);
+   a.ok(t[i]<t[i+4]&&t[i+4]<t[i+2]);
+   a.ok(d[i]>=9);
+   a.ok(d[i]<d[i+4]&&d[i+4]<d[i+2]);
+ }
+ a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,2);
+ a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{day\.today/);
+ a.match(ui,/font=\{12\} foregroundStyle=\{COLORS\.muted\}>无课/);
+ a.match(ui,/<Text font=\{tight\?12:13\} fontWeight="semibold" lineLimit=\{2\}/);
+ a.match(ui,/const fg=done\?COLORS\.finished:active\?COLORS\.white:COLORS\.dark/);
+});
+test('README documents the three-day UI without screenshots',()=>{
+ const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
+ a.match(readme,/## 项目介绍/);
+ a.match(readme,/## 用户指南/);
+ a.match(readme,/昨天、今天、明天/);
+ a.match(readme,/今天一节可见课程/);
+ a.match(readme,/今天有多节课程/);
+ a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
+ a.equal(readme.includes('docs/images/'),false);
+ a.equal(readme.includes('<img'),false);
+ a.equal(readme.includes('!['),false);
+ a.match(readme,/releases\/download\/stable\/CourseSync\.zip/);
+ a.match(readme,/退出登录/);
+ a.match(readme,/不需要重新导入项目|不需要重新创建/);
+});
+test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
+test('narrow yesterday and tomorrow cards preserve full course names',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+  const start=ui.indexOf('function formatSideTitle(title){');
+  const end=ui.indexOf('\n}\n',start);
+  a.ok(start>=0&&end>start,'side title formatter should exist');
+  const wrap=vm.runInNewContext(ui.slice(start,end+2)+'\nformatSideTitle',
+    {Array,String,Math});
+  a.equal(wrap('微观经济学'),'微观经\n济学');
+  a.equal(wrap('管理学原理'),'管理学\n原理');
+  a.equal(wrap('证券投资学'),'证券投\n资学');
+  a.equal(wrap('Financial Markets'),'Financial Markets');
+  a.ok(ui.includes('isSide?formatSideTitle(course.title):course.title'));
+  a.ok(ui.includes("course.startLabel+'–'+course.endLabel"));
+  a.ok(ui.includes('lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}'));
+  a.ok(!ui.includes("course.startLabel+'\\n'+course.endLabel"),
+    'side card time range should not be forced into two lines');
+  a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
+  a.ok(!ui.includes('course.teacher&&!isSide'));
+  a.doesNotMatch(ui,/\{course\.teacher\}/);
+});
+
+test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/safeInset=medium\?9:12/);
+ a.match(ui,/padding=\{safeInset\}/);
+ a.match(ui,/width-2\*safeInset/);
+ a.match(ui,/doneBg:\{light:'#E5E7EB',dark:'#343D4C'\}/);
+ a.match(ui,/nextBg:\{light:'#EBF4FF',dark:'#243449'\}/);
+ a.match(ui,/activeBg:\{light:'#238BFF',dark:'#2467C6'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
+});
+test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
+  const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});
+  a.equal(result.kind,'empty');
+  a.doesNotMatch(source,/\bKeychain\b|\.writeAsString|\.removeSync|\bfetch\(/);
+  const widget=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.match(widget,/Widget\.present\(/);
+  a.doesNotMatch(widget,/\bKeychain\b|\bCalendarEvent\b|fetch\(/);
+});
+
+test('systemSmall uses measured width and height without wasting space on spacers',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function EmptyPanel('));
+ a.match(section,/proxy\.size\.width,height=proxy\.size\.height/);
+ a.match(section,/cardWidth=Math\.max\(80,width-2\*inset\)/);
+ a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
+ a.doesNotMatch(section,/<Spacer/);
+ a.match(section,/lineLimit=\{2\}/);
+ a.match(section,/\+\{remaining\}节课/);
+ a.match(section,/chosen\.location\?/);
+ a.doesNotMatch(section,/chosen\.teacher/);
+});
+test('all course text and card surfaces adapt to dark mode',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ for(const key of ['canvas','dark','blue','muted','faint','finished','doneBg','nextBg','activeBg','activeDetail']){
+   a.match(ui,new RegExp(key+':\\{light:'));
+ }
+ a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.doesNotMatch(ui,/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/);
+});
+
+test('dark mode has a pure black canvas with full-bleed root background for all families',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
+ a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
+ a.equal((ui.match(/background=\{\{style:COLORS\.canvas\}\}/g)||[]).length,3);
+ for(const [start,end] of [
+  ['function RollingPanel(', 'function SmallPanel('],
+  ['function SmallPanel(', 'function EmptyPanel('],
+  ['function EmptyPanel(', 'const snapshot=']
+ ]){
+  const section=ui.slice(ui.indexOf(start),ui.indexOf(end));
+  const root=section.indexOf('widgetBackground={COLORS.canvas}');
+  const inner=section.indexOf('padding={',root);
+  a.ok(root>=0&&inner>root,'full widget background must wrap padded content');
+  a.match(section,/frame=\{\{maxWidth:'infinity',maxHeight:'infinity'/);
+ }
+});
+
+test('all widget sizes hide teacher names without stripping teacher data from the model',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.doesNotMatch(ui,/\{course\.teacher\}|\{chosen\.teacher\}|course\.teacher\s*&&|chosen\.teacher\s*&&/);
+ a.match(ui,/course\.location/);
+ a.match(ui,/course\.startLabel/);
+ const model=core.buildWidgetModel(make([ev('a','课程','2026-11-04T00:20:00Z','2026-11-04T03:25:00Z')]),date('2026-11-04T01:00:00Z'));
+ a.equal(model.days[1].courses[0].title,'课程');
+});
+
+test('large widget reserves wider today column and vertically expands details',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
+ a.match(ui,/const sideShare=expanded\?0\.24:medium\?0\.30:0\.265/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
+ a.match(ui,/lineLimit=\{isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ a.match(ui,/lineLimit=\{smallText\?4:5\}[\s\S]{0,160}fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ for(const usableWidth of [280,320,540,600]){
+   for(const expanded of [false,true]){
+     for(const medium of [false,true]){
+       const share=expanded?0.24:medium?0.30:0.265;
+       const sideWidth=Math.floor(usableWidth*share);
+       const todayWidth=usableWidth-sideWidth*2;
+       a.equal(sideWidth*2+todayWidth,usableWidth);
+       a.ok(todayWidth>sideWidth);
+     }
+   }
+ }
+});

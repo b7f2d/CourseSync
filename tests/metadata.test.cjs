@@ -73,7 +73,7 @@ test('only the Release archive is distributed',()=>{
     'stale root ZIP should not be tracked or distributed');
   assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
   const workflow=read('.github/workflows/release.yml');
-  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
+  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" "\$ipa" --clobber/);
   assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
   assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
   assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);

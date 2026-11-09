@@ -3,3 +3,6 @@ node_modules/
 *.log
 dist/
 /CourseSync.zip
+
+ios/build/
+__pycache__/

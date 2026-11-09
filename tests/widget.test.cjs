@@ -123,7 +123,7 @@ test('widget diagnoses each cache failure stage without exposing any file conten
  a.equal(core.loadWidgetState({...base,readDirectorySync:()=>[]}).code,'NO_STATE');
  const out=core.loadWidgetState({...base,existsSync:()=>false});
  a.equal(out.kind,'empty');a.equal(out.code,'NO_CACHE_DIR');
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/诊断：\{code\|\|'UNKNOWN'\}/);
 });
 test('private widget Storage mirror works even when FileManager has no App Group path',()=>{
@@ -214,7 +214,7 @@ test('rolling view only greys classes after end time and changes at exact bounda
 });
 
 test('widget UI renders only three day headings and keeps full course details',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
  a.match(ui,/const days=model\.days\.slice\(0,3\)/);
  a.match(ui,/\{days\.map\(day=>/);
@@ -243,7 +243,7 @@ test('course overflow stays chronological and reports remaining count',()=>{
  a.equal(core.selectVisibleCourses({courses:[]},1).hiddenAfter,0);
 });
 test('widget has an adaptive canvas and simple plus-N remaining classes',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.match(ui,/\+\{window\.hiddenAfter\}节课/);
  a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
@@ -265,7 +265,7 @@ test('teacher names appear from new mirror or older semester cache',()=>{
  a.equal(core.readWidgetMirror({get:()=>legacy}).kind,'ready');
 });
 test('renderer measures actual widget geometry and omits overflow-prone footer',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/GeometryReader/);
  a.match(ui,/proxy\.size\.width/);
  a.match(ui,/proxy\.size\.height/);
@@ -301,7 +301,7 @@ test('production widget maps actual synced courses without invented timetable',(
   const medium=core.selectTodayColumns(model.days[1],1);
   a.deepEqual(Array.from(medium.future,c=>c.title),['第三节真实课程']);
   a.equal(medium.hiddenAfter,1);
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.ok(ui.includes('buildWidgetModel(snapshot.state,Date.now())'));
   a.ok(!ui.includes('SHOW_SAMPLE_COURSES'));
   a.ok(!ui.includes('buildSamplePreview'));
@@ -329,7 +329,7 @@ test('today columns handle first lesson, a gap, last lesson and all finished',()
 });
 
 test('large today layout has one focus card on the left, future stack on the right',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.ok(ui.includes('const showAllToday=!medium&&height>=290;'));
   a.ok(ui.includes('showAll={showAllToday}'));
   a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
@@ -345,7 +345,7 @@ test('single visible today lesson gets larger title and wider today column',()=>
  const sample=core.selectTodayPair({today:true,courses:[{title:'只上一节',status:'current'}]});
  a.equal(sample.courses.length,1);
  a.equal(sample.hiddenAfter,0);
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/expanded=todayFocus\.courses\.length>1/);
  a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
  a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
@@ -355,7 +355,7 @@ test('single visible today lesson gets larger title and wider today column',()=>
  a.match(ui,/largeText\?\(compact\?15:17\)/);
 });
 test('only two visible today cards activate smaller pair typography',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
  a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
  a.match(ui,/density="pair"/);
@@ -420,7 +420,7 @@ test('private mirror reads real events and ignores legacy preview fields',()=>{
 });
 
 test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
   a.match(ui,/font=\{compact\?16:18\}/);
   a.match(ui,/day\.label/);
@@ -431,7 +431,7 @@ test('widget labels only dates and useful class details, not redundant auto-upda
   a.match(ui,/foregroundStyle=\{fg\}/);
 });
 test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.match(ui,/function TodayPairColumn/);
   a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
   a.ok(ui.includes('columns.future.map(c=>'));
@@ -441,7 +441,7 @@ test('widget renders the focused today card and upcoming-only stack without extr
   a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
 test('card paints color after fixed-width frame so backgrounds center like headers',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  const start=ui.indexOf('const cardStyle=modifiers()');
  const end=ui.indexOf('return <VStack key={course.id}',start);
  a.ok(start>0&&end>start);
@@ -452,18 +452,18 @@ test('card paints color after fixed-width frame so backgrounds center like heade
  a.match(ui,/HStack key=\{c\.id\}/);
 });
 test('course card retains comfortable internal padding independent of widget outer inset',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/\.padding\(cardPadding\)/);
  a.match(ui,/safeInset=medium\?9:12/);
 });
 test('all widget families use the adaptive opaque canvas',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  const literal="widgetBackground={COLORS.canvas}";
  a.equal(ui.split(literal).length-1,3);
  a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
 });
 test('all three day sections center visible cards; expanded today remains symmetric',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal'\}\)/);
  a.match(ui,/width=\{width-8\}/);
  a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
@@ -476,7 +476,7 @@ test('all three day sections center visible cards; expanded today remains symmet
  a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
 });
 test('readable three-day widget uses larger but density-aware typography',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  const title=ui.match(/const titleSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
  const detail=ui.match(/const detailSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
  a.ok(title&&detail,'all course text variants must have explicit sizes');
@@ -509,9 +509,9 @@ test('README documents the three-day UI without screenshots',()=>{
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });
-test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
+test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
 test('narrow yesterday and tomorrow cards preserve full course names',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   const start=ui.indexOf('function formatSideTitle(title){');
   const end=ui.indexOf('\n}\n',start);
   a.ok(start>=0&&end>start,'side title formatter should exist');
@@ -532,7 +532,7 @@ test('narrow yesterday and tomorrow cards preserve full course names',()=>{
 });
 
 test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/safeInset=medium\?9:12/);
  a.match(ui,/padding=\{safeInset\}/);
  a.match(ui,/width-2\*safeInset/);
@@ -552,7 +552,7 @@ test('missing cache is an honest empty state; widget never writes, authenticates
 });
 
 test('systemSmall uses measured width and height without wasting space on spacers',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function EmptyPanel('));
  a.match(section,/proxy\.size\.width,height=proxy\.size\.height/);
  a.match(section,/cardWidth=Math\.max\(80,width-2\*inset\)/);
@@ -564,7 +564,7 @@ test('systemSmall uses measured width and height without wasting space on spacer
  a.doesNotMatch(section,/chosen\.teacher/);
 });
 test('all course text and card surfaces adapt to dark mode',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  for(const key of ['canvas','dark','blue','muted','faint','finished','doneBg','nextBg','activeBg','activeDetail']){
    a.match(ui,new RegExp(key+':\\{light:'));
  }
@@ -574,7 +574,7 @@ test('all course text and card surfaces adapt to dark mode',()=>{
 });
 
 test('dark mode has a pure black canvas with full-bleed root background for all families',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.equal((ui.match(/background=\{\{style:COLORS\.canvas\}\}/g)||[]).length,3);
@@ -592,7 +592,7 @@ test('dark mode has a pure black canvas with full-bleed root background for all 
 });
 
 test('all widget sizes hide teacher names without stripping teacher data from the model',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.doesNotMatch(ui,/\{course\.teacher\}|\{chosen\.teacher\}|course\.teacher\s*&&|chosen\.teacher\s*&&/);
  a.match(ui,/course\.location/);
  a.match(ui,/course\.startLabel/);
@@ -601,7 +601,7 @@ test('all widget sizes hide teacher names without stripping teacher data from th
 });
 
 test('large widget reserves wider today column and vertically expands details',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/const sideShare=expanded\?0\.24:medium\?0\.30:0\.265/);
  a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
  a.match(ui,/lineLimit=\{isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);

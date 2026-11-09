@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,6 +20,8 @@ jobs:
         run: node --test tests/*.test.cjs
       - name: Package stable-name Scripting ZIP
         run: bash scripts/package.sh
+      - name: Build unsigned iPhone preview
+        run: python3 ios/build.py --output dist/CourseSync-1.0.2-unsigned.ipa
       - name: Publish and document the stable distribution
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,13 +37,14 @@ jobs:
 
           release_tag="stable"
           archive="dist/CourseSync.zip"
+          ipa="dist/CourseSync-1.0.2-unsigned.ipa"
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release upload "$release_tag" "$archive" --clobber
+            gh release upload "$release_tag" "$archive" "$ipa" --clobber
             gh release edit "$release_tag" --target "$GITHUB_SHA" --title "CourseSync" --notes-file docs/release-notes.md
             # Remove the superseded legacy asset only after the replacement is uploaded.
             gh release delete-asset "$release_tag" "NUFE-Schedule.zip" --yes >/dev/null 2>&1 || true
           else
-            gh release create "$release_tag" "$archive" \
+            gh release create "$release_tag" "$archive" "$ipa" \
               --target "$GITHUB_SHA" \
               --title "CourseSync" \
               --notes-file docs/release-notes.md
