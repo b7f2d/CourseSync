@@ -698,7 +698,7 @@ function examRows(html) {
     const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
     assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
     rows.push({title:text(title[1]),time:text(time[2]),kind:text(cells[1].replace(title[0],'')),
-      location:text(cells[0].replace(time[0],'')),finished:attrs['data-finished']==='true'});
+      location:text(cells[0].replace(time[0],''))});
   }
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
@@ -716,25 +716,35 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   const prefix=EXAM_MARKER+state.owner+'] ';
   const target=new Map();
   for(const row of await fetchExamRows(http)){
-    if(row.finished)continue;
     const time=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})\s*[~～–-]\s*(\d{2}:\d{2})$/.exec(row.time);
     assert(time,'EXAM_SCHEMA');
     const [,day,from,to]=time;
     const start=Date.parse(day+'T'+from+':00+08:00'),stop=Date.parse(day+'T'+to+':00+08:00');
     assert(Number.isFinite(start)&&Number.isFinite(stop)&&localDateTime(new Date(start).toISOString())===day+' '+from&&
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
-    if(stop<=now)continue;
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
     target.set(key,{title:'🌟 '+row.title,start,stop,location:row.location});
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
+  // Scan the future for cancellations and only the historical windows
+  // represented in the school response. Keep history when the school archives it.
+  const windowSize=90*DAY;
+  const historical=new Set([...target.values()].filter(exam=>exam.start<now)
+    .map(exam=>Math.floor(exam.start/windowSize)*windowSize));
+  const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   const read=async()=>{
-    store.check();
-    const rows=await calendarRows(now,end,calendar);
-    store.check();
-    return rows.filter(e=>+e.endDate>now&&String(e.notes||'').startsWith(prefix));
+    const owned=new Map();
+    for(const [start,stop] of windows){
+      store.check();
+      for(const ev of await calendarRows(start,stop,calendar)){
+        if(String(ev.notes||'').startsWith(prefix)&&(target.has(ev.notes)||+ev.endDate>now)){
+          owned.set(occurrenceKey(ev),ev);
+        }
+      }
+    }
+    store.check();return [...owned.values()];
   };
   const rows=await read();
   if(!rows.length&&!target.size)return;

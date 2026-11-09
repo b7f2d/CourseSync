@@ -679,7 +679,7 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
 });
-test('manual refresh writes one starred exam, preserves it on error, and removes cancellations',async()=>{
+test('manual refresh imports finished and upcoming exams and preserves history',async()=>{
  const e=await env({hostEnv:'index'}),alerts=[];
  const day=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
  let body='<tr data-finished="false"><td><div class="time">'+day+' 08:00~10:00</div><div><span>教学楼</span><span>101</span></div></td><td><div>测试 &amp; 统计</div><div>期末</div></td><td>未结束</td></tr>'+
@@ -699,26 +699,30 @@ test('manual refresh writes one starred exam, preserves it on error, and removes
  await e.m.run();
  const exams=()=>e.db.filter(x=>x.title.startsWith('🌟 '));
  a.equal(alerts.length,0,JSON.stringify(alerts));
- a.equal(exams().length,1);
- const id=exams()[0].identifier;
- a.equal(exams()[0].calendar.identifier,e.calendar.identifier);
- a.equal(exams()[0].title,'🌟 测试 & 统计');
- a.equal(exams()[0].location,'教学楼 101');
- a.equal(exams()[0].startDate.toISOString(),day+'T00:00:00.000Z');
+ a.equal(exams().length,2);
+ const upcoming=exams().find(x=>x.title==='🌟 测试 & 统计');
+ const finished=exams().find(x=>x.title==='🌟 旧考试');
+ const ids=()=>exams().map(x=>x.identifier).sort();
+ const initialIds=ids();
+ a.equal(upcoming.calendar.identifier,e.calendar.identifier);
+ a.equal(finished.calendar.identifier,e.calendar.identifier);
+ a.equal(upcoming.location,'教学楼 101');
+ a.equal(upcoming.startDate.toISOString(),day+'T00:00:00.000Z');
+ a.equal(finished.startDate.toISOString(),'2020-01-01T00:00:00.000Z');
  await e.m.run();
- a.deepEqual(exams().map(x=>x.identifier),[id]);
+ a.deepEqual(ids(),initialIds);
  e.store.acquire();
  try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
  finally{e.store.release();}
- a.deepEqual(exams().map(x=>x.identifier),[id]);
+ a.deepEqual(ids(),initialIds);
  body='<tr><td>无效响应</td></tr>';
  await e.m.run();
  a.match(alerts.at(-1).message,/EXAM_SCHEMA/);
- a.deepEqual(exams().map(x=>x.identifier),[id]);
+ a.deepEqual(ids(),initialIds);
  body='<tr class="tr-empty"><td>暂无“未结束”的考试安排</td></tr>';
  await e.m.run();
- a.equal(exams().length,0);
- a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
+ a.deepEqual(ids(),[finished.identifier]);
+ a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,2);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,0);});
