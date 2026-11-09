@@ -1487,8 +1487,8 @@ async function reminders(state) {
   const prefix='nufe-local-class-'+state.owner+'-',now=Date.now(),all=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
   const desired=state.minutes>0?all.filter(e=>Date.parse(e.start)-state.minutes*60000>now+60000&&Date.parse(e.start)<now+7*DAY).slice(0,40):[];
   const want=new Set(desired.map(e=>prefix+e.id));
-  const pending=await Notification.allPending();const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
-  for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pending.find(n=>n.identifier===id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
+  const pending=await Notification.allPending();const pendingById=new Map(pending.map(n=>[n.identifier,n]));const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
+  for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pendingById.get(id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
 }
 // Minimal, private same-project cache for widget.tsx. In some Scripting
 // widget extensions the FileManager App Group path is unavailable even though
@@ -2480,6 +2480,22 @@ function canOfferSignOut(state){
   try{return Keychain.contains(KEY)||hasSavedCredentials();}
   catch(_){return !state.signedOut;}
 }
+function offlineAgenda(state,now=Date.now()) {
+  const today=localDateTime(new Date(now).toISOString()).slice(0,10);
+  const rows=Object.values(state.semesters||{}).flatMap(s=>s.events||[])
+    .filter(e=>Number.isFinite(Date.parse(e.start))&&Date.parse(e.end)>now)
+    .sort((a,b)=>Date.parse(a.start)-Date.parse(b.start));
+  const seen=new Set(),lines=[];
+  for(const e of rows){
+    const key=JSON.stringify([e.title,e.start,e.end,e.location]);
+    if(seen.has(key))continue;seen.add(key);
+    const date=localDateTime(e.start);
+    lines.push((date.startsWith(today)?'今天'+date.slice(10):date)+'–'+localDateTime(e.end).slice(11)+' '+e.title+(e.location?' · '+e.location:''));
+    if(lines.length===20)break;
+  }
+  return (state.lastCheck?'上次同步：'+localDateTime(state.lastCheck)+'\n\n':'')+
+    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
+}
 async function run() {
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
   const store=new Store();
@@ -2502,6 +2518,7 @@ async function run() {
       menu.addAction('立即刷新');menu.addAction('运行状态');
       const canSignOut=canOfferSignOut(state);
       if(canSignOut)menu.addDestructiveAction('退出登录');
+      menu.addAction('查看课表');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
@@ -2510,6 +2527,7 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
+      if(selected===(canSignOut?3:2)){await notice('本地课表',offlineAgenda(state));return;}
       if(selected===2&&canSignOut)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
@@ -2625,7 +2643,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*

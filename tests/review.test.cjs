@@ -675,8 +675,8 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
  a.equal(e.requests.length,0);
 });
 test('manual refresh imports finished and upcoming exams and preserves history',async()=>{
@@ -1009,7 +1009,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1024,7 +1024,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1051,7 +1051,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -1641,4 +1641,12 @@ test('recovery backup option appears only when the matching backup exists',async
  e.files.set(e.store.path('known.json'),'{}');
  a.equal(e.m.availableRecovery('CALENDAR_VERIFY',e.state,e.store).kind,'backup');
  a.equal(e.m.availableRecovery('NETWORK',e.state,e.store),null);
+});
+
+test('offline agenda excludes ended lessons and deduplicates cached semesters',async()=>{
+ const e=await env();
+ const upcoming={title:'课程甲',start:'2026-11-10T00:00:00.000Z',end:'2026-11-10T02:00:00.000Z',location:'教室'};
+ const old={...upcoming,title:'旧课',start:'2026-11-08T00:00:00.000Z',end:'2026-11-08T02:00:00.000Z'};
+ const result=e.m.offlineAgenda({semesters:{a:{events:[old,upcoming]},b:{events:[upcoming]}}},Date.parse('2026-11-09T00:00:00Z'));
+ a.equal(result.split('课程甲').length-1,1);a.ok(!result.includes('旧课'));a.match(result,/08:00–10:00/);
 });

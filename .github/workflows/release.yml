@@ -24,6 +24,8 @@ jobs:
         run: echo "COURSESYNC_VERSION=$(node -p "require('./script.json').version")" >> "$GITHUB_ENV"
       - name: Build unsigned iPhone preview
         run: python3 ios/build.py --output dist/CourseSync-${COURSESYNC_VERSION}-unsigned.ipa
+      - name: Verify standalone synchronization
+        run: node ios/smoke.cjs
       - name: Publish and document the stable distribution
         env:
           GH_TOKEN: ${{ github.token }}

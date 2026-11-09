@@ -15,8 +15,9 @@ function timer(callback, ms, repeat) {
   const fire = () => {
     if (!timers.has(token)) return;
     if (!repeat) timers.delete(token);
-    callback();
-    if (repeat && timers.has(token)) __delay(ms, fire);
+    try { callback(); } finally {
+      if (repeat && timers.has(token)) __delay(ms, fire);
+    }
   };
   __delay(ms, fire);
   return token;
@@ -101,7 +102,7 @@ const Scripting = {
     presentChooser:async () => {
       const rows=(await Scripting.Calendar.forEvents()).filter(c=>c.allowsContentModifications&&!c.isSubscribed);
       const i=await dialog.actionSheet({title:'选择专用日历',actions:rows.map(c=>({label:c.title+' · '+c.source.title})),cancelButton:true});
-      return i == null ? [] : [rows[i]];
+      return Number.isInteger(i) && rows[i] ? [rows[i]] : [];
     },
     create:async ({title})=>wrapCalendar({title})
   },
@@ -112,7 +113,7 @@ const Scripting = {
     removePendings:ids=>native('removePending',{ids})
   },
   async fetch(url, options = {}) {
-    const result=await asyncNative('request',{url,method:options.method,headers:options.headers,body:options.body,timeout:options.timeout});
+    const result=await asyncNative('request',{url,method:options.method || 'GET',headers:options.headers,body:options.body,timeout:options.timeout ?? 15});
     const headers=new Map(Object.entries(result.headers || {}).map(([name, value]) => [name.toLowerCase(), value]));
     if (result.status >= 300 && result.status < 400 && result.redirect)
       await options.handleRedirect?.({url:result.redirect});
