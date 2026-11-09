@@ -10,7 +10,7 @@ const publicFiles=['script.json','docs/release-notes.md'];
 test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
   assert.equal(data.name,'CourseSync');
-  assert.match(data.version,/^1\.0\.[1-9]\d*$/);
+  assert.equal(Object.hasOwn(data,'version'),false);
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
@@ -73,7 +73,8 @@ test('only the Release archive is distributed',()=>{
     'stale root ZIP should not be tracked or distributed');
   assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
   const workflow=read('.github/workflows/release.yml');
-  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" "\$ipa" --clobber/);
+  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
+  assert.doesNotMatch(workflow,/build\.py|unsigned\.ipa/);
   assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
   assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
   assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);

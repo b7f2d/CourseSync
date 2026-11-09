@@ -4,7 +4,7 @@
 
 - 用状态式算法分割合并的 Set-Cookie 头，兼容 Expires 日期中的逗号及带引号的值；不改变 Cookie 域名白名单和本地存储。
 - 新增不依赖 Scripting 模拟宿主的 Cookie / 日历 Diff 纯逻辑测试，原模拟测试继续保留。
-- GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `CourseSync.zip`，不需要创建新版本号或新 Release。
+- GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `CourseSync.zip`，不使用版本号，也不需要创建新 Release。
 - 可运行 `bash scripts/package.sh` 生成 `dist/CourseSync.zip`。
 
 ## 发布机制与兼容性

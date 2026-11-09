@@ -14,21 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run all regressions
+      - name: Run regressions
         run: node --test tests/*.test.cjs
-      - name: Check ZIP construction
+      - name: Check Scripting ZIP construction
         run: bash scripts/package.sh
-
-  native-preview:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Build standalone unsigned IPA
-        run: |
-          mkdir -p dist
-          python3 ios/build.py --output "dist/CourseSync-$(node -p "require('./script.json').version")-unsigned.ipa"
-      - name: Run standalone end-to-end smoke verification
-        run: node ios/smoke.cjs
