@@ -666,14 +666,35 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.length,0);});
-test('main menu keeps only refresh, status and available sign-out',async()=>{
+test('main menu offers refresh, status, available sign-out and exam schedule',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','考试日程']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
+ a.equal(e.requests.length,0);
+});
+test('exam schedule uses the account-neutral school entry and shows only unfinished exams',async()=>{
+ const e=await env({hostEnv:'index'}),urls=[],alerts=[];
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='考试日程');
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
+ e.m.HTTP.prototype.get=async url=>{
+   urls.push(url);
+   if(url.endsWith('/course-table'))return {url,text:'personId = 123; currentSemester = {"id": 161};'};
+   a.equal(url,'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange');
+   return {url:url+'/info/123',text:`<table id="exams"><tbody>
+     <tr data-finished="false"><td><div class="time">2026-12-01 08:00~10:00</div><div><span>教学楼</span><span>101</span></div></td><td><div><span>测试 &amp; 统计</span></div><div>期末</div></td><td>未结束</td></tr>
+     <tr data-finished="true" class="finished"><td><div class="time">2026-06-01 08:00~10:00</div></td><td><div>旧考试</div></td><td>已结束</td></tr>
+     </tbody></table>`};
+ };
+ await e.m.run();
+ a.equal(urls.length,2);
+ a.equal(alerts.at(-1).title,'考试日程');
+ a.match(alerts.at(-1).message,/测试 & 统计\n2026-12-01 08:00~10:00\n教学楼 101/);
+ a.doesNotMatch(alerts.at(-1).message,/旧考试/);
  a.equal(e.requests.length,0);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
@@ -952,7 +973,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','考试日程']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);

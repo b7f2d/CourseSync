@@ -674,6 +674,57 @@ function attributes(tag) {
   return attrs;
 }
 function inputs(html){return [...html.matchAll(/<input\b[^>]*>/gi)].map(m=>attributes(m[0]));}
+const EXAM_PATH='/student/for-std/exam-arrange';
+function examRows(html) {
+  const clean=html.replace(/<!--[\s\S]*?-->/g,'');
+  const table=[...clean.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table\s*>/gi)]
+    .find(m=>attributes(m[1]).id==='exams');
+  assert(table,'EXAM_SCHEMA');
+  const text=markup=>htmlAttributeValue(markup.replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
+  const rows=[];
+  let empty=false;
+  for(const row of table[2].matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr\s*>/gi)){
+    const attrs=attributes(row[1]);
+    const cells=[...row[2].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td\s*>/gi)].map(m=>m[1]);
+    if(attrs.class?.split(/\s+/).includes('tr-empty')&&cells.length===1&&text(cells[0]).includes('暂无')){
+      empty=true;
+      continue;
+    }
+    assert(cells.length===3&&['true','false'].includes(attrs['data-finished']),'EXAM_SCHEMA');
+    const time=[...cells[0].matchAll(/<div\b([^>]*)>([\s\S]*?)<\/div\s*>/gi)]
+      .find(m=>attributes(m[1]).class?.split(/\s+/).includes('time'));
+    const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
+    assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
+    rows.push({title:text(title[1]),time:text(time[2]),
+      location:text(cells[0].replace(time[0],'')),status:text(cells[2]),finished:attrs['data-finished']==='true'});
+  }
+  assert(empty||rows.length,'EXAM_SCHEMA');
+  return rows;
+}
+async function fetchExamRows(http) {
+  const response=await http.get(JW+EXAM_PATH);
+  const target=safeURL(response.url);
+  if(target.host!==safeURL(JW).host||target.path==='/student/login')fail('AUTH_REQUIRED');
+  assert(target.path===EXAM_PATH||/^\/student\/for-std\/exam-arrange\/info\/\d+$/.test(target.path),'EXAM_SCHEMA');
+  return examRows(response.text);
+}
+async function showExams(state,store) {
+  try{
+    assert(!state.signedOut,'AUTH_REQUIRED');
+    const http=new HTTP(readCookieJar(),cookies=>Keychain.set(KEY,JSON.stringify(cookies)),()=>store.check());
+    const {person}=pageInfo(await coursePage(http,true));
+    const accountKey='CourseSync.Local.v1.person';
+    if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===person,'ACCOUNT_CHANGED');
+    const rows=await fetchExamRows(http);
+    const upcoming=rows.filter(row=>!row.finished);
+    const history=rows.length-upcoming.length;
+    const message=upcoming.map(row=>[row.title,row.time,row.location,row.status].filter(Boolean).join('\n')).join('\n\n');
+    await notice('考试日程',message||('当前没有未结束的考试。'+(history?'已结束 '+history+' 场。':'')));
+  }catch(error){
+    await notice('考试日程读取失败',diagnosticCode(error)==='EXAM_SCHEMA'?
+      '无法识别教务系统的考试列表。请在教务系统中核对考试信息。':errorMessage(error,state));
+  }
+}
 async function fieldsFrom(html,id) {
   // Limit the HTML parser to a document-sized page, never execute or load its resources.
   assert(typeof html==='string'&&html.length<=2*1024*1024,'LOGIN_SCHEMA');
@@ -2364,7 +2415,9 @@ async function run() {
       const menu=new Alert();menu.title='CourseSync';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
-      if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
+      const canSignOut=canOfferSignOut(state);
+      if(canSignOut)menu.addDestructiveAction('退出登录');
+      if(!state.signedOut)menu.addAction('考试日程');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
@@ -2373,7 +2426,8 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===2)action=13;
+      if(selected===2&&canSignOut)action=13;
+      else if(selected===(canSignOut?3:2))action=14;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -2386,6 +2440,7 @@ async function run() {
       return;
     }
     locked=true;state=store.read();
+    if(action===14){await showExams(state,store);return;}
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.
