@@ -811,10 +811,40 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:EXAM_ICON+row.title,start,stop,location:row.location});
+    target.set(key,{title:row.title,start,stop,location:row.location});
+  }
+  // Recover previously managed exams from the old timetable calendar. Never touch
+  // unrelated events; the owner-specific marker or persisted ID is mandatory.
+  const oldCalendar=(await visibleCalendars()).find(c=>c.identifier===state.calendarId);
+  const oldIndex=Object.assign(Object.create(null),state.examIndex||{});
+  const legacy=[];
+  const legacyWindows=[[now,end]];
+  for(const key of Object.values(oldIndex)){
+    if(typeof key!=='string'||!key.startsWith(prefix))continue;
+    try{
+      const fields=JSON.parse(key.slice(prefix.length));
+      const date=fields[2];
+      if(Number.isFinite(date))legacyWindows.push([date-DAY,date+DAY]);
+    }catch(_){}
+  }
+  if(oldCalendar&&oldCalendar.identifier!==calendar.identifier){
+    const seen=new Set();
+    for(const [start,stop] of legacyWindows){
+      store.check();
+      for(const ev of await calendarRows(start,stop,oldCalendar)){
+        const key=String(ev.notes||'').startsWith(prefix)?ev.notes:oldIndex[ev.identifier];
+        if(typeof key!=='string'||!key.startsWith(prefix)||seen.has(occurrenceKey(ev)))continue;
+        seen.add(occurrenceKey(ev));legacy.push({ev,key});
+        // Keep historical exams and future exams withheld by the school.
+        if(!target.has(key)&&(source.unpublished||+ev.startDate<now)){
+          target.set(key,{title:String(ev.title||'').replace(/^📝 /u,''),
+            start:+ev.startDate,stop:+ev.endDate,location:ev.location||''});
+        }
+      }
+    }
   }
   progress('更新考试日程');
-  assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
+  assert(calendar.identifier===state.examCalendarId&&calendar.identifier!==state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
   // Scan the future for cancellations and only the historical windows
   // represented in the school response. Keep history when the school archives it.
   const windowSize=90*DAY;
@@ -874,6 +904,17 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   // Save the identifier mapping before replacing recoverable markers with readable notes.
   for(const ev of final)index[ev.identifier]=keyOf(ev);
   state.examIndex=index;store.write(state);
+  // Only remove an old managed event once its new counterpart was verified.
+  for(const {ev,key} of legacy){
+    const exam=target.get(key);
+    if(exam)assert(final.some(saved=>keyOf(saved)===key&&matches(saved,exam)),'CALENDAR_VERIFY');
+    store.check();
+    assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
+      !ev.attendees?.length,'MANAGED_SERIES');
+    await ev.remove();
+    delete index[ev.identifier];
+    state.examIndex=index;store.write(state);
+  }
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
     if(ev.notes===expectedNotes)continue;
@@ -1462,6 +1503,8 @@ function validateState(s){
   assert(s&&s.version===1&&s.semesters&&typeof s.semesters==='object'&&!Array.isArray(s.semesters)&&s.anchors&&typeof s.anchors==='object'&&!Array.isArray(s.anchors),'STATE_CORRUPT');
   const allIds=new Set();
   assert(s.owner===null||typeof s.owner==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(s.owner),'STATE_CORRUPT');
+  if(s.examCalendarId!=null)assert(typeof s.examCalendarId==='string'&&s.examCalendarId.length>0&&
+    s.examCalendarId!==s.calendarId,'STATE_CORRUPT');
   if(s.examIndex!=null)assert(s.owner&&typeof s.examIndex==='object'&&!Array.isArray(s.examIndex)&&
     Object.entries(s.examIndex).every(([id,key])=>id&&typeof key==='string'&&key.startsWith(EXAM_MARKER+s.owner+'] ')),'STATE_CORRUPT');
   for(const [sid,t] of Object.entries(s.semesters)){
@@ -2059,6 +2102,23 @@ async function offerDedicatedCalendar(state,store){
   const title=validCalendarName(await input('创建 iCloud 日历','请输入自定义日历名称'));
   store.check(); // Do not create a calendar if a waiting task superseded this run.
   return await createDedicatedCalendar(title);
+}
+async function pickExamCalendar(state,store){
+  const all=await visibleCalendars();
+  const found=all.find(c=>liveCalendar(c)&&c.identifier===state.examCalendarId);
+  if(found){
+    assert(found.identifier!==state.calendarId,'CALENDAR_REBIND_UNSAFE');
+    return found;
+  }
+  // Never create a duplicate if an already bound exam calendar is unavailable.
+  if(state.examCalendarId)fail('CALENDAR_MISSING');
+  if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
+  store.check();
+  const created=await createDedicatedCalendar('CourseSync 考试');
+  assert(created.identifier!==state.calendarId,'CALENDAR_REBIND_UNSAFE');
+  state.examCalendarId=created.identifier;
+  store.write(state);
+  return created;
 }
 async function pickCalendar(state,store){
   let all=await visibleCalendars();
@@ -3107,7 +3167,7 @@ async function run() {
     const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
     let examError=null;
     if(interactive){
-      try{await syncExams(http,state,store,calendar,progress);}
+      try{const examCalendar=await pickExamCalendar(state,store);await syncExams(http,state,store,examCalendar,progress);}
       catch(error){
         if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
         examError=diagnosticCode(error);
@@ -3127,7 +3187,7 @@ async function run() {
     store.write(state);
     if(progress)await progress.finish(state.runStatus==='success');
     if(state.termErrors?.length){
-      if(interactive)await notice('部分学期未同步','请在「运行状态」查看学期和原因。');
+      if(interactive)await notice('部分学期未同步','部分旧学期未能同步，请重新刷新后核查。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
     if(examError)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
