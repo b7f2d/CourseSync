@@ -22,16 +22,17 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
     <List navigationTitle={(initial ? '编辑' : '添加') + typeName}
       navigationBarTitleDisplayMode="inline"
       toolbar={{cancellationAction: <Button title="取消" action={() => dismiss(null)}/>}}>
-      <Section>
-        <TextField title="标题" prompt="必填" value={title} onChanged={setTitle}/>
-      </Section>
-      <Section footer={end <= start ? <Text>结束时间须晚于开始时间。</Text> : undefined}>
-        <DatePicker title="开始" value={start} datePickerStyle="compact"
+      <Section header={<Text>必填</Text>}
+        footer={end <= start ? <Text>结束时间须晚于开始时间。</Text> : undefined}>
+        <TextField title="标题" prompt="填写标题" value={title} onChanged={setTitle}/>
+        <DatePicker title="开始时间" value={start} datePickerStyle="compact"
           onChanged={next => {setEnd(end + next - start); setStart(next);}}/>
-        <DatePicker title="结束" value={end} datePickerStyle="compact" onChanged={setEnd}/>
+        <DatePicker title="结束时间" value={end} datePickerStyle="compact" onChanged={setEnd}/>
+      </Section>
+      <Section header={<Text>选填</Text>}>
+        <TextField title="地点" prompt="可留空" value={location} onChanged={setLocation}/>
       </Section>
       <Section>
-        <TextField title="地点" prompt="选填" value={location} onChanged={setLocation}/>
         <Button title="保存" disabled={!valid}
           action={() => {if (valid) dismiss({action: 'save', title, start, end, location});}}/>
       </Section>
