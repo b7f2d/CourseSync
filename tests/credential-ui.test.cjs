@@ -120,7 +120,7 @@ test('expired foreground cookie automatically retries saved credentials',()=>{
  assert.match(login,/manualAuth\?\.kind==='credentials'\?manualAuth:readSavedCredentials\(\)/);
  assert.match(login,/passwordLogin\(http,r,account\.username,account\.password,interactive,onStage\)/);
  assert.match(login,/if\(!interactive\)fail\('AUTH_REQUIRED'\)/);
- assert.match(login,/if\(shouldSave\)saveCredentials\(account\.username,account\.password\)/);
+ assert.match(login,/if\(shouldSave\)\{[\s\S]*?'ACCOUNT_CHANGED'\);\s*saveCredentials\(account\.username,account\.password\)/);
  assert.match(login,/\['LOGIN_FAILED','AUTO_LOGIN_REJECTED'\]/);
  assert.match(login,/const fresh=await http\.get\(SSO\)/);
 });

@@ -1125,12 +1125,22 @@ test('first setup labels the course and exam calendars separately and binds both
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:opts.title==='Custom Calendar'?'new-icloud':'exam-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
  const prompts=[];
+ let loggedInWithSchool=false;
  e.sandbox.__sdk.Dialog.prompt=async options=>{
+  a.equal(loggedInWithSchool,true);
+  a.equal(e.requests.length,0);
   prompts.push([options.title,options.placeholder]);
   return options.title==='创建考试日历'?'我的考试':'Custom Calendar';
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
- loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const get=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(...args){
+  const response=await get.apply(this,args);
+  if(args[0].endsWith('/course-table'))loggedInWithSchool=true;
+  return response;
+ };
+ await executeDaily(e);
  a.deepEqual(prompts,[['创建课表日历','日历名称'],['创建考试日历','日历名称']]);
  a.equal(e.store.read().calendarId,'new-icloud');
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
@@ -1138,6 +1148,31 @@ test('first setup labels the course and exam calendars separately and binds both
  a.equal(all.find(c=>c.identifier==='exam-icloud').title,'我的考试');
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
+});
+test('a rejected first login never opens calendar naming or creates a calendar',async()=>{
+ const e=await env({hostEnv:'index'}),{created}=missingCalendar(e),prompts=setName(e);
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',schoolId:'nufe',username:'student',password:'invalid'});
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ const savedSession=JSON.stringify([{name:'SESSION',value:'old-session',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]);
+ e.keys.set('CourseSync.Local.v1.cookies',savedSession);
+ let submissions=0;
+ e.m.HTTP.prototype.get=async function(url,options={}){
+  a.equal(this.jar.cookies.some(cookie=>cookie.name==='SESSION'),false);
+  if(url.endsWith('/sso/login'))return {url:'https://authserver.nufe.edu.cn/authserver/login',
+    text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
+  if(options.body)submissions++;
+  return {url,text:'not authenticated'};
+ };
+ e.m.HTTP.prototype.authJSON=async()=>({isNeed:false});
+ await executeDaily(e);
+ a.equal(submissions,1);
+ a.equal(e.store.read().lastError,'LOGIN_FAILED');
+ a.equal(e.store.read().calendarId,null);
+ a.equal(e.store.read().examCalendarId,undefined);
+ a.deepEqual(prompts,[]);
+ a.deepEqual(created,[]);
+ a.equal(e.m.hasSavedCredentials(),false);
+ a.equal(e.keys.get('CourseSync.Local.v1.cookies'),savedSession);
 });
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);});

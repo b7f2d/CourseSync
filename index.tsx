@@ -1198,8 +1198,8 @@ async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
     await onStage('等待输入学校登录信息');
     account=await credentialForm({title:'CourseSync 登录'});
     shouldSave=true;
-  }else{
-    onStage('Cookie 已失效，使用 Keychain 凭据自动登录');
+  }else if(!shouldSave){
+    onStage('尝试自动登录');
   }
   let page;
   try{
@@ -1216,7 +1216,11 @@ async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
     page=await passwordLogin(http,fresh,account.username,account.password,true,onStage);
   }
   // Never persist credentials before the school has verified this login.
-  if(shouldSave)saveCredentials(account.username,account.password);
+  if(shouldSave){
+    const accountKey=schoolKey('CourseSync.Local.v1.person');
+    if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===pageInfo(page).person,'ACCOUNT_CHANGED');
+    saveCredentials(account.username,account.password);
+  }
   if(manualAuth?.kind==='credentials')manualAuth.password='';
   return page;
 }
@@ -2082,6 +2086,12 @@ function createProgress(state,store,interactive){
     }
     if(/^(读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))setPhase('sync');
   };
+  stage.pause=()=>ui?.pause();
+  stage.resume=()=>{
+    waitingForVerification=false;
+    setPhase('connect');
+    ui?.resume();
+  };
   stage.start=async()=>{
     if(!interactive||started||closed)return;
     started=true;
@@ -2184,7 +2194,7 @@ async function offerDedicatedCalendar(state,store){
   store.check(); // Do not create a calendar if a waiting task superseded this run.
   return await createDedicatedCalendar(title);
 }
-async function pickExamCalendar(state,store){
+async function pickExamCalendar(state,store,beforePrompt){
   const all=await visibleCalendars();
   const found=all.find(c=>liveCalendar(c)&&c.identifier===state.examCalendarId);
   if(found){
@@ -2194,6 +2204,7 @@ async function pickExamCalendar(state,store){
   // Never create a duplicate if an already bound exam calendar is unavailable.
   if(state.examCalendarId)fail('CALENDAR_MISSING');
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
+  await beforePrompt?.();
   const title=validCalendarName(await input('创建考试日历','日历名称'));
   store.check();
   const created=await createDedicatedCalendar(title);
@@ -2202,13 +2213,14 @@ async function pickExamCalendar(state,store){
   store.write(state);
   return created;
 }
-async function pickCalendar(state,store){
+async function pickCalendar(state,store,beforePrompt){
   let all=await visibleCalendars();
   let exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
   if(exact)return await alignBoundCalendarName(exact,state,store);
   // Background jobs never create calendars or silently change the binding.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
+  await beforePrompt?.();
   if(!all.length&&typeof HostScript.requestAccess==='function'){
     try{await HostScript.requestAccess(['calendar']);}catch(_){}
     all=await visibleCalendars();
@@ -2761,15 +2773,16 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
-  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   if(state.notice){state.notice=null;store.write(state);}
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
   const usts=activeSchoolId==='usts';
-  const jar=state.signedOut||(usts&&manualAuth?.kind==='credentials')?new CookieJar():readCookieJar();
+  const manualCredentials=manualAuth?.kind==='credentials';
+  // Explicit credentials must be verified even if a previous session still works.
+  const jar=(state.signedOut||manualCredentials)?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
-  let identityVerified=!usts;
+  let identityVerified=!usts&&!manualCredentials;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
   const http=new HTTP(jar,saveCookies,budget,stage);
   let info,ustsCurrent,ustsHome;
@@ -2798,10 +2811,11 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     identityVerified=true;
     saveCookies(jar.cookies);
   }else info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
-  // Only a verified school session ends the signed-out state.
-  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   const accountKey=schoolKey('CourseSync.Local.v1.person');
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
+  if(!identityVerified){identityVerified=true;saveCookies(jar.cookies);}
+  // A canceled calendar prompt should not require the user to log in again.
+  if(state.signedOut||state.authPaused){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;}
   state.availableSemesters=info.semesters;store.write(state);
   let sids=selectTermIds(info,state,interactive);
   if(interrupted){
@@ -2810,6 +2824,8 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Recover the pending write before opening another calendar transaction.
     if(sid!==info.current)sids=[sid,info.current];
   }
+  if(typeof calendar==='function')calendar=await calendar(budget);
+  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
   state.termErrors=[];
   for(const sid of sids) {
@@ -3334,27 +3350,39 @@ async function run() {
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
     __COURSESYNC_BOOT_PHASE='同步运行';
-    progress=createProgress(state,store,interactive);progress('检查目标日历');
-    const calendar=await pickCalendar(state,store);
+    progress=createProgress(state,store,interactive);
     await progress.start();
     progress('连接教务系统');
-    let examError=null;
-    const syncExamStage=async(http,budget)=>{
-      // A background run cannot create a calendar or ask for its name; once
-      // provisioned in the foreground the same bound calendar is used daily.
-      if(!interactive&&!state.examCalendarId)return;
-      try{
-        budget();
-        const examCalendar=await pickExamCalendar(state,store);
-        await syncFixedGraduateExam(state,store,examCalendar,budget);
-        await syncExams(http,state,store,examCalendar,progress,budget);
-      }catch(error){
-        if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
-        examError=diagnosticCode(error);
+    let examCalendar,examError=null;
+    const recordExamError=error=>{
+      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
+      examError=diagnosticCode(error);
+    };
+    const setupCalendars=async budget=>{
+      progress('检查课表日历');
+      budget();
+      const calendar=await pickCalendar(state,store,progress.pause);
+      if(interactive||state.examCalendarId){
+        try{
+          progress('检查考试日历');
+          examCalendar=await pickExamCalendar(state,store,progress.pause);
+        }catch(error){recordExamError(error);}
       }
+      budget();
+      progress.resume();
+      return calendar;
+    };
+    const syncExamStage=async(http,budget)=>{
+      try{
+        if(examCalendar){
+          budget();
+          await syncFixedGraduateExam(state,store,examCalendar,budget);
+          await syncExams(http,state,store,examCalendar,progress,budget);
+        }
+      }catch(error){recordExamError(error);}
       state.lastExamError=examError;store.write(state);
     };
-    const http=await synchronize(state,store,calendar,interactive,progress,manualAuth,syncExamStage);
+    await synchronize(state,store,setupCalendars,interactive,progress,manualAuth,syncExamStage);
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
