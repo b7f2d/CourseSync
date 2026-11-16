@@ -2970,7 +2970,8 @@ async function run() {
       menu.addAction('立即刷新');menu.addAction('运行状态');
       const canSignOut=canOfferSignOut(state);
       if(canSignOut)menu.addDestructiveAction('退出登录');
-      menu.addAction('查看课表');
+      const canFreeRooms=activeSchoolId==='nufe';
+      if(canFreeRooms)menu.addAction('空闲教室');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
@@ -2979,7 +2980,12 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===(canSignOut?3:2)){await notice('本地课表',offlineAgenda(state));return;}
+      if(canFreeRooms&&selected===(canSignOut?3:2)){
+        const jar=readCookieJar();
+        const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
+        await queryAndShowFreeRooms(http,interactive,()=>{},null);
+        return;
+      }
       if(selected===2&&canSignOut)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
