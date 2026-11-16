@@ -21,7 +21,6 @@ test('Scripting metadata keeps the intended display identity',()=>{
 
 test('script identity is independent of the selected school',()=>{
   assert.doesNotMatch(read('script.json'),/南京财经大学|苏州科技大学|南财/);
-  assert.match(read('docs/release-notes.md'),/首次登录可选择南京财经大学或苏州科技大学/);
 });
 
 test('README distinguishes public CourseSync name from legacy installation identity',()=>{
@@ -48,12 +47,11 @@ test('README remains text-only without image markup or references',()=>{
   assert.match(readme,/\*\*退出登录\*\*：清除 CourseSync 已保存的账号和设置/);
 });
 
-test('installation and migration instructions point to the same GitHub branch',()=>{
+test('installation and update instructions point to the same GitHub branch',()=>{
   const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
-  assert.ok(read('docs/release-notes.md').includes(url));
-  assert.match(read('README.md'),/把远程来源改为上面的 GitHub 分支链接/);
+  assert.match(read('README.md'),/确认远程来源为上面的 GitHub 分支链接/);
   assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx live_activity\.tsx schedule-native\.tsx script\.json/);
 });
 

@@ -9,7 +9,7 @@
 
 ## 远程脚本来源
 
-Scripting 从 `https://github.com/b7f2d/CourseSync/tree/main` 导入和更新 CourseSync。脚本入口与 `script.json` 位于 `main` 分支根目录。旧 Release ZIP 留存为历史版本，已安装的脚本可在「远程资源」中改用分支链接。
+Scripting 从 `https://github.com/b7f2d/CourseSync/tree/main` 导入和更新 CourseSync。脚本入口与 `script.json` 位于 `main` 分支根目录。在 Scripting 的「远程资源」中设置此链接。
 
 ## 技术评估与后续改进方向
 
