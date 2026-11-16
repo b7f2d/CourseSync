@@ -5,7 +5,6 @@ const fs=require('node:fs');
 const path=require('node:path');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const publicFiles=['script.json','docs/release-notes.md'];
 
 test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
@@ -20,11 +19,9 @@ test('Scripting metadata keeps the intended display identity',()=>{
   assert.equal(data.icon,'calendar');
 });
 
-test('public-facing descriptions consistently use NUFE',()=>{
-  for(const filename of publicFiles){
-    const content=read(filename);
-    assert.doesNotMatch(content,/南京财经大学|南财/,'unexpected school name in '+filename);
-  }
+test('script identity is independent of the selected school',()=>{
+  assert.doesNotMatch(read('script.json'),/南京财经大学|苏州科技大学|南财/);
+  assert.match(read('docs/release-notes.md'),/首次登录可选择南京财经大学或苏州科技大学/);
 });
 
 test('README distinguishes public CourseSync name from legacy installation identity',()=>{
@@ -47,7 +44,7 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/切换学校/);
+  assert.match(readme,/沿用首次选定的学校/);
 });
 
 test('release and README describe the same stable installation path',()=>{

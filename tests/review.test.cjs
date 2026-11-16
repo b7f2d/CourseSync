@@ -792,8 +792,8 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false,false]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
  a.equal(e.requests.length,0);
 });
 test('manual refresh imports finished and upcoming exams and preserves history',async()=>{
@@ -1126,7 +1126,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1141,9 +1141,31 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表','切换学校']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
+});
+test('re-login opens credentials for the saved school without showing the school picker',async()=>{
+ for(const [id,name] of [['nufe','南京财经大学'],['usts','苏州科技大学']]){
+  const e=await env({hostEnv:'index'}),m=e.m;
+  e.store.release();
+  m.activateSelectedSchool(id);
+  const store=new m.Store();store.acquire();
+  store.write({...e.state,signedOut:true,authPaused:true});store.release();
+  e.keys.set('CourseSync.Local.v1.school',id);
+  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
+  e.sandbox.__sdk.Navigation={present:async()=>null};
+  let schoolPrompts=0;
+  const credentialPrompts=[];
+  e.sandbox.__nativeRefreshMock=async()=>{schoolPrompts++;return null;};
+  e.sandbox.__nativeCredentialMock=async title=>{credentialPrompts.push(title);return null;};
+  await m.run();
+  a.equal(schoolPrompts,0);
+  a.deepEqual(credentialPrompts,[name+'登录']);
+  a.equal(m.loadSelectedSchool(),id);
+  a.equal(store.read().calendarId,e.calendar.identifier);
+  a.deepEqual(e.requests,[]);
+ }
 });
 test('successful verified synchronization clears signed-out state without changing calendar identity',async()=>{
  const e=await env();e.state.signedOut=true;e.state.authPaused=true;
@@ -1168,7 +1190,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{

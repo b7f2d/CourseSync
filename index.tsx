@@ -187,12 +187,12 @@ const SCHOOL_WHITELIST=Object.freeze([
 ]);
 function schoolKey(key){return activeSchoolId==='nufe'?key:key+'.'+activeSchoolId;}
 function schoolById(id){return SCHOOL_WHITELIST.find(s=>s.id===id)||null;}
-function loadSelectedSchool(){
+function loadSelectedSchool(fallback='nufe'){
   try{
-    if(!Keychain.contains(SCHOOL_KEY))return 'nufe';
+    if(!Keychain.contains(SCHOOL_KEY))return fallback;
     const id=Keychain.get(SCHOOL_KEY);
-    return schoolById(id)?id:'nufe';
-  }catch(_){return 'nufe';}
+    return schoolById(id)?id:fallback;
+  }catch(_){return fallback;}
 }
 function activateSelectedSchool(id){
   const school=schoolById(id);
@@ -1808,7 +1808,7 @@ const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
   EXAM_SCHEMA:['教务系统返回的考试列表或考试时间无法识别。','请在教务系统中核对考试信息，再试一次。'],
-  SCHOOL_UNSUPPORTED:['学校不在当前支持名单中，已停止请求且未修改课表。','从「立即刷新」的学校下拉菜单中选择已支持的学校。'],
+  SCHOOL_UNSUPPORTED:['学校不在当前支持名单中，已停止请求且未修改课表。','首次登录时请在学校下拉菜单中选择已支持的学校。'],
   ENDPOINT_CONFIG:['学校预设接口格式异常，已停止请求。','请更新 CourseSync 或联系维护者检查学校接口配置。'],
   ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
   ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后重新点击「立即刷新」，选择学校重试。'],
@@ -2845,7 +2845,6 @@ async function run() {
       const canSignOut=canOfferSignOut(state);
       if(canSignOut)menu.addDestructiveAction('退出登录');
       menu.addAction('查看课表');
-      menu.addAction('切换学校');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
@@ -2856,7 +2855,6 @@ async function run() {
       }
       if(selected===(canSignOut?3:2)){await notice('本地课表',offlineAgenda(state));return;}
       if(selected===2&&canSignOut)action=13;
-      if(selected===(canSignOut?4:3))action=14;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -2886,12 +2884,15 @@ async function run() {
     }
     if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
-    if(interactive&&(action===0||action===14)){
-      // First-time setup (or explicit logout) is the only routine path to
-      // the school/account wizard. A configured user refreshes in one tap.
-      // Older installations without SCHOOL_KEY keep using their NUFE account.
-      const needsSetup=action===14||state.signedOut||!hasSavedCredentials();
-      if(needsSetup){
+    if(interactive&&action===0){
+      const hasCredentials=!state.signedOut&&hasSavedCredentials();
+      let selectedSchool=loadSelectedSchool(null);
+      // Installations from before school selection already belong to NUFE.
+      if(!selectedSchool&&(state.calendarId||state.signedOut||hasCredentials)){
+        selectedSchool=activeSchoolId;
+        Keychain.set(SCHOOL_KEY,selectedSchool);
+      }
+      if(!selectedSchool){
         const previousSchool=activeSchoolId;
         manualAuth=await prepareManualRefresh(state);
         if(!manualAuth)return;
@@ -2902,8 +2903,14 @@ async function run() {
           locked=true;state=store.read();
           if(!state.owner){state.owner=uuid();store.write(state);}
         }
-      }else if(!Keychain.contains(SCHOOL_KEY)){
-        Keychain.set(SCHOOL_KEY,loadSelectedSchool());
+      }else if(!hasCredentials){
+        try{
+          const credentials=await credentialForm({title:schoolById(selectedSchool).name+'登录'});
+          manualAuth={kind:'credentials',...credentials};
+        }catch(error){
+          if(error.code==='CANCELLED')return;
+          throw error;
+        }
       }
     }
     if(!interactive){
