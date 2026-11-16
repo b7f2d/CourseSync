@@ -382,7 +382,7 @@ test('USTS credentials, cookies and calendar state are scoped to the selected sc
   m.activateSelectedSchool('nufe');
   a.equal(m.readSavedCredentials().username,'nufe-sample');
 });
-test('USTS logs in, verifies account and split teaching weeks, then updates calendar idempotently',async()=>{
+test('USTS sync resolves current and known historical dates automatically and skips unverified history',async()=>{
   const e=await env({hostEnv:'index'}),m=e.m;
   m.activateSelectedSchool('usts');
   const store=new m.Store();store.acquire();
@@ -406,7 +406,8 @@ test('USTS logs in, verifies account and split teaching weeks, then updates cale
   }).join('');
   const homeHTML='<div id="yhxxIndex"></div><div id="kbDiv"></div><table>'+titles+
     '<tr>'+cells(weeks.map(String),'th')+'</tr>'+teachingRows+'</table>';
-  const timetable='<select id="xnm"><option value="2026" selected>2026-2027</option></select>'+
+  const timetable='<select id="xnm"><option value="2026" selected>2026-2027</option>'+
+    '<option value="2023">2023-2024</option><option value="2022">2022-2023</option></select>'+
     '<select id="xqm"><option value="3" selected>1</option><option value="12">2</option></select>';
   const {privateKey,publicKey}=crypto.generateKeyPairSync('rsa',{modulusLength:1024});
   const jwk=publicKey.export({format:'jwk'});
@@ -430,10 +431,10 @@ test('USTS logs in, verifies account and split teaching weeks, then updates cale
     }
     if(url.includes('cxXskbcxIndex'))return {url,text:timetable};
     if(url.includes('cxXsgrkb')){
-      a.equal(new URLSearchParams(opt.body).get('xqm'),'3');
-      return {url,text:JSON.stringify({xsxx:{XH_ID:'fixture-id',XNM:'2026',XQM:'3',NJDM_ID:'2026'},kbList:[
+      const params=new URLSearchParams(opt.body),year=params.get('xnm'),term=params.get('xqm');
+      return {url,text:JSON.stringify({xsxx:{XH_ID:'fixture-id',XNM:year,XQM:term,NJDM_ID:'2022'},kbList:term==='3'?[
         {kcmc:'示例课程',xqj:'2',jcs:'3-4',zcd:'1周,2周',xqh_id:'1',xqmc:'江枫',cdmc:'示例教室',xm:'示例教师'}
-      ]})};
+      ]:[]})};
     }
     if(url.includes('cxRjc'))return {url,text:JSON.stringify([
       {jcmc:'3',qssj:'09:55',jssj:'10:40'},{jcmc:'4',qssj:'10:50',jssj:'11:35'}
@@ -441,8 +442,10 @@ test('USTS logs in, verifies account and split teaching weeks, then updates cale
     return get.call(this,url,opt);
   };
   await m.synchronize(state,store,e.calendar,true,null,{kind:'credentials',username:'sample-student',password:'fixture-password'});
-  const starts=e.db.map(ev=>ev.startDate.toISOString());
-  a.deepEqual(starts,['2026-09-01T01:55:00.000Z','2026-09-08T01:55:00.000Z']);
+  const starts=e.db.map(ev=>ev.startDate.toISOString()).sort();
+  a.deepEqual(starts,['2023-08-29T01:55:00.000Z','2023-09-05T01:55:00.000Z','2026-09-01T01:55:00.000Z','2026-09-08T01:55:00.000Z']);
+  a.equal(state.semesters['202303'].anchor,'2023-08-28');
+  a.deepEqual(Array.from(state.termErrors,e=>[e.sid,e.code]),[['202203','ANCHOR']]);
   a.equal(m.readSavedCredentials().username,'sample-student');
   a.equal(state.signedOut,false);
   const ids=e.db.map(ev=>ev.identifier);
