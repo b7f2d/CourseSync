@@ -62,7 +62,7 @@ test('error guidance does not direct users to removed menu actions',()=>{
   const end=source.indexOf('function diagnosticCode(',start);
   assert.ok(start>=0&&end>start);
   const guide=source.slice(start,end);
-  assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课表日历」/);
+  assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课程日历」/);
   assert.doesNotMatch(guide,/账号与日历设置/);
   assert.match(guide,/点击「立即刷新」/);
 });

@@ -117,7 +117,7 @@ test('native foreground progress shows once, pauses for verification and resumes
    finish:()=>calls.push('finish')
  });
  const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查课表日历');await progress.start();
+ progress('检查课程日历');await progress.start();
  progress('读取学期 161');
  progress('等待输入学校登录信息');
  progress('提交学校认证请求');
@@ -171,7 +171,7 @@ test('native progress unavailable never blocks foreground synchronization',async
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
  e.sandbox.__progressUIFactory=()=>{throw Error('UI_NOT_AVAILABLE');};
  const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查课表日历');await progress.start();
+ progress('检查课程日历');await progress.start();
  progress('请求学期 161 课表数据');progress.finish();
  a.equal(e.state.lastStage,'请求学期 161 课表数据');
 });
@@ -863,7 +863,7 @@ test('compact status shows outcome and hides technical diagnostics',async()=>{
  const concise=e.m.statusText(e.state);
  a.match(concise,/上次完成检查：2026-11-02 14:30/);
  a.doesNotMatch(concise,/未实时核验|非实时状态|最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
- a.match(concise,/课表日历：/);
+ a.match(concise,/课程日历：/);
  e.state.resultNoticeError='NOTIFICATION_FAILED';
  a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
 });
@@ -1152,7 +1152,7 @@ test('first setup labels the course and exam calendars separately and binds both
   return response;
  };
  await executeDaily(e);
- a.deepEqual(prompts,[['创建课表日历','日历名称'],['创建考试日历','日历名称']]);
+ a.deepEqual(prompts,[['创建课程日历','日历名称'],['创建考试日历','日历名称']]);
  a.equal(e.store.read().calendarId,'new-icloud');
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
  a.equal(e.store.read().examCalendarId,'exam-icloud');
@@ -2069,7 +2069,7 @@ test('environment inspection only reads existing local state and never mutates d
  const results=await e.m.inspectEnvironment(e.state,e.store);
  a.ok(results.length>=7);
  a.equal(results.find(x=>x.name==='本地状态').level,'正常');
- a.equal(results.find(x=>x.name==='课表日历').level,'正常');
+ a.equal(results.find(x=>x.name==='课程日历').level,'正常');
  a.equal(results.find(x=>x.name==='学校连接').level,'待确认');
  a.match(e.m.environmentCheckText(results,e.state),/只读检查/);
  a.equal(JSON.stringify([...e.keys]),oldKeys);
@@ -2129,8 +2129,8 @@ test('self-check distinguishes an inaccessible original calendar from a healthy 
  const e=await env();
  e.sandbox.__sdk.Calendar.forEvents=async()=>[e.other];
  const checks=await e.m.inspectEnvironment(e.state,e.store);
- a.equal(checks.find(x=>x.name==='课表日历').level,'注意');
- a.match(checks.find(x=>x.name==='课表日历').detail,/原日历当前不可见/);
+ a.equal(checks.find(x=>x.name==='课程日历').level,'注意');
+ a.match(checks.find(x=>x.name==='课程日历').detail,/原日历当前不可见/);
  a.equal(e.state.calendarId,e.calendar.identifier);
 });
 test('self-check flags pending transactions and does not clear their journal',async()=>{
