@@ -834,7 +834,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   if(oldCalendar&&oldCalendar.identifier!==calendar.identifier){
     const seen=new Set();
     for(const [start,stop] of legacyWindows){
-      store.check();
+      budget();
       for(const ev of await calendarRows(start,stop,oldCalendar)){
         const key=String(ev.notes||'').startsWith(prefix)?ev.notes:oldIndex[ev.identifier];
         if(typeof key!=='string'||!key.startsWith(prefix)||seen.has(occurrenceKey(ev)))continue;
@@ -860,7 +860,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   const read=async()=>{
     const owned=new Map();
     for(const [start,stop] of windows){
-      store.check();
+      budget();
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
         if(typeof key==='string'&&key.startsWith(prefix)&&(target.has(key)||(!source.unpublished&&+ev.endDate>now))){
@@ -868,7 +868,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
         }
       }
     }
-    store.check();return [...owned.values()];
+    budget();return [...owned.values()];
   };
   const rows=await read();
   // Empty current responses are confirmed twice before cancelling previously
@@ -897,7 +897,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
     if(initialized&&(!existing||!matches(existing,exam)))
       examChanges.push((existing?'考试调整：':'新增考试：')+exam.title);
     if(existing&&matches(existing,exam))continue;
-    store.check();
+    budget();
     const ev=existing||new CalendarEvent();
     ev.calendar=calendar;ev.title=exam.title;ev.notes=key;ev.location=exam.location;
     ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(exam.start);ev.endDate=new Date(exam.stop);
@@ -910,7 +910,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
     const key=keyOf(ev),exam=target.get(key);
     if(exam&&matches(ev,exam)&&!kept.has(key)){kept.add(key);continue;}
     if(initialized&&+ev.endDate>now&&(!exam||!matches(ev,exam)))examChanges.push('考试取消或调整：'+ev.title);
-    store.check();
+    budget();
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
@@ -929,7 +929,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   for(const {ev,key} of legacy){
     const exam=target.get(key);
     if(exam)assert(final.some(saved=>keyOf(saved)===key&&matches(saved,exam)),'CALENDAR_VERIFY');
-    store.check();
+    budget();
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
@@ -939,7 +939,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
     if(ev.notes===expectedNotes)continue;
-    store.check();
+    budget();
     const oldId=ev.identifier,key=keyOf(ev);
     ev.notes=expectedNotes;
     await ev.save();
