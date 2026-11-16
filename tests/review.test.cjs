@@ -1818,7 +1818,8 @@ test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest f
          {id:4,nameZh:'博观楼JB202',building:{nameZh:'博观楼'},floor:2},
          {id:5,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1},
          {id:6,nameZh:'博远楼JC203',building:{nameZh:'博远楼'},floor:2},
-         {id:7,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}
+         {id:7,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1},
+         {id:8,nameZh:'博远楼JC105微',building:{nameZh:'博远楼'},floor:1}
        ]
      };
    }
@@ -1842,19 +1843,19 @@ test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms
 
  // 1. 全天同一教室
  const allDayLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rAll,rEve]);
- a.equal(allDayLines.join('\n'),'• 全天（第1-12节 / 上午+下午+晚上）：博远楼JC101（1楼）');
+ a.equal(allDayLines.join('\n'),'• 全天：博远楼JC101');
 
  // 2. 白天同一教室 (上午 + 下午)
  const mornAftLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rEve]);
- a.equal(mornAftLines.join('\n'),'• 白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+ a.equal(mornAftLines.join('\n'),'• 白天：博远楼JC101\n• 晚上：博观楼JB105');
 
  // 3. 下午至晚上同一教室 (下午 + 晚上)
  const aftEveLines=e.m.resolveDayRooms([rAll],[rAft],[rAft,rEve]);
- a.equal(aftEveLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午至晚上（第5-12节 / 下午+晚上）：博远楼JC203（2楼）');
+ a.equal(aftEveLines.join('\n'),'• 上午：博远楼JC101\n• 下午至晚上：博远楼JC203');
 
  // 4. 三时段各不相同
  const sepLines=e.m.resolveDayRooms([rAll],[rAft],[rEve]);
- a.equal(sepLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午（第5-9节）：博远楼JC203（2楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+ a.equal(sepLines.join('\n'),'• 上午：博远楼JC101\n• 下午：博远楼JC203\n• 晚上：博观楼JB105');
 });
 
 test('NUFE free classroom query supports morning, afternoon and evening with smart room merging without modifying calendar',async()=>{
@@ -1881,10 +1882,10 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
  e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
  const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
  a.match(msg,/【今天 2026-11-16】/);
- a.ok(msg.includes('白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）'));
- a.ok(msg.includes('晚上（第10-12节）：博远楼JC403（4楼）'));
+ a.ok(msg.includes('白天：博远楼JC101'));
+ a.ok(msg.includes('晚上：博远楼JC403'));
  a.match(msg,/【明天 2026-11-17】/);
- a.ok(msg.includes('全天（第1-12节 / 上午+下午+晚上）：博观楼JB101（1楼）'));
+ a.ok(msg.includes('全天：博观楼JB101'));
   a.equal(noticeTitle,'空闲教室查询');
  a.equal(e.db.length,dbCountBefore);
 });
