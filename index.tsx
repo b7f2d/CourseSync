@@ -2850,6 +2850,73 @@ async function queryFreeRoomsForPeriod(http,date,units){
   }catch(_){return [];}
 }
 
+const MORNING_UNITS=['1','2','3','4'];
+const AFTERNOON_UNITS=['5','6','7','8','9'];
+const AFTERNOON_FALLBACK=['5','6','7','8'];
+const EVENING_UNITS=['10','11','12'];
+
+function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
+  const formatRoom=r=>r?`${r.nameZh||r.name}（${r.floor}楼）`:'无空闲教室';
+  const isSame=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?a.id===b.id:(a.nameZh||a.name)===(b.nameZh||b.name));
+  const inList=(list,target)=>list.some(r=>isSame(r,target));
+
+  // 1. 全天同一教室 (上午 + 下午 + 晚上)
+  const allDayRoom=mornRooms.find(r=>inList(aftRooms,r)&&inList(eveRooms,r));
+  if(allDayRoom){
+    return [`• 全天（第1-12节 / 上午+下午+晚上）：${formatRoom(allDayRoom)}`];
+  }
+
+  // 2. 白天同一教室 (上午 + 下午)
+  const mornAftRoom=mornRooms.find(r=>inList(aftRooms,r));
+  const aftEveRoom=aftRooms.find(r=>inList(eveRooms,r));
+
+  if(mornAftRoom){
+    return [
+      `• 白天（第1-9节 / 上午+下午）：${formatRoom(mornAftRoom)}`,
+      `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+    ];
+  }
+
+  // 3. 下午至晚上同一教室 (下午 + 晚上)
+  if(aftEveRoom){
+    return [
+      `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
+      `• 下午至晚上（第5-12节 / 下午+晚上）：${formatRoom(aftEveRoom)}`
+    ];
+  }
+
+  // 4. 上午与晚上同一教室 (早晚同教室)
+  const mornEveRoom=mornRooms.find(r=>inList(eveRooms,r));
+  if(mornEveRoom){
+    return [
+      `• 上午（第1-4节）：${formatRoom(mornEveRoom)}`,
+      `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
+      `• 晚上（第10-12节）：${formatRoom(mornEveRoom)}（同上午）`
+    ];
+  }
+
+  // 5. 各时段独立教室
+  return [
+    `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
+    `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
+    `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+  ];
+}
+
+async function queryDayRooms(http,date){
+  async function getAft(){
+    let r=await queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS);
+    if(!r.length)r=await queryFreeRoomsForPeriod(http,date,AFTERNOON_FALLBACK);
+    return r;
+  }
+  const [morn,aft,eve]=await Promise.all([
+    queryFreeRoomsForPeriod(http,date,MORNING_UNITS),
+    getAft(),
+    queryFreeRoomsForPeriod(http,date,EVENING_UNITS)
+  ]);
+  return resolveDayRooms(morn,aft,eve);
+}
+
 async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAuth=null,now=Date.now()){
   stage('正在连接教务系统...');
   try{
@@ -2864,33 +2931,18 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
   stage('正在查询空闲教室...');
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
   const tomorrow=localDateTime(new Date(now+86400000).toISOString()).slice(0,10);
-  const MORNING_UNITS=['1','2','3','4'];
-  const AFTERNOON_UNITS=['5','6','7','8','9'];
-  const AFTERNOON_FALLBACK=['5','6','7','8'];
-  async function getPeriodRoom(date,isMorning){
-    if(isMorning){
-      const rooms=await queryFreeRoomsForPeriod(http,date,MORNING_UNITS);
-      return rooms[0]||null;
-    }
-    let rooms=await queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS);
-    if(!rooms.length)rooms=await queryFreeRoomsForPeriod(http,date,AFTERNOON_FALLBACK);
-    return rooms[0]||null;
-  }
-  const [todayMorn,todayAft,tmrwMorn,tmrwAft]=await Promise.all([
-    getPeriodRoom(today,true),getPeriodRoom(today,false),
-    getPeriodRoom(tomorrow,true),getPeriodRoom(tomorrow,false)
+  const [todayLines,tmrwLines]=await Promise.all([
+    queryDayRooms(http,today),
+    queryDayRooms(http,tomorrow)
   ]);
-  const formatRoom=r=>r?`${r.nameZh||r.name}（${r.floor}楼）`:'无空闲教室';
   const message=[
     `【今天 ${today}】`,
-    `• 上午（第1-4节）：${formatRoom(todayMorn)}`,
-    `• 下午（第5-9节）：${formatRoom(todayAft)}`,
+    ...todayLines,
     '',
     `【明天 ${tomorrow}】`,
-    `• 上午（第1-4节）：${formatRoom(tmrwMorn)}`,
-    `• 下午（第5-9节）：${formatRoom(tmrwAft)}`,
+    ...tmrwLines,
     '',
-    '说明：仅筛选博远楼、博观楼、博文楼，按楼栋（博远>博观>博文）及低楼层优先选取整半天完整空闲教室；未修改日历日程。'
+    '说明：仅筛选博远楼、博观楼、博文楼，按楼栋（博远>博观>博文）及低楼层优先选取完整空闲教室，支持跨时段同一教室合并显示；未修改日历日程。'
   ].join('\n');
   await notice('空闲教室查询',message);
   return message;
@@ -3087,7 +3139,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 /*
