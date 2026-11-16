@@ -2917,11 +2917,12 @@ async function queryDayRooms(http,date){
   return resolveDayRooms(morn,aft,eve);
 }
 
-async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAuth=null,now=Date.now()){
+async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAuth=null,now=Date.now(),progress=null){
   stage('正在连接教务系统...');
   try{
     await coursePage(http,interactive,stage,manualAuth?.username?manualAuth:null);
   }catch(e){
+    if(progress)await progress.finish();
     if(['AUTH_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e.code)){
       await notice('登录失败','请先完成学校登录或核对账号密码后再查询空闲教室。');
       return '';
@@ -2942,6 +2943,7 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
     `【明天 ${tomorrow}】`,
     ...tmrwLines
   ].join('\n');
+  if(progress)await progress.finish();
   await notice('空闲教室查询',message);
   return message;
 }
@@ -2966,10 +2968,10 @@ async function run() {
       const menu=new Alert();menu.title='CourseSync';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
-      const canSignOut=canOfferSignOut(state);
-      if(canSignOut)menu.addDestructiveAction('退出登录');
       const canFreeRooms=activeSchoolId==='nufe';
       if(canFreeRooms)menu.addAction('空闲教室');
+      const canSignOut=canOfferSignOut(state);
+      if(canSignOut)menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(selected===1){
@@ -2978,7 +2980,7 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(canFreeRooms&&selected===(canSignOut?3:2)){
+      if(canFreeRooms&&selected===2){
         let progress=null;
         try{
           if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
@@ -2990,13 +2992,13 @@ async function run() {
         try{
           const jar=readCookieJar();
           const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-          await queryAndShowFreeRooms(http,interactive,()=>{},null);
+          await queryAndShowFreeRooms(http,interactive,()=>{},null,Date.now(),progress);
         }finally{
           if(progress)await progress.finish();
         }
         return;
       }
-      if(selected===2&&canSignOut)action=13;
+      if(canSignOut&&selected===(canFreeRooms?3:2))action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -3045,7 +3047,7 @@ async function run() {
           try{
             const jar=readCookieJar();
             const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth);
+            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth,Date.now(),progress);
           }finally{
             if(progress)await progress.finish();
           }
