@@ -44,7 +44,8 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/沿用首次选定的学校/);
+  assert.match(readme,/本次配置周期内记住学校/);
+  assert.match(readme,/退出登录即完全重置/);
 });
 
 test('release and README describe the same stable installation path',()=>{
