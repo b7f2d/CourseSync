@@ -63,6 +63,17 @@ test('foreground refresh uses one Live Activity through verification and dismiss
  a.deepEqual(calls,[['sheet'],['start','connect'],['pause'],['update','verify'],['resume'],['update','sync'],['close'],['end','finish',0]]);
 });
 
+test('refresh presentation names both courses and exams without removed status UI',()=>{
+ const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
+ const island=fs.readFileSync(__dirname+'/../live_activity.tsx','utf8');
+ a.match(progress,/正在同步课程与考试/);
+ a.match(progress,/课程与考试同步完成后自动收起/);
+ a.match(island,/同步课程与考试日程/);
+ a.match(island,/课程与考试同步已完成/);
+ a.match(island,/正在同步课程与考试/);
+ a.doesNotMatch(island,/可在 CourseSync 查看运行状态|正在刷新课表/);
+ a.match(source,/读取考试日程\|更新考试日程/);
+});
 test('successful refresh updates the active island before ending it',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
  e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
