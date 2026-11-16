@@ -911,9 +911,10 @@ async function credentialForm({title='CourseSync 登录'}={}){
     try{
       const native=await presentNativeCredentialForm(title);
       if(!native)fail('CANCELLED');
+      if(native.changeSchool)fail('CHANGE_SCHOOL');
       return native;
     }catch(e){
-      if(e?.code==='CANCELLED')throw e;
+      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL')throw e;
       if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
@@ -2711,6 +2712,8 @@ async function signOut(state,store){
   store.write(state);
   try{
     if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
+    if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
+    if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
     if(activeSchoolId==='nufe'&&Keychain.contains('NUFE.Local.v1.cookies'))
       Keychain.remove('NUFE.Local.v1.cookies');
     removeSavedCredentials();
@@ -2892,7 +2895,22 @@ async function run() {
           manualAuth={kind:'credentials',...credentials};
         }catch(error){
           if(error.code==='CANCELLED')return;
-          throw error;
+          if(error.code==='CHANGE_SCHOOL'){
+            try{
+              if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
+              if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
+            }catch(_){}
+            const prev=activeSchoolId;
+            manualAuth=await prepareManualRefresh(state);
+            if(!manualAuth)return;
+            if(prev!==activeSchoolId){
+              store.release();locked=false;state=null;
+              store=new Store();
+              if(await acquireSyncSlot(store,interactive)!=='acquired')fail('BUSY');
+              locked=true;state=store.read();
+              if(!state.owner){state.owner=uuid();store.write(state);}
+            }
+          }else throw error;
         }
       }
     }
