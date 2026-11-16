@@ -163,6 +163,7 @@ let TABLE=ENDPOINT_DEFAULTS.table;
 let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
 let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
 const SCHOOL_KEY='CourseSync.Local.v1.school';
+const SCHOOL_CHOICE_KEY='CourseSync.Local.v1.school-choice';
 const USTS_SITE='https://jwgl.usts.edu.cn';
 const USTS=USTS_SITE+'/jwglxt';
 const USTS_LOGIN=USTS+'/xtgl/login_slogin.html';
@@ -187,11 +188,16 @@ const SCHOOL_WHITELIST=Object.freeze([
 ]);
 function schoolKey(key){return activeSchoolId==='nufe'?key:key+'.'+activeSchoolId;}
 function schoolById(id){return SCHOOL_WHITELIST.find(s=>s.id===id)||null;}
-function loadSelectedSchool(fallback='nufe'){
+function loadSelectedSchool(fallback='nufe',requireConfirmation=false){
   try{
+    if(Keychain.contains(SCHOOL_CHOICE_KEY)){
+      const choice=Keychain.get(SCHOOL_CHOICE_KEY);
+      if(schoolById(choice))return choice;
+    }
     if(!Keychain.contains(SCHOOL_KEY))return fallback;
     const id=Keychain.get(SCHOOL_KEY);
-    return schoolById(id)?id:fallback;
+    // NUFE used to be stored as a default. A legacy USTS selection was explicit.
+    return schoolById(id)&&(!requireConfirmation||id==='usts')?id:fallback;
   }catch(_){return fallback;}
 }
 function activateSelectedSchool(id){
@@ -404,10 +410,9 @@ async function prepareManualRefresh(state){
     response.password.length>0&&response.password.length<=512,'CREDENTIALS_INVALID');
   // Do not keep the old custom URLs alive in the background.
   try{
-    Keychain.set(SCHOOL_KEY,school.id);
-    if(Keychain.get(SCHOOL_KEY)!==school.id)fail('ENDPOINT_STORAGE');
     if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
     if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
+    Keychain.set(SCHOOL_CHOICE_KEY,school.id);
   }catch(_){fail('ENDPOINT_STORAGE');}
   activateSelectedSchool(school.id);
   if(response.kind==='reuse')return {kind:'reuse'};
@@ -2886,12 +2891,7 @@ async function run() {
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(interactive&&action===0){
       const hasCredentials=!state.signedOut&&hasSavedCredentials();
-      let selectedSchool=loadSelectedSchool(null);
-      // Installations from before school selection already belong to NUFE.
-      if(!selectedSchool&&(state.calendarId||state.signedOut||hasCredentials)){
-        selectedSchool=activeSchoolId;
-        Keychain.set(SCHOOL_KEY,selectedSchool);
-      }
+      const selectedSchool=loadSelectedSchool(null,true);
       if(!selectedSchool){
         const previousSchool=activeSchoolId;
         manualAuth=await prepareManualRefresh(state);

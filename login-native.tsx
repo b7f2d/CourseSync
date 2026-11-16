@@ -138,7 +138,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
 }){
   const dismiss=Navigation.useDismiss();
   const [step,setStep]=useState<'school'|'account'>('school');
-  const [schoolId,setSchoolId]=useState(initialSchoolId);
+  const [schoolId,setSchoolId]=useState('unselected');
   const [username,setUsername]=useState('');
   const [password,setPassword]=useState('');
   const validSchool=schools.some(s=>s.id===schoolId);
@@ -151,9 +151,10 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
       <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
         <Section header={<Text>请选择你的学校</Text>}
-          footer={<Text>当前仅支持白名单内的学校。选定后将自动使用预设的认证和课表接口，无需手动填写链接。</Text>}>
+          footer={<Text>点开下拉菜单，选择南京财经大学或苏州科技大学。</Text>}>
           <Picker title="学校" pickerStyle="menu"
             value={schoolId} onChanged={setSchoolId}>
+            <Text key="unselected" tag="unselected">请选择</Text>
             {schools.map(s=><Text key={s.id} tag={s.id}>{s.name}</Text>)}
           </Picker>
         </Section>

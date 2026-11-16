@@ -325,7 +325,7 @@ test('school selection restricts requests to the active school',async()=>{
 test('manual school selection uses fixed endpoints and retires old custom URLs',async()=>{
   const e=await env({hostEnv:'index'}),m=e.m,d=m.ENDPOINT_DEFAULTS;
   const oldKey='CourseSync.Local.v1.school-endpoints';
-  const schoolKey='CourseSync.Local.v1.school';
+  const schoolKey='CourseSync.Local.v1.school-choice';
   e.keys.set(oldKey,JSON.stringify({version:1,values:{...d,
     table:'https://jwxt.nufe.edu.cn/student/for-std/course-table-v2'}}));
   const calls=[];
@@ -353,7 +353,7 @@ test('school selection with existing credentials can reuse them',async()=>{
   e.keys.set('CourseSync.Local.v1.cookies','[]');
   e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});
   a.equal((await m.prepareManualRefresh(e.state)).kind,'reuse');
-  a.equal(e.keys.get('CourseSync.Local.v1.school'),'nufe');
+  a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
 });
 
 test('unsupported school selection is rejected without saving any configuration',async()=>{
@@ -361,7 +361,7 @@ test('unsupported school selection is rejected without saving any configuration'
   e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',
     schoolId:'not-whitelisted',username:'student',password:'secret'});
   await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
-  a.equal(e.keys.has('CourseSync.Local.v1.school'),false);
+  a.equal(e.keys.has('CourseSync.Local.v1.school-choice'),false);
   a.equal(e.requests.length,0);
 });
 test('USTS credentials, cookies and calendar state are scoped to the selected school',async()=>{
@@ -796,12 +796,21 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
  a.equal(e.requests.length,0);
 });
-test('manual refresh imports finished and upcoming exams and preserves history',async()=>{
+test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
  const e=await env({hostEnv:'index'}),alerts=[];
  const day=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
  let body='<tr data-finished="false"><td><div class="time">'+day+' 08:00~10:00</div><div><span>教学楼</span><span>101</span></div></td><td><div>测试 &amp; 统计</div><div>期末</div></td><td>未结束</td></tr>'+
    '<tr data-finished="true"><td><div class="time">2020-01-01 08:00~10:00</div></td><td><div>旧考试</div></td><td>已结束</td></tr>';
  e.m.saveCredentials('sample','test-only');
+ e.keys.set('CourseSync.Local.v1.school','nufe');
+ let schoolPrompts=0;
+ e.sandbox.__nativeRefreshMock=async(schools,previous,canReuse)=>{
+   schoolPrompts++;
+   a.deepEqual(Array.from(schools,s=>s.id),['nufe','usts']);
+   a.equal(previous,'nufe');
+   a.equal(canReuse,true);
+   return {kind:'reuse',schoolId:'nufe'};
+ };
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
@@ -814,6 +823,8 @@ test('manual refresh imports finished and upcoming exams and preserves history',
    return {url:url+'/info/123',text:'<table id="exams"><tbody>'+body+'</tbody></table>'};
  };
  await e.m.run();
+ a.equal(schoolPrompts,1);
+ a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
  const exams=()=>e.db.filter(x=>/^(📝|🌟) /u.test(x.title));
  a.equal(alerts.length,0,JSON.stringify(alerts));
  a.equal(exams().length,2);
@@ -834,6 +845,7 @@ test('manual refresh imports finished and upcoming exams and preserves history',
  delete state.examIndex[finished.identifier];
  e.store.write(state);e.store.release();
  await e.m.run();
+ a.equal(schoolPrompts,1);
  a.deepEqual(ids(),initialIds);
  a.equal(exams().find(x=>x.identifier===finished.identifier).title,'📝 旧考试');
  a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
@@ -1152,7 +1164,7 @@ test('re-login opens credentials for the saved school without showing the school
   m.activateSelectedSchool(id);
   const store=new m.Store();store.acquire();
   store.write({...e.state,signedOut:true,authPaused:true});store.release();
-  e.keys.set('CourseSync.Local.v1.school',id);
+  e.keys.set(id==='nufe'?'CourseSync.Local.v1.school-choice':'CourseSync.Local.v1.school',id);
   e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
   e.sandbox.__sdk.Navigation={present:async()=>null};
   let schoolPrompts=0;

@@ -36,6 +36,7 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.match(native,/navigationTitle="选择学校"/);
  assert.match(native,/请选择你的学校/);
  assert.match(native,/<Picker title="学校" pickerStyle="menu"/);
+ assert.match(native,/<Text key="unselected" tag="unselected">请选择<\/Text>/);
  assert.match(native,/value=\{schoolId\} onChanged=\{setSchoolId\}/);
  assert.match(native,/schools\.map\(s=><Text key=\{s\.id\} tag=\{s\.id\}>\{s\.name\}<\/Text>\)/);
  assert.match(native,/title="下一步：账号密码"/);
@@ -106,7 +107,7 @@ test('routine refresh and re-login keep using the selected school',()=>{
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
  assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);
- assert.match(routine,/let selectedSchool=loadSelectedSchool\(null\)/);
+ assert.match(routine,/const selectedSchool=loadSelectedSchool\(null,true\)/);
  assert.match(routine,/if\(!selectedSchool\)\{/);
  assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
  assert.match(routine,/else if\(!hasCredentials\)\{\s*try\{\s*const credentials=await credentialForm/);
