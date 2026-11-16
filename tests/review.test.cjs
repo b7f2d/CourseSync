@@ -67,11 +67,10 @@ test('refresh presentation names both courses and exams without removed status U
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  const island=fs.readFileSync(__dirname+'/../live_activity.tsx','utf8');
  a.match(progress,/正在同步课程与考试/);
- a.match(progress,/课程与考试同步完成后自动收起/);
- a.doesNotMatch(progress,/<Button\b|title="收起"/);
+ a.match(progress,/navigationTitle=\{title\}/);
+ a.doesNotMatch(progress,/<Button\b|<Text\b|自动收起/);
  a.match(progress,/modalPresentationStyle:'pageSheet'/);
- a.match(island,/同步课程与考试日程/);
- a.match(island,/课程与考试同步已完成/);
+ a.match(island,/课程与考试已同步/);
  a.match(island,/正在同步课程与考试/);
  a.doesNotMatch(island,/可在 CourseSync 查看运行状态|正在刷新课表/);
  a.match(source,/读取考试日程\|更新考试日程/);
@@ -903,7 +902,7 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
  a.match(e.m.reasonFor('HTTP_429'),/429/);
  a.match(e.m.actionFor('HTTP_429'),/限流/);
  a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
- a.match(e.m.actionFor('CALENDAR_READONLY'),/原日历/);
+ a.match(e.m.actionFor('CALENDAR_READONLY'),/检查该日历是否可编辑/);
 });
 test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
@@ -1120,14 +1119,19 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
-test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
+test('first setup labels the course and exam calendars separately and binds both custom names',async()=>{
  const e=await env({hostEnv:'index'});
  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const alerts=[],all=[e.other];
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:opts.title==='Custom Calendar'?'new-icloud':'exam-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
- e.sandbox.__sdk.Dialog.prompt=async options=>options.title==='创建考试日历'?'我的考试':'Custom Calendar';
+ const prompts=[];
+ e.sandbox.__sdk.Dialog.prompt=async options=>{
+  prompts.push([options.title,options.placeholder]);
+  return options.title==='创建考试日历'?'我的考试':'Custom Calendar';
+ };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ a.deepEqual(prompts,[['创建课表日历','日历名称'],['创建考试日历','日历名称']]);
  a.equal(e.store.read().calendarId,'new-icloud');
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
  a.equal(e.store.read().examCalendarId,'exam-icloud');
@@ -1394,8 +1398,9 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
    return options.actions.findIndex(x=>x.destructive||x.label==='退出登录');
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
-   a.match(options.message,/账号凭据/);
-   a.match(options.message,/Apple 日历/);
+   a.match(options.message,/清除已保存的账号和设置/);
+   a.match(options.message,/Apple 日历中的课程和考试会保留/);
+   a.match(options.message,/可能产生重复日程/);
    return true;
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
@@ -1659,7 +1664,8 @@ test('native credential sheet failure asks consent before system prompts',async(
  let confirms=0;
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    confirms++;
-   a.match(options.message,/NATIVE_FORM_UNAVAILABLE/);
+   a.equal(options.title,'无法打开登录窗口');
+   a.equal(options.message,'可分两步输入学号和密码。');
    return false;
  };
  await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));

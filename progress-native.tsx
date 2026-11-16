@@ -1,7 +1,7 @@
 // One native, indeterminate progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Navigation, NavigationStack, ProgressView, Spacer, Text, VStack,
+  Navigation, NavigationStack, ProgressView, Spacer, VStack,
 } from 'scripting';
 
 type ProgressSession={
@@ -13,7 +13,7 @@ type ProgressSession={
   dismiss:(() => void)|null;
 };
 
-function ProgressScreen({session,title='正在同步课程与考试',subtitle='课程与考试同步完成后自动收起'}:{session:ProgressSession,title?:string,subtitle?:string}) {
+function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
   const dismiss=Navigation.useDismiss();
   // The script's synchronization still owns the task. Closing this view
   // hides status only; it never cancels a calendar transaction.
@@ -34,16 +34,12 @@ function ProgressScreen({session,title='正在同步课程与考试',subtitle='�
     >
       <Spacer/>
       <ProgressView progressViewStyle="circular"/>
-      <Text font="headline">{title}</Text>
-      <Text foregroundStyle="secondaryLabel" font="subheadline">
-        {subtitle}
-      </Text>
       <Spacer/>
     </VStack>
   </NavigationStack>;
 }
 
-export function createNativeProgressView(title='正在同步课程与考试',subtitle='课程与考试同步完成后自动收起'){
+export function createNativeProgressView(title='正在同步课程与考试'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
@@ -61,7 +57,7 @@ export function createNativeProgressView(title='正在同步课程与考试',sub
       session.shown=true;
       try {
         presented=Promise.resolve(Navigation.present({
-          element:<ProgressScreen session={session} title={title} subtitle={subtitle}/>,
+          element:<ProgressScreen session={session} title={title}/>,
           modalPresentationStyle:'pageSheet',
         })).then(()=>{
           if(session.revision!==revision)return;

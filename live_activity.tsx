@@ -1,12 +1,12 @@
 import * as Scripting from 'scripting';
 
-const { HStack, VStack, Image, Text, LiveActivityUI, LiveActivityUIExpandedCenter } = Scripting;
+const { HStack, Image, Text, LiveActivityUI, LiveActivityUIExpandedCenter } = Scripting;
 
 const phases = {
   connect: '连接教务系统',
   verify: '请在 Scripting 完成验证',
-  sync: '同步课程与考试日程',
-  complete: '课程与考试同步已完成',
+  sync: '正在同步课程与考试',
+  complete: '课程与考试已同步',
   finish: '请检查本次同步结果',
 };
 
@@ -19,10 +19,7 @@ function CalendarIcon({complete=false}:{complete?:boolean}) {
 function RefreshStatus({phase}:RefreshState) {
   return <HStack spacing={12} padding={12}>
     <CalendarIcon complete={phase==='complete'}/>
-    <VStack alignment="leading" spacing={3}>
-      <Text font="headline">{phase==='complete'?'刷新完成':phase==='finish'?'同步已结束':'正在同步课程与考试'}</Text>
-      <Text font="subheadline" foregroundStyle="secondaryLabel">{phases[phase]}</Text>
-    </VStack>
+    <Text font="headline">{phases[phase]}</Text>
   </HStack>;
 }
 
