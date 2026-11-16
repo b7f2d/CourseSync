@@ -106,7 +106,7 @@ test('routine refresh and re-login keep using the selected school',()=>{
  const start=index.indexOf('if(interactive&&action===0){');
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
- assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);
+ assert.match(routine,/const hasCredentials=!state\.signedOut&&!state\.authPaused&&hasSavedCredentials\(\)/);
  assert.match(routine,/const selectedSchool=loadSelectedSchool\(null,true\)/);
  assert.match(routine,/if\(!selectedSchool\)\{/);
  assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
@@ -139,7 +139,7 @@ test('free classrooms are available after authentication, not in school selectio
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryAndShowFreeRooms/);
- assert.match(index,/manualAuth\.kind==='freeRooms'/);
+ assert.doesNotMatch(index,/manualAuth\.kind==='freeRooms'/);
 });
 
 
