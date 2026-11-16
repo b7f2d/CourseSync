@@ -174,24 +174,14 @@ const USTS_PERIODS=USTS+'/kbcx/xskbcx_cxRjc.html?gnmkdm=N2151';
 const USTS_EXAMS=USTS+'/kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105';
 // First teaching Mondays from the academic calendar and term-start notices.
 const USTS_TERM_MONDAYS=Object.freeze({
-  201903:'2019-09-02',
-  201912:'2020-02-24',
-  202003:'2020-09-07',
-  202012:'2021-03-01',
-  202103:'2021-09-06',
-  202112:'2022-02-28',
-  202203:'2022-09-05',
-  202212:'2023-02-20',
-  202303:'2023-09-04',
+  // Weeks 14–16: https://jwch.usts.edu.cn/info/1085/10706.htm
+  202303:'2023-08-28',
   202312:'2024-02-26',
   202403:'2024-09-02',
   202412:'2025-02-24',
   202503:'2025-09-08',
   202512:'2026-03-02',
-  202603:'2026-08-31',
-  202612:'2027-03-01',
-  202703:'2027-09-06',
-  202712:'2028-02-28'
+  202603:'2026-08-31'
 });
 let activeSchoolId='nufe';
 const SCHOOL_WHITELIST=Object.freeze([
@@ -1073,7 +1063,7 @@ async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
   let shouldSave=manualAuth?.kind==='credentials';
   if(!account){
     if(!interactive)fail('AUTH_REQUIRED');
-    onStage('学校会话已过期，需要输入账号密码');
+    await onStage('等待输入学校登录信息');
     account=await credentialForm({title:'CourseSync 登录'});
     shouldSave=true;
   }else{
@@ -1086,7 +1076,7 @@ async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
     // A rejected stored password is not an excuse to repeat it forever.
     // Ask once in the foreground, and only for a verified login rejection.
     if(!interactive||shouldSave||!['LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e?.code))throw e;
-    onStage('已保存的密码未通过学校验证，等待重新输入');
+    await onStage('等待输入学校登录信息');
     account=await credentialForm({title:'更新 CourseSync 登录信息'});
     shouldSave=true;
     // Restart the CAS form to get fresh execution/salt values.
@@ -1152,9 +1142,9 @@ async function ustsAuthenticate(http,interactive,stage,manualAuth){
   const shouldSave=manualAuth?.kind==='credentials'||!account;
   if(!account){
     if(!interactive)fail('AUTH_REQUIRED');
-    account=await credentialForm({title:'苏州科技大学登录'});
+    await stage('等待输入学校登录信息');
+    account=await credentialForm();
   }
-  stage('验证苏州科技大学账号');
   const formHTML=[...page.text.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form\s*>/gi)]
     .find(m=>attributes(m[1]).action===safeURL(USTS_LOGIN).path);
   assert(formHTML,'LOGIN_SCHEMA');
@@ -1167,13 +1157,15 @@ async function ustsAuthenticate(http,interactive,stage,manualAuth){
   if(fields.some(v=>v.name==='yzm')){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
     const captcha=await http.get(USTS+'/kaptcha?time='+Date.now(),{binary:true,referer:page.url});
-    stage('等待图形验证');
-    data.yzm=(await input('苏州科技大学图形验证码','验证码',false,{kind:'captcha',image:captcha.text})).trim();
+    await stage('等待图形验证');
+    data.yzm=(await input('图形验证码','输入图片中的字符',false,{kind:'captcha',image:captcha.text})).trim();
     assert(data.yzm,'CANCELLED');
   }
+  stage('本机加密登录密码（原生安全随机数）');
   const key=await http.authJSON(USTS+'/xtgl/login_getPublicKey.html?time='+Date.now(),{referer:page.url});
   const cipher=ustsRSA(account.password,key);
   const body=form(data)+'&mm='+enc(cipher)+'&mm='+enc(cipher);
+  stage('提交学校认证请求');
   page=await http.get(USTS_LOGIN+'?time='+Date.now(),{body,referer:page.url});
   if(!ustsHomeResponse(page)){
     if(ustsLoginPage(page))fail(shouldSave?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
@@ -1239,8 +1231,7 @@ async function ustsCourseData(http,sid){
   const body=form({xnm:Math.floor(sid/100),xqm:sid%100,kzlx:'ck',xsdm:'',kclbdm:'',kclxdm:''});
   const data=await http.json(USTS_COURSES,{body,referer:USTS_TABLE});
   assert(data?.xsxx&&Array.isArray(data.kbList),'SCHEMA');
-  const termMatched=(!data.xsxx.XNM||!data.xsxx.XQM||ustsTerm(data.xsxx.XNM,data.xsxx.XQM)===sid);
-  assert(termMatched||Array.isArray(data.kbList),'SCHEMA');
+  assert(ustsTerm(data.xsxx.XNM,data.xsxx.XQM)===sid,'SCHEMA');
   const person=String(data.xsxx.XH_ID||data.xsxx.XH||'');
   assert(person.trim()&&person.length<=100,'SCHEMA');
   const enrollment=/^20\d{2}$/.test(String(data.xsxx.NJDM_ID))?Number(data.xsxx.NJDM_ID):null;
@@ -1265,9 +1256,8 @@ async function ustsNormalize(http,data,sid,anchor,dates){
   for(const row of data.kbList){
     assert(row&&typeof row.kcmc==='string'&&row.kcmc.trim(),'SCHEMA');
     const weekday=Number(row.xqj),campus=String(row.xqh_id??'');
-    const rawUnits=String(row.jcs??row.jc??'');
-    const units=/^(\d{1,2})(?:[-–](\d{1,2}))?(?:节)?$/.exec(rawUnits);
-    if(!units||!weekday||weekday<1||weekday>7||!row.zcd||campus.length>40){
+    const units=/^(\d{1,2})(?:[-–](\d{1,2}))?(?:节)?$/.exec(String(row.jcs??row.jc??''));
+    if(!units||!weekday||weekday<1||weekday>7||!Number.isInteger(weekday)||!row.zcd||campus.length>40){
       activities.push({courseName:row.kcmc});
       continue;
     }
@@ -1290,41 +1280,6 @@ async function ustsNormalize(http,data,sid,anchor,dates){
   for(const group of [data.sjkList,data.jxhjkcList])if(Array.isArray(group))
     result.skipped.push(...group.map(row=>String(row?.kcmc||'未排定时间的实践课程')));
   return result;
-}
-async function ustsTermDates(currentCalendar,sid,termName,state,store,interactive){
-  if(currentCalendar)return currentCalendar;
-  if(state.anchors[sid])return {anchor:monday(state.anchors[sid]),dates:null};
-  if(USTS_TERM_MONDAYS[sid])return {anchor:USTS_TERM_MONDAYS[sid],dates:null};
-  const year=Math.floor(sid/100),termCode=sid%100;
-  let estimated=null;
-  if(termCode===3){
-    const sep1=new Date(Date.UTC(year,8,1));
-    const offset=(8-sep1.getUTCDay())%7;
-    const day=1+(offset===0?0:offset);
-    estimated=`${year}-09-${String(day).padStart(2,'0')}`;
-  }else if(termCode===12){
-    const feb24=new Date(Date.UTC(year+1,1,24));
-    const daySinceMon=(feb24.getUTCDay()+6)%7;
-    const mon=new Date(feb24.getTime()-daySinceMon*86400000);
-    estimated=mon.toISOString().slice(0,10);
-  }else if(termCode===16){
-    const jul1=new Date(Date.UTC(year+1,6,1));
-    const offset=(8-jul1.getUTCDay())%7;
-    const day=1+(offset===0?0:offset);
-    estimated=`${year+1}-07-${String(day).padStart(2,'0')}`;
-  }
-  if(estimated){
-    try{
-      const valid=monday(estimated);
-      state.anchors[sid]=valid;
-      store.write(state);
-      return {anchor:valid,dates:null};
-    }catch(_){}
-  }
-  if(!interactive)fail('ANCHOR');
-  const anchor=monday((await input('核对 '+termName+' 校历','历史学期第 1 周的周一（YYYY-MM-DD）')).trim());
-  state.anchors[sid]=anchor;store.write(state);
-  return {anchor,dates:null};
 }
 // Immutable generation files: a new file is written and read back before old versions
 // are pruned. Corrupt latest generation fails closed; it never becomes an empty state.
@@ -1370,7 +1325,7 @@ class Store {
   }
   path(n){return this.fm.joinPath(this.dir,n);}
   read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},minutes:10,failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
-  write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);const tmp=this.path('state-'+String(this.generation).padStart(10,'0')+'.tmp');this.fm.writeString(tmp,text);assert(this.fm.readString(tmp)===text,'STATE_WRITE');try{this.fm.move(tmp,this.path(name));}catch(_){if(this.fm.fileExists(tmp))this.fm.remove(tmp);fail('STATE_WRITE');}const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
+  write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);this.fm.writeString(this.path(name),text);assert(this.fm.readString(this.path(name))===text,'STATE_WRITE');const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
   acquire() {const p=this.path('run-lock.json');if(this.fm.fileExists(p)){try{const l=JSON.parse(this.fm.readString(p));if(Date.now()-l.at<20*60000)fail('BUSY');}catch(e){if(e.code==='BUSY')throw e;fail('LOCK_CORRUPT');}}
     if(this.fm.fileExists(p))this.fm.remove(p);
     const token=uuid(),candidate=this.path('lock-'+token+'.tmp');this.fm.writeString(candidate,JSON.stringify({token,at:Date.now()}));
@@ -1854,7 +1809,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整���结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -2226,13 +2181,18 @@ function statusText(state){
     '\n最近问题：'+reasonFor(state.lastError):'';
   const noticeWarning=state.resultNoticeError||state.authNoticeError||state.reminderError?
     '\n通知：有发送异常（不影响已完成的课表同步）':'';
+  const termErrors=Array.isArray(state.termErrors)?state.termErrors:[];
+  const termDetails=termErrors.slice(0,3).map(({sid,code})=>{
+    const term=state.availableSemesters?.find(t=>String(t.id)===sid);
+    return '\n'+(term?.name||sid)+'：'+reasonFor(code);
+  }).join('')+(termErrors.length>3?'\n另有 '+(termErrors.length-3)+' 个学期未完成':'');
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
     '\n课表日历：'+calendar+
     (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
-    recent+noticeWarning+
+    recent+termDetails+noticeWarning+
     (hasIssue?'\n建议：打开「环境自检」定位问题':'');
 }
 // A single authenticated GET checks the actual current school session without
@@ -2243,7 +2203,7 @@ async function probeSchoolSession(jar){
     try{
       const r=await new HTTP(jar||new CookieJar()).get(USTS_HOME+'?jsdm=xs&echarts=1');
       const valid=ustsStudentMenu(r.text);
-      return {connection:{level:'正常',detail:'苏州科技大学教务入口已响应'},
+      return {connection:{level:'正常',detail:'苏州科技���学教务入口已响应'},
         auth:valid?{level:'正常',detail:'当前会话可访问学生主菜单'}:
           {level:'注意',detail:'当前会话未通过登录检查'}};
     }catch(error){
@@ -2424,55 +2384,32 @@ function explicitTeachingMonday(detail){
   }
   return null;
 }
-async function chooseAnchor(sid,name,http,state,store,interactive) {
-  if(state.anchors[sid])return monday(state.anchors[sid]);
-  const termName=normalizeTermName(name);
-  let anchor=VERIFIED_TERM_ANCHORS[termName];
-  if(anchor){
-    // First run on 2026-2027-1: use the same date as upstream, without a dialog.
-    anchor=monday(anchor);
-    state.anchors[sid]=anchor;
-    state.anchorSources={...(state.anchorSources||{}),[sid]:'upstream-semesters.json'};
-    store.write(state);
-    return anchor;
+async function chooseAnchor(sid,name,http,state,store,{calendar,termDetail}={}) {
+  const usts=activeSchoolId==='usts';
+  if(!calendar&&state.anchors[sid])return monday(state.anchors[sid]);
+  let anchor=calendar?.anchor,source='school-teaching-week';
+  if(!anchor){
+    anchor=usts?USTS_TERM_MONDAYS[sid]:VERIFIED_TERM_ANCHORS[normalizeTermName(name)];
+    source=usts?'school-published-calendar':'upstream-semesters.json';
   }
-  // Prefer an explicit first-teaching-week field when available. The official
-  // semester start date is also a valid schedule baseline for this timetable
-  // system: normalize it to Monday, consistent with the semester API consumer.
-  // Never invent a date when the school returns no usable dates.
-  let suggestion=null, lookupError=null;
-  try{
-    const detail=await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
+  if(!anchor){
+    const detail=usts?termDetail:await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
     anchor=explicitTeachingMonday(detail);
-    if(anchor){
-      state.anchors[sid]=anchor;
-      state.anchorSources={...(state.anchorSources||{}),[sid]:'school-teaching-week'};
-      store.write(state);
-      return anchor;
+    source='school-teaching-week';
+    // NUFE's semester API uses its start date as the schedule baseline.
+    if(!anchor&&!usts){
+      anchor=detailMonday(detail);
+      source='school-semester-start';
     }
-    // Semester detail supplies the start of the school's term even when there
-    // is no dedicated "first teaching week" field. Convert to week-1 Monday
-    // automatically, so historical semesters do not require repeated dialogs.
-    suggestion=detailMonday(detail);
-    if(suggestion){
-      anchor=monday(suggestion);
-      state.anchors[sid]=anchor;
-      state.anchorSources={...(state.anchorSources||{}),[sid]:'school-semester-start'};
-      store.write(state);
-      return anchor;
-    }
-  }catch(e){lookupError=e&&e.code||'NETWORK';}
-  if(!interactive)fail('ANCHOR');
-  const a=new Alert();a.title='需核对 '+name+' 校历';
-  a.message='学校学期接口未返回可用的起始日期，暂时无法安排该学期课程。'+
-    (lookupError?'\n校历接口请求失败：'+lookupError+'。':'')+
-    '\n请依据学校校历填写第 1 周的周一；正常取得学期起始日期时无需手动填写。';
-  a.addTextField('YYYY-MM-DD',suggestion||'');a.addAction('保存');a.addCancelAction('取消');
-  if(await a.presentAlert()<0)fail('CANCELLED');
-  const value=monday(a.textFieldValue(0).trim());
-  state.anchors[sid]=value;
-  state.anchorSources={...(state.anchorSources||{}),[sid]:'manual-verified'};
-  store.write(state);return value;
+  }
+  assert(anchor,'ANCHOR');
+  anchor=monday(anchor);
+  if(state.anchors[sid]!==anchor||state.anchorSources?.[sid]!==source){
+    state.anchors[sid]=anchor;
+    state.anchorSources={...(state.anchorSources||{}),[sid]:source};
+    store.write(state);
+  }
+  return anchor;
 }
 
 // Update the visible synchronization timestamp on EACH verified term refresh,
@@ -2637,14 +2574,14 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   let identityVerified=!usts;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
   const http=new HTTP(jar,saveCookies,budget,stage);
-  let info,ustsCurrent,ustsDates;
+  let info,ustsCurrent,ustsHome;
   if(usts){
     let login;
     try{login=await ustsAuthenticate(http,interactive,stage,manualAuth);}
     catch(error){
       if(!interactive||error.code!=='AUTO_LOGIN_REJECTED')throw error;
-      stage('已保存的密码未通过学校验证，等待重新输入');
-      const account=await credentialForm({title:'更新苏州科技大学登录信息'});
+      await stage('等待输入学校登录信息');
+      const account=await credentialForm({title:'更新 CourseSync 登录信息'});
       jar.cookies=[];
       login=await ustsAuthenticate(http,true,stage,{kind:'credentials',...account});
     }
@@ -2656,7 +2593,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     if(ustsCurrent.enrollment)info.semesters=info.semesters.filter(t=>
       t.id===info.current||Math.floor(t.id/100)>=ustsCurrent.enrollment||t.id===Number(interrupted?.sid));
     info.person=ustsCurrent.person;
-    ustsDates=ustsCalendar(login.home,info.current);
+    ustsHome=login.home;
     const key=schoolKey('CourseSync.Local.v1.person');
     if(Keychain.contains(key))assert(Keychain.get(key)===info.person,'ACCOUNT_CHANGED');
     if(login.account)saveCredentials(login.account.username,login.account.password);
@@ -2689,11 +2626,11 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
         state.lastHistoryTerm=sid;store.write(state);
         continue;
       }
-      const calendarDates=await ustsTermDates(sid===info.current?ustsDates:null,sid,name,state,store,interactive);
-      anchor=calendarDates.anchor;
-      normalized=await ustsNormalize(http,term.data,sid,anchor,calendarDates.dates);
+      const dates=ustsCalendar(ustsHome,sid);
+      anchor=await chooseAnchor(sid,name,http,state,store,{calendar:dates,termDetail:term.data.xsxx});
+      normalized=await ustsNormalize(http,term.data,sid,anchor,dates?.dates);
     }else{
-      anchor=await chooseAnchor(sid,name,http,state,store,interactive);
+      anchor=await chooseAnchor(sid,name,http,state,store);
       stage('请求学期 '+sid+' 课表数据');
       const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
       normalized=expand(raw,sid,anchor);
@@ -2712,7 +2649,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     store.write(state);await finishTx(state,store,adapter,budget);
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
-      if(state.tx||sid===info.current||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
+      if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
       state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
     }
     if(sid!==info.current){
@@ -2725,7 +2662,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   // initial legacy cleanup still needs to complete.
   const allTermBaselinesReady=info.semesters.every(x=>state.semesters[String(x.id)]?.lastSuccess);
   const legacyCleanupPending=['running','unverified'].includes(state.legacyReplacement?.status);
-  if(REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length&&
+  if(!usts&&REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length&&
      (!state.lastCheck||importsNewTerm||legacyCleanupPending)){
     stage('全部学期核验完成后清理专用日历旧内容');
     await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
@@ -2819,7 +2756,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终止正在写入的日历操作。';
+    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终��正在写入的日历操作。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
@@ -2995,7 +2932,7 @@ async function run() {
     store.write(state);
     if(progress)await progress.finish(state.runStatus==='success');
     if(state.termErrors?.length){
-      if(interactive)await notice('部分学期未同步','已更新可用学期，请在运行状态中查看详情。');
+      if(interactive)await notice('部分学期未同步','请在「运行状态」查看学期和原因。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
     if(examError)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
