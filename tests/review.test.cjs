@@ -12,6 +12,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
  const calendar={identifier:'calendar-dedicated',title:'课表',allowsContentModifications:true,isSubscribed:false},other={...calendar,identifier:'calendar-personal',title:'个人'};
+  const calendars=[calendar,other];
  class Event{
   constructor(){this.identifier=null;this.attendees=[];this.isAllDay=false;this.notes='';this.location='';}
   async save(){requests.push(['save',this.identifier]);if(failSave)throw Error('save failed');if(dropSave)return;if(!this.identifier)this.identifier='event-'+(++serial);const row=copy(this),i=db.findIndex(e=>e.identifier===this.identifier&&+e.startDate===+this._originalStart);if(i>=0)db[i]=row;else{const j=db.findIndex(e=>e.identifier===this.identifier);if(j>=0)db[j]=row;else db.push(row);}}
@@ -24,7 +25,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const sandbox={module:{exports:{}},process:{versions:{node:'24'}},console:{log(){},error(){}},FileManager:{local:()=>fm},UUID:{string:()=>crypto.randomUUID()},Timer:{schedule:(ms,repeat,cb)=>{const t=setTimeout(cb,ms);return {invalidate:()=>clearTimeout(t)}}},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k),set:(k,v)=>keys.set(k,v),remove:k=>keys.delete(k)},CalendarEvent:Event,Notification,Calendar:{forEvents:async()=>[calendar,other]},config:{runsInApp:false,runsWithSiri:true},args:{shortcutParameter:'sync'},Script:{name:()=> 'CourseSync',complete(){},setShortcutOutput(s){sandbox.output=s;}},Alert:class{constructor(){throw Error('UNEXPECTED FRONTEND PROMPT')}},Request:class{constructor(){throw Error('NETWORK NOT MOCKED')}}};
  Event.getAll=Event.between;
  const nativeScript={name:'CourseSync',env:hostEnv,queryParameters:mode==='menu'?{mode:'menu'}:{},exit:r=>{sandbox.output=r;},createRunURLScheme:(name,q)=>'scripting://run/'+encodeURIComponent(name)+'?mode='+q.mode};
- const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>[calendar,other],presentChooser:async()=>[calendar]},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
+ const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>calendars,presentChooser:async()=>[calendar],create:async opts=>({identifier:'exam-created-'+(++serial),title:opts.title,source:{title:'iCloud',type:'calDAV'},allowsContentModifications:true,isSubscribed:false,save:async function(){calendars.push(this);}})},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
  sandbox.__sdk=sdk;sandbox.__COURSESYNC_TEST__=true;sandbox.setTimeout=setTimeout;sandbox.clearTimeout=clearTimeout;sandbox.setInterval=setInterval;sandbox.clearInterval=clearInterval;sandbox.crypto=crypto.webcrypto;
  await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',sandbox);
  sandbox.config=sandbox.module.exports.ScriptingAdapter.config;sandbox.args=sandbox.module.exports.ScriptingAdapter.args;
@@ -32,7 +33,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const state={version:1,owner:'installation-owner',calendarId:calendar.identifier,anchors:{'161':'2026-09-07'},semesters:{},minutes:0,failures:0};
  function add(rec,{owner=state.owner,cal=calendar,id,notes,offset=0,allDay=false}={}){const e=new Event();e.identifier=id||'event-'+(++serial);e.calendar=cal;e.title=rec.title;e.location=rec.location;e.notes=notes===undefined?m.notes(rec,owner,'2026-11-01T00:00:00Z'):notes;e.startDate=new Date(Date.parse(rec.start)+offset);e.endDate=new Date(Date.parse(rec.end)+offset);e.isAllDay=allDay;db.push(e);return e;}
  function baseline(events){state.semesters['161']={events,index:{},anchor:'2026-09-07',name:'2026-2027-1',lastSuccess:'2026-11-01T00:00:00Z'};return state;}
- return {m,sandbox,store,state,db,files,keys,widgetRecords,notices,requests,calendar,other,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
+ return {m,sandbox,store,state,db,files,keys,widgetRecords,notices,requests,calendar,other,calendars,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
 }
 const lesson=(extra={})=>({id:'lesson-1',sid:'161',title:'高等数学',week:1,su:1,eu:2,start:'2026-09-07T00:00:00.000Z',end:'2026-09-07T01:40:00.000Z',location:'仙林 教A101',teachers:['张老师'],...extra});
 const raw=(activities)=>({studentTableVms:[{code:'sample-local',activities}]});
@@ -468,7 +469,8 @@ test('USTS exam query writes published times and retains existing future exams w
     a.equal(p.get('queryModel.currentPage'),'1');
     return {currentPage:1,totalPage:items.length?1:0,items};
   }};
-  const sync=()=>m.syncExams(http,state,e.store,e.calendar,()=>{},now);
+  state.examCalendarId=e.other.identifier;
+  const sync=()=>m.syncExams(http,state,e.store,e.other,()=>{},now);
   await sync();
   a.equal(e.db.length,1);
   a.equal(e.db[0].startDate.toISOString(),'2026-12-18T01:00:00.000Z');
@@ -817,7 +819,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
- e.sandbox.__sdk.Calendar.create=async()=>{throw Error('Unexpected separate calendar');};
+ // The first foreground refresh creates a dedicated iCloud exam calendar.
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
  const get=e.m.HTTP.prototype.get;
  e.m.HTTP.prototype.get=async url=>{
@@ -828,15 +830,15 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
- const exams=()=>e.db.filter(x=>/^(📝|🌟) /u.test(x.title));
+ const exams=()=>e.db.filter(x=>x.calendar.identifier!==e.calendar.identifier);
  a.equal(alerts.length,0,JSON.stringify(alerts));
  a.equal(exams().length,2);
- const upcoming=exams().find(x=>x.title==='📝 测试 & 统计');
- const finished=exams().find(x=>x.title==='📝 旧考试');
+ const upcoming=exams().find(x=>x.title==='测试 & 统计');
+ const finished=exams().find(x=>x.title==='旧考试');
  const ids=()=>exams().map(x=>x.identifier).sort();
  const initialIds=ids();
- a.equal(upcoming.calendar.identifier,e.calendar.identifier);
- a.equal(finished.calendar.identifier,e.calendar.identifier);
+ a.equal(upcoming.calendar.identifier,e.store.read?.()?.examCalendarId||e.calendars.at(-1).identifier);
+ a.equal(finished.calendar.identifier,upcoming.calendar.identifier);
  a.equal(upcoming.location,'教学楼 101');
  a.equal(upcoming.startDate.toISOString(),day+'T00:00:00.000Z');
  a.equal(finished.startDate.toISOString(),'2020-01-01T00:00:00.000Z');
@@ -850,7 +852,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.deepEqual(ids(),initialIds);
- a.equal(exams().find(x=>x.identifier===finished.identifier).title,'📝 旧考试');
+ a.equal(exams().find(x=>x.identifier===finished.identifier).title,'旧考试');
  a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
  e.store.acquire();
  try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
@@ -863,7 +865,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  body='<tr class="tr-empty"><td>暂无“未结束”的考试安排</td></tr>';
  await e.m.run();
  a.deepEqual(ids(),[finished.identifier]);
- a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,2);
+ a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,0);});
