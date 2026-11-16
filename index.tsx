@@ -867,7 +867,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
     store.check();return [...owned.values()];
   };
   const rows=await read();
-  if(!rows.length&&!target.size)return;
+  if(!rows.length&&!target.size&&!legacy.length)return;
   const current=new Map();
   for(const ev of rows){
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
