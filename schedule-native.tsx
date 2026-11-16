@@ -29,7 +29,7 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
         <DatePicker title="结束时间" value={end} datePickerStyle="compact" onChanged={setEnd}/>
       </Section>
       <Section header={<Text>选填</Text>}>
-        <TextField title="地点" prompt="可留空" value={location} onChanged={setLocation}/>
+        <TextField title="地点" prompt="地点" value={location} onChanged={setLocation}/>
       </Section>
       <Section>
         <Button title="保存" disabled={!valid}
