@@ -505,6 +505,60 @@ test('legacy exams migrate to the separate calendar with plain titles and no dup
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,id);
 });
+
+test('background sync refreshes bound exams and only notifies verified changes once',async()=>{
+ const e=await env();
+ e.state.examCalendarId=e.other.identifier;
+ const future=new Date(Date.now()+9*86400000);
+ const day=new Date(future.getTime()+8*3600000).toISOString().slice(0,10);
+ let location='101';
+ const getDefault=async url=>({
+   url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
+   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'
+ });
+ e.m.HTTP.prototype.get=async url=>{
+   if(!url.endsWith('/exam-arrange'))return getDefault(url);
+   const html='<table id="exams"><tr data-finished="false"><td><div class="time">'+day+' 08:00~10:00</div><div>'+location+'</div></td><td><div>模拟考试</div><div>期末</div></td><td>未结束</td></tr></table>';
+   return {url:url+'/info/123',text:html};
+ };
+ e.m.HTTP.prototype.json=async()=>raw([activity({weekIndexes:[1]})]);
+ await executeDaily(e);
+ a.equal(e.store.read().lastExamError,null);
+ a.equal(e.db.filter(v=>v.calendar.identifier===e.other.identifier).length,1);
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,0);
+ location='202';
+ await e.m.run();
+ a.equal(e.db.find(v=>v.calendar.identifier===e.other.identifier).location,'202');
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
+ const id=e.db.find(v=>v.calendar.identifier===e.other.identifier).identifier;
+ await e.m.run();
+ a.equal(e.db.find(v=>v.calendar.identifier===e.other.identifier).identifier,id);
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
+});
+
+test('initialization retries missing historical terms without starving peers',async()=>{
+ const e=await env(),now=Date.now();
+ e.state.semesters={'161':{lastSuccess:new Date(now).toISOString()}};
+ const info={current:161,semesters:[{id:159},{id:160},{id:161}]};
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,159]);
+ e.state.historyAttemptAt={'159':new Date(now).toISOString()};
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,160]);
+ e.state.historyAttemptAt['160']=new Date(now).toISOString();
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161]);
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now+86400000+1)),[161,159]);
+});
+
+test('archived term checks respect weekly or monthly cooldown',async()=>{
+ const e=await env(),now=Date.now(),iso=x=>new Date(now-x*86400000).toISOString();
+ e.state.semesters={'161':{lastSuccess:iso(0)},'160':{lastSuccess:iso(6)},'159':{lastSuccess:iso(29)}};
+ const info={current:161,semesters:[{id:159},{id:160},{id:161}]};
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161]);
+ e.state.semesters['160'].lastSuccess=iso(8);
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,160]);
+ e.state.semesters['160'].lastSuccess=iso(0);
+ e.state.semesters['159'].lastSuccess=iso(31);
+ a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,159]);
+});
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>null;
