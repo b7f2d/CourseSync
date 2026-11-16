@@ -395,7 +395,7 @@ function termEndpoint(template,sid){
 }
 async function prepareManualRefresh(state){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
-  const allowReuse=!state?.signedOut&&canOfferSignOut(state);
+  const allowReuse=!state?.signedOut&&!state?.authPaused&&canOfferSignOut(state);
   let response;
   try{
     response=await presentNativeRefreshForm(
@@ -405,11 +405,6 @@ async function prepareManualRefresh(state){
   if(!response)return null;
   const school=schoolById(response.schoolId);
   assert(school,'SCHOOL_UNSUPPORTED');
-  if(response.kind==='freeRooms'){
-    assert(school.id==='nufe','SCHOOL_UNSUPPORTED');
-    activateSelectedSchool(school.id);
-    return {kind:'freeRooms',schoolId:'nufe',username:response.username||null,password:response.password||null};
-  }
   assert(response.kind==='reuse'||response.kind==='credentials','SCHOOL_UNSUPPORTED');
   if(response.kind==='reuse')assert(school.id===loadSelectedSchool(),'SCHOOL_UNSUPPORTED');
   else assert(typeof response.username==='string'&&typeof response.password==='string'&&
@@ -988,7 +983,7 @@ async function credentialForm({title='CourseSync 登录'}={}){
       }
       return native;
     }catch(e){
-      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL'||e?.code==='FREE_ROOMS')throw e;
+      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL')throw e;
       if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
@@ -2941,10 +2936,18 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
 }
 function canOfferSignOut(state){
   if(state.lastError==='LOGOUT_INCOMPLETE')return true;
-  // No separate logout entry until a session or script credentials exist.
-  // After interrupted cleanup (or iCloud sync reappearance), keep retryable.
+  // Explicit logout is authoritative even if Keychain/iCloud still exposes
+  // credentials for a short time. Never interpret those as a live session.
+  if(state.signedOut)return false;
   try{return Keychain.contains(schoolKey(KEY))||hasSavedCredentials();}
-  catch(_){return !state.signedOut;}
+  catch(_){return false;}
+}
+function menuAuthState(state){
+  if(state.lastError==='LOGOUT_INCOMPLETE')return 'cleanup';
+  if(state.signedOut)return 'signed_out';
+  if(state.authPaused)return 'login';
+  if(!loadSelectedSchool(null,true)||!state.lastCheck||!canOfferSignOut(state))return 'login';
+  return 'ready';
 }
 function offlineAgenda(state,now=Date.now()) {
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
@@ -3103,18 +3106,28 @@ async function run() {
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const menu=new Alert();menu.title='CourseSync';
+      const status=menuAuthState(state);
       const confirmedSchool=loadSelectedSchool(null,true);
-      const canSignOut=canOfferSignOut(state);
-      // A previously selected school alone is not an authenticated session.
-      // Keep free-room queries hidden until a successful refresh for NUFE.
-      const loggedIn=!state.signedOut&&!!state.lastCheck&&canSignOut&&!!confirmedSchool;
-      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。请先登录账号；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请登录账号并绑定专用课表日历。';
-      menu.addAction(loggedIn?'立即刷新':'登录账号');
-      const canFreeRooms=loggedIn&&confirmedSchool==='nufe'&&activeSchoolId==='nufe';
-      if(canFreeRooms)menu.addAction('空闲教室');
-      if(canSignOut)menu.addDestructiveAction('退出登录');
+      const ready=status==='ready';
+      menu.message=status==='cleanup'?'上次退出登录未完成，请重试清理残留凭据；已同步日历保留。':
+        status==='signed_out'?'已退出登录。请先登录账号；已同步日历保留。':
+        ready?'上次刷新：'+localDateTime(state.lastCheck):
+        state.authPaused?'登录需要重新验证，请登录账号；已同步日历保留。':
+        '请先登录账号，成功后可使用课程、考试及学校专属功能。';
+      const actions=[];
+      const add=(label,kind,destructive=false)=>{
+        if(destructive)menu.addDestructiveAction(label);else menu.addAction(label);
+        actions.push(kind);
+      };
+      if(status==='cleanup')add('重试退出登录','logout',true);
+      else if(ready){
+        add('立即刷新','refresh');
+        if(confirmedSchool==='nufe'&&activeSchoolId==='nufe')add('空闲教室','rooms');
+        add('退出登录','logout',true);
+      }else add('登录账号','login');
       const selected=await menu.presentSheet();if(selected<0)return;
-      if(canFreeRooms&&selected===1){
+      const choice=actions[selected];
+      if(choice==='rooms'){
         let progress=null;
         try{
           if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
@@ -3132,7 +3145,7 @@ async function run() {
         }
         return;
       }
-      if(canSignOut&&selected===(canFreeRooms?2:1))action=13;
+      if(choice==='logout')action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -3163,30 +3176,12 @@ async function run() {
     if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(interactive&&action===0){
-      const hasCredentials=!state.signedOut&&hasSavedCredentials();
+      const hasCredentials=!state.signedOut&&!state.authPaused&&hasSavedCredentials();
       const selectedSchool=loadSelectedSchool(null,true);
       if(!selectedSchool){
         const previousSchool=activeSchoolId;
         manualAuth=await prepareManualRefresh(state);
         if(!manualAuth)return;
-        if(manualAuth.kind==='freeRooms'){
-          let progress=null;
-          try{
-            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
-              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
-              progress.show();
-              await new Promise(resolve=>Timer.schedule(100,false,resolve));
-            }
-          }catch(_){progress=null;}
-          try{
-            const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth,Date.now(),progress);
-          }finally{
-            if(progress)await progress.finish();
-          }
-          return;
-        }
         if(previousSchool!==activeSchoolId){
           store.release();locked=false;state=null;
           store=new Store();
@@ -3200,12 +3195,6 @@ async function run() {
           manualAuth={kind:'credentials',...credentials};
         }catch(error){
           if(error.code==='CANCELLED')return;
-          if(error.code==='FREE_ROOMS'){
-            const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
-            await queryAndShowFreeRooms(http,interactive,stage,{kind:'credentials',username:error.username,password:error.password});
-            return;
-          }
           if(error.code==='CHANGE_SCHOOL'){
             try{
               if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
@@ -3214,12 +3203,6 @@ async function run() {
             const prev=activeSchoolId;
             manualAuth=await prepareManualRefresh(state);
             if(!manualAuth)return;
-            if(manualAuth.kind==='freeRooms'){
-              const jar=readCookieJar();
-              const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
-              await queryAndShowFreeRooms(http,interactive,stage,manualAuth);
-              return;
-            }
             if(prev!==activeSchoolId){
               store.release();locked=false;state=null;
               store=new Store();
@@ -3310,7 +3293,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={menuAuthState,canOfferSignOut,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 /*
