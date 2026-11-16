@@ -20,8 +20,7 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
 
   return <NavigationStack>
     <List navigationTitle={(initial ? '编辑' : '添加') + typeName}
-      navigationBarTitleDisplayMode="inline"
-      toolbar={{cancellationAction: <Button title="取消" action={() => dismiss(null)}/>}}>
+      navigationBarTitleDisplayMode="inline">
       <Section header={<Text>必填</Text>}
         footer={end <= start ? <Text>结束时间须晚于开始时间。</Text> : undefined}>
         <TextField title="标题" prompt="填写标题" value={title} onChanged={setTitle}/>
@@ -39,6 +38,7 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
       {initial ? <Section>
         <Button title="删除日程" role="destructive" action={() => dismiss({action: 'delete'})}/>
       </Section> : null}
+      <Section><Button title="取消" action={() => dismiss(null)}/></Section>
     </List>
   </NavigationStack>;
 }
@@ -53,8 +53,7 @@ export function presentScheduleEditor(kind: ScheduleKind, initial?: ScheduleFiel
 function ScheduleList({year, rows}: {year: number; rows: ScheduleRow[]}) {
   const dismiss = Navigation.useDismiss();
   return <NavigationStack>
-    <List navigationTitle="管理日程" navigationBarTitleDisplayMode="inline"
-      toolbar={{cancellationAction: <Button title="完成" action={() => dismiss(null)}/>}}>
+    <List navigationTitle="管理日程" navigationBarTitleDisplayMode="inline">
       <Section>
         <Button title={year + ' 年'} systemImage="calendar" action={() => dismiss({action: 'year'})}/>
       </Section>
@@ -72,6 +71,7 @@ function ScheduleList({year, rows}: {year: number; rows: ScheduleRow[]}) {
           </Button>)}
         </Section> : null;
       })}
+      <Section><Button title="完成" action={() => dismiss(null)}/></Section>
     </List>
   </NavigationStack>;
 }

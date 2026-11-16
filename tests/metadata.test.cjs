@@ -87,5 +87,5 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
   assert.match(read('scripts/package.sh'),/"schedule-native\.tsx"/);
-  assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm \} from '\.\/login-native'/);
+  assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation \} from '\.\/login-native'/);
 });

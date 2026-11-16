@@ -19,9 +19,6 @@ function LoginView({ title }: { title: string }) {
     <List
       navigationTitle={title}
       navigationBarTitleDisplayMode="inline"
-      toolbar={{
-        cancellationAction: <Button title="取消" action={() => dismiss(null)} />
-      }}
     >
       <Section header={<Text>账号登录</Text>}>
         <TextField
@@ -55,6 +52,9 @@ function LoginView({ title }: { title: string }) {
             dismiss({ changeSchool: true });
           }}
         />
+      </Section>
+      <Section>
+        <Button title="取消" action={() => dismiss(null)} />
       </Section>
     </List>
   </NavigationStack>;
@@ -94,10 +94,7 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   const valid=response.length>0&&response.length<=maxLength;
 
   return <NavigationStack>
-    <List navigationTitle={title} navigationBarTitleDisplayMode="inline"
-      toolbar={{
-        cancellationAction:<Button title="取消" action={()=>dismiss(null)}/>
-      }}>
+    <List navigationTitle={title} navigationBarTitleDisplayMode="inline">
       <Section header={<Text>{label}</Text>}>
         {image?<Image image={image} resizable={true} scaleToFit={true}
           frame={{width:280,height:155}} />:null}
@@ -117,6 +114,9 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
         <Button title="确认" disabled={!valid}
           action={()=>{if(valid)dismiss(response);}}/>
       </Section>
+      <Section>
+        <Button title="取消" action={()=>dismiss(null)}/>
+      </Section>
     </List>
   </NavigationStack>;
 }
@@ -134,6 +134,24 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
   return code&&code.length<=max?code:null;
 }
 
+type ConfirmationOptions = {title: string; message: string; confirmLabel: string; cancelLabel: string};
+
+function ConfirmationView({title, message, confirmLabel, cancelLabel}: ConfirmationOptions) {
+  const dismiss=Navigation.useDismiss();
+  return <NavigationStack>
+    <List navigationTitle={title} navigationBarTitleDisplayMode="inline">
+      {message ? <Section><Text>{message}</Text></Section> : null}
+      <Section><Button title={confirmLabel} action={()=>dismiss(true)}/></Section>
+      <Section><Button title={cancelLabel} action={()=>dismiss(false)}/></Section>
+    </List>
+  </NavigationStack>;
+}
+
+export async function presentNativeConfirmation(options: ConfirmationOptions) {
+  return (await Navigation.present({
+    element:<ConfirmationView {...options}/>, modalPresentationStyle:'pageSheet'
+  }))===true;
+}
 
 // Native two-step flow. School selection is a whitelist, not a URL editor.
 export type NativeSchoolChoice = {id:string;name:string};
@@ -154,11 +172,9 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
   const account=username.trim();
   const validAccount=account.length>0&&account.length<=100&&
     password.length>0&&password.length<=512;
-  const back=()=>step==='school'?dismiss(null):setStep('school');
   return <NavigationStack>
     {step==='school'?
-      <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
-        toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
+      <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline">
         <Section>
           <Picker title="学校" pickerStyle="menu"
             value={schoolId} onChanged={setSchoolId}>
@@ -170,9 +186,11 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           <Button title="登录账号" disabled={!validSchool}
             action={()=>{if(validSchool)setStep('account');}}/>
         </Section>
+        <Section>
+          <Button title="取消" action={()=>dismiss(null)}/>
+        </Section>
       </List>:
-      <List navigationTitle="登录账号" navigationBarTitleDisplayMode="inline"
-        toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
+      <List navigationTitle="登录账号" navigationBarTitleDisplayMode="inline">
         <Section>
           <TextField title="学号" prompt="请输入学号" value={username}
             onChanged={setUsername} textContentType="username"
@@ -188,6 +206,10 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           {allowReuse&&schoolId===initialSchoolId?<Button title="使用已保存的账号"
             disabled={!validSchool}
             action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
+          <Button title="上一步" action={()=>setStep('school')}/>
+        </Section>
+        <Section>
+          <Button title="取消" action={()=>dismiss(null)}/>
         </Section>
       </List>}
   </NavigationStack>;

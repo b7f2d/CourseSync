@@ -13,7 +13,7 @@ const credential=index.slice(start,end);
 test('credential form is native-only; fallback also uses iOS secure Dialog',()=>{
  assert.match(credential,/presentNativeCredentialForm\(title\)/);
  assert.match(credential,/if\(!config\.runsInApp\)fail\('AUTH_INTERACTIVE_REQUIRED'\)/);
- assert.match(credential,/HostDialog\.confirm\(\{/);
+ assert.match(credential,/confirm\('无法打开登录窗口'/);
  assert.match(credential,/return await fallbackCredentialForm\(\{title\}\)/);
  assert.doesNotMatch(credential,/new WebView|loadHTML|autocomplete=|addScriptMessageHandler|nufeCredentials/);
 });

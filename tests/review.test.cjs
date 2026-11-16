@@ -2,8 +2,8 @@
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
- .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
+ .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation } from './login-native';",
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);const presentNativeConfirmation=options=>(globalThis.__nativeConfirmationMock??globalThis.__sdk.Dialog.confirm)(options);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { presentScheduleEditor, presentScheduleList } from './schedule-native';",
@@ -29,6 +29,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const nativeScript={name:'CourseSync',env:hostEnv,queryParameters:mode==='menu'?{mode:'menu'}:{},exit:r=>{sandbox.output=r;},createRunURLScheme:(name,q)=>'scripting://run/'+encodeURIComponent(name)+'?mode='+q.mode};
  const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>calendars,presentChooser:async()=>[calendar],create:async opts=>({identifier:'exam-created-'+(++serial),title:opts.title,source:{title:'iCloud',type:'calDAV'},allowsContentModifications:true,isSubscribed:false,save:async function(){calendars.push(this);}})},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
  sandbox.__sdk=sdk;sandbox.__COURSESYNC_TEST__=true;sandbox.setTimeout=setTimeout;sandbox.clearTimeout=clearTimeout;sandbox.setInterval=setInterval;sandbox.clearInterval=clearInterval;sandbox.crypto=crypto.webcrypto;
+ sandbox.Data={fromBase64String:value=>({getBytes:()=>Buffer.from(value,'base64')})};
  await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',sandbox);
  sandbox.config=sandbox.module.exports.ScriptingAdapter.config;sandbox.args=sandbox.module.exports.ScriptingAdapter.args;
  const m=sandbox.module.exports,store=new m.Store();store.acquire();
@@ -1007,7 +1008,7 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
-test('main menu has only actions and relies on native dismissal',async()=>{
+test('main menu has a separate bottom cancel that exits without starting an operation',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
@@ -1015,7 +1016,7 @@ test('main menu has only actions and relies on native dismissal',async()=>{
  e.state.lastCheck='2026-11-16T10:00:00.000Z';
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.equal(menus[0].cancelButton,false);
+ a.equal(menus[0].cancelButton,true);
  a.deepEqual(Array.from(menus[0].actions,x=>x.label),['立即刷新','添加日程','管理日程','空闲教室','退出登录']);
  a.deepEqual(Array.from(menus[0].actions,x=>!!x.destructive),[false,false,false,false,true]);
  a.equal(e.requests.length,0);
@@ -1202,6 +1203,30 @@ test('remaining slider WebView is ephemeral, does not expose JS evaluation and p
  await w.loadHTML('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">');
  await w.present('滑块验证');
  w.inner.dispose();
+});
+test('slider cancel closes the view before submitting verification or credentials',async()=>{
+ const e=await env({hostEnv:'index'});
+ let dismissed=false,disposed=false;
+ const image=Buffer.concat([Buffer.from([255,216,255]),Buffer.from('1234567890123456')]).toString('base64');
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(name,handler){a.equal(name,'nufeSlider');this.handler=handler;}
+  async loadHTML(html){a.match(html,/id="submit"[\s\S]*id="cancel"[^>]*>取消</);return true;}
+  async present(){a.equal(this.handler('cancel'),true);}
+  dismiss(){dismissed=true;}
+  dispose(){disposed=true;}
+ };
+ const http={jar:new e.m.CookieJar(),get:async(url,options)=>{
+  a.equal(options.body,undefined);
+  return {url,text:''};
+ },authJSON:async url=>{
+  if(url.includes('/checkNeedCaptcha.htl'))return {isNeed:true};
+  a.match(url,/openSliderCaptcha\.htl/);
+  return {bigImage:image,smallImage:image};
+ }};
+ const page={url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1"><input id="pwdEncryptSalt" value="1234567890123456"></form><script>captchaSwitch=2</script>'};
+ await a.rejects(e.m.passwordLogin(http,page,'sample','sample-password',true),code('CANCELLED'));
+ a.equal(dismissed,true);
+ a.equal(disposed,true);
 });
 test('Scripting recurrence flag detects even a single visible series instance',async()=>{const e=await env();const old=e.add(lesson());old.hasRecurrenceRules=true;old.recurrenceRules=[{frequency:'weekly',interval:1}];e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,old.identifier);});
 test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});

@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
+import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity } from './live_activity';
 import { presentScheduleEditor, presentScheduleList } from './schedule-native';
@@ -88,7 +88,13 @@ class Alert{
  async presentSheet(){const n=await HostDialog.actionSheet({title:this.title,message:this.message,actions:this.actions,cancelButton:this.cancel});return n==null?-1:n;}
  async presentAlert(){
    if(this.fields.length){const f=this.fields[0];const value=await HostDialog.prompt({title:this.title,message:this.message,placeholder:f.placeholder,defaultValue:f.value,obscureText:f.secure,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0]?.label||'继续'});if(value===null)return -1;this.values=[value];return 0;}
-   if(this.cancel&&this.actions.length===1)return await HostDialog.confirm({title:this.title,message:this.message,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0].label})?0:-1;
+   if(this.cancel&&this.actions.length===1){
+     const options={title:this.title,message:this.message,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0].label};
+     if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+       try{return await presentNativeConfirmation(options)?0:-1;}catch(_){}
+     }
+     return await HostDialog.confirm(options)?0:-1;
+   }
    if(this.actions.length>1)return this.presentSheet();
    await HostDialog.alert({title:this.title,message:this.message,buttonLabel:this.actions[0]?.label||'好'});return 0;
  }
@@ -696,17 +702,13 @@ async function input(title,label,secure=false,options={}) {
       return code;
     }catch(e){
       if(e?.code==='CANCELLED')throw e;
-      const recover=await HostDialog.confirm({
-        title:'无法打开输入窗口',
-        message:'可改用系统输入框。',
-        cancelLabel:'取消',confirmLabel:'继续'
-      });
+      const recover=await confirm('无法打开输入窗口','可改用系统输入框。','继续');
       if(!recover)fail('CANCELLED');
     }
   }
   return await legacyInput(title,label,secure);
 }
-async function confirm(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('确认');a.addCancelAction('取消');return await a.presentAlert()===0;}
+async function confirm(title,message,confirmLabel='确认') {const a=new Alert();a.title=title;a.message=message;a.addAction(confirmLabel);a.addCancelAction('取消');return await a.presentAlert()===0;}
 async function notice(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('好');await a.presentAlert();}
 // Read known login-form inputs as inert text; no WebView, no embedded page scripts.
 // Values are decoded only after selection. Never log or persist form fields.
@@ -1005,11 +1007,7 @@ async function credentialForm({title='CourseSync 登录'}={}){
   }
   // The only fallback is still a native iOS Dialog (two secure prompts).
   // Ask before showing them; never silently downgrade the combined form.
-  const consent=await HostDialog.confirm({
-    title:'无法打开登录窗口',
-    message:'可分两步输入学号和密码。',
-    cancelLabel:'取消登录',confirmLabel:'继续'
-  });
+  const consent=await confirm('无法打开登录窗口','可分两步输入学号和密码。','继续');
   if(!consent)fail('CANCELLED');
   return await fallbackCredentialForm({title});
 }
@@ -1034,13 +1032,14 @@ async function humanSlider(http) {
     await bounded(w.inner.addScriptMessageHandler('nufeSlider',payload=>{
       // Local drag data is untrusted: reject malformed or oversized trajectories
       // instead of encrypting arbitrary WebKit messages for the school server.
-      if(submitted||!validSliderResult(payload))return false;
+      if(submitted||(payload!=='cancel'&&!validSliderResult(payload)))return false;
       submitted=payload;
       try{w.inner.dismiss();}catch(_){}
       return true;
     }),12000,'WEBVIEW_TIMEOUT');
-  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><script>
+  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><button id="cancel" type="button" style="display:block;margin-top:16px;padding:10px 20px">取消</button><script>
   const bg=document.getElementById('bg'),piece=document.getElementById('piece'),knob=document.getElementById('knob');
+  document.getElementById('cancel').onclick=()=>window.webkit.messageHandlers.nufeSlider.postMessage('cancel');
   bg.onload=piece.onload=()=>{if(!bg.naturalWidth||!piece.naturalWidth)return;piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
   bg.src=${JSON.stringify('data:'+imageType(j.bigImage)+';base64,'+j.bigImage)};piece.src=${JSON.stringify('data:'+imageType(j.smallImage)+';base64,'+j.smallImage)};
   let active=false,x=0,y=0,lastAt=0,last=null,tracks=[];window.result=null;
@@ -1049,7 +1048,7 @@ async function humanSlider(http) {
   knob.onpointerup=e=>{if(!active)return;active=false;const dx=Math.max(0,Math.min(240,e.clientX-x));if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击提交验证。';document.getElementById('submit').disabled=false;};knob.onpointercancel=()=>{active=false;window.result=null;document.getElementById('submit').disabled=true;};document.getElementById('submit').onclick=async()=>{if(!window.result)return;const button=document.getElementById('submit');button.disabled=true;try{const ok=await window.webkit.messageHandlers.nufeSlider.postMessage(window.result);if(!ok){button.disabled=false;document.getElementById('status').textContent='滑动数据无效，请重新拖动。';}}catch(_){button.disabled=false;}};</script>`;
     await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
     await w.present();
-    if(!submitted)fail('CANCELLED');
+    if(!submitted||submitted==='cancel')fail('CANCELLED');
     const sign=await encryptPassword(JSON.stringify(submitted),key);
     const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});
     assert(answer.errorCode===1,'CAPTCHA');
@@ -3340,6 +3339,7 @@ async function run() {
         if(confirmedSchool==='nufe'&&activeSchoolId==='nufe')add('空闲教室','rooms');
         add('退出登录','logout',true);
       }
+      menu.addCancelAction('取消');
       const selected=await menu.presentSheet();if(selected<0)return;
       const choice=actions[selected];
       if(choice==='addSchedule'||choice==='manageSchedule'){
