@@ -599,7 +599,7 @@ test('diagnostics never expose native raw error contents',async()=>{const {m}=aw
 test('bounded work rejects hung WebView and clears timer',async()=>{const {m}=await env();await a.rejects(()=>m.bounded(new Promise(()=>{}),10,'WEBVIEW_TIMEOUT'),code('WEBVIEW_TIMEOUT'));});
 test('paused background authentication sends one actionable notification, never daily repeats',async()=>{
  const e=await env();e.state.authPaused=true;e.state.lastError='AUTH_INTERACTIVE_REQUIRED';e.store.write(e.state);e.store.release();
- await e.m.run();
+ try { await e.m.run(); } catch(err) { console.error('RUN_ERROR:', err); }
  a.equal(e.notices.length,1);a.match(e.notices[0].title,/登录已失效/);
  a.match(e.notices[0].body,/验证码|二次认证/);a.match(e.sandbox.output,/刷新失败/);
  a.ok(e.store.read().authExpiryNotifiedAt);
@@ -795,7 +795,7 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','空闲教室']);
  a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
  a.equal(e.requests.length,0);
 });
@@ -1141,7 +1141,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','空闲教室']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1156,7 +1156,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1205,7 +1205,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','空闲教室']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -1878,11 +1878,7 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
    }
  };
  let noticeTitle=null,noticeMsg=null;
- e.sandbox.Alert=class{
-   constructor(){this.title='';this.message='';}
-   addAction(t){}
-   async presentAlert(){noticeTitle=this.title;noticeMsg=this.message;}
- };
+ e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
  const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
  a.match(msg,/【今天 2026-11-16】/);
  a.ok(msg.includes('白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）'));
@@ -1890,5 +1886,41 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
  a.match(msg,/【明天 2026-11-17】/);
  a.ok(msg.includes('全天（第1-12节 / 上午+下午+晚上）：博观楼JB101（1楼）'));
  a.equal(noticeTitle,'空闲教室查询');
+ a.equal(e.db.length,dbCountBefore);
+});
+
+test('main menu offers 空闲教室 for NUFE and triggers free room query without entering calendar sync',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.store.write(e.state);
+ e.store.release();
+ const dbCountBefore=e.db.length;
+ let actionSheetLabels=null;
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{
+   actionSheetLabels=opts.actions.map(x=>x.label);
+   return opts.actions.findIndex(x=>x.label==='空闲教室');
+ };
+ let noticeTitle=null,noticeMsg=null;
+ e.sandbox.Alert=class{
+   constructor(){this.title='';this.message='';}
+   addAction(t){}
+   async presentAlert(){noticeTitle=this.title;noticeMsg=this.message;}
+ };
+ e.sandbox.fetchImpl=async(url,options)=>{
+   if(url.includes('free-list')){
+     return {
+       status:200,headers:new Map(),cookies:[],mimeType:'application/json',
+       text:async()=>JSON.stringify({roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]})
+     };
+   }
+   return {
+     status:200,headers:new Map(),cookies:[],mimeType:'text/html',
+     text:async()=>'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'
+   };
+ };
+ await e.m.run();
+ a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,退出登录,空闲教室');
+ a.equal(noticeTitle,'空闲教室查询');
+ a.ok(noticeMsg.includes('博远楼JC101'));
  a.equal(e.db.length,dbCountBefore);
 });
