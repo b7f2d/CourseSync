@@ -479,6 +479,8 @@ test('USTS exam query writes published times and retains existing future exams w
   await sync();
   a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
   items=[];await sync();
+  a.equal(e.db.length,1); // A single empty response is not enough to cancel a published exam.
+  await sync();
   a.equal(e.db.length,0);
 });
 test('legacy exams migrate to the separate calendar with plain titles and no duplicates',async()=>{
@@ -726,7 +728,7 @@ test('end-to-end daily refresh adds, adjusts, cancels and purges old series with
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
  e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
+ const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.filter(n=>/日程变动/.test(n.title)).length,1);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
  // A second entire run must change neither logical nor native event IDs.
  const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
@@ -812,7 +814,7 @@ test('an invitation anywhere stops dedicated deletion before first remove',async
 test('owned series is replaced with a standalone new target after backup',async()=>{const e=await env();e.add(lesson(),{id:'owned-series'});e.add(lesson(),{id:'owned-series',offset:7*86400000});e.setSeries(true);e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,'owned-series');a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,'lesson-1');});
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
-test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.length,0);});
+test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
 test('main menu keeps refresh, status and available sign-out',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
@@ -886,12 +888,14 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  a.match(alerts.at(-1).message,/EXAM_SCHEMA/);
  a.deepEqual(ids(),initialIds);
  body='<tr class="tr-empty"><td>暂无“未结束”的考试安排</td></tr>';
+ await e.m.run(); // Guard transient empty responses.
+ a.deepEqual(ids(),initialIds);
  await e.m.run();
  a.deepEqual(ids(),[finished.identifier]);
  a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
-test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
-test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,0);});
+test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
+test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
 test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
  const e=await env({hostEnv:'index'});
@@ -960,12 +964,15 @@ test('first manual sync imports all history and subsequent refreshes rotate one 
  a.deepEqual(fetched.splice(0),[161,159,160]);
  failHistorical=true;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,159]);
- a.equal(e.state.termErrors[0].sid,'159');
- a.equal(e.store.read().lastHistoryTerm,159);
+ a.deepEqual(fetched.splice(0),[161]); // Historical baseline is fresh.
+ a.deepEqual(e.state.termErrors,[]);
+ const distant=Date.now()+31*86400000;
+ a.deepEqual(e.m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161}]},e.state,false,distant),[161,159]);
+ e.state.semesters['159'].lastSuccess=null;
+ a.deepEqual(e.m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161}]},e.state,false),[161,159]);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched,[161,160]);
- a.equal(e.state.termErrors.length,0);
+ a.deepEqual(fetched,[161,159]);
+ a.equal(e.state.termErrors[0].sid,'159');
 });
 
 test('readable event notes contain the synchronization timestamp only',async()=>{
