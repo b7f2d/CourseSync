@@ -124,3 +124,11 @@ test('expired foreground cookie automatically retries saved credentials',()=>{
  assert.match(login,/\['LOGIN_FAILED','AUTO_LOGIN_REJECTED'\]/);
  assert.match(login,/const fresh=await http\.get\(SSO\)/);
 });
+
+test('native secure input preserves exact secret without trimming and supports up to 512 chars',()=>{
+ assert.match(native,/const response=secret\?value:value\.trim\(\)/);
+ assert.match(native,/const maxLength=kind==='captcha'\?32:otp\?48:secret\?512:120/);
+ assert.match(native,/const code=isSecure\?result:result\.trim\(\)/);
+ assert.match(native,/isSecure\?512:120/);
+});
+
