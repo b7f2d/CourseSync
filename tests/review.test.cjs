@@ -1834,19 +1834,47 @@ test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest f
  ]);
 });
 
-test('NUFE free classroom query formats today and tomorrow morning and afternoon schedule without modifying calendar',async()=>{
+test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms or lists separately',async()=>{
+ const e=await env();
+ const rAll={id:1,nameZh:'博远楼JC101',floor:1};
+ const rAft={id:2,nameZh:'博远楼JC203',floor:2};
+ const rEve={id:3,nameZh:'博观楼JB105',floor:1};
+
+ // 1. 全天同一教室
+ const allDayLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rAll,rEve]);
+ a.equal(allDayLines.join('\n'),'• 全天（第1-12节 / 上午+下午+晚上）：博远楼JC101（1楼）');
+
+ // 2. 白天同一教室 (上午 + 下午)
+ const mornAftLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rEve]);
+ a.equal(mornAftLines.join('\n'),'• 白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+
+ // 3. 下午至晚上同一教室 (下午 + 晚上)
+ const aftEveLines=e.m.resolveDayRooms([rAll],[rAft],[rAft,rEve]);
+ a.equal(aftEveLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午至晚上（第5-12节 / 下午+晚上）：博远楼JC203（2楼）');
+
+ // 4. 三时段各不相同
+ const sepLines=e.m.resolveDayRooms([rAll],[rAft],[rEve]);
+ a.equal(sepLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午（第5-9节）：博远楼JC203（2楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+});
+
+test('NUFE free classroom query supports morning, afternoon and evening with smart room merging without modifying calendar',async()=>{
  const e=await env();
  const dbCountBefore=e.db.length;
  const http={
    get:async(url)=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
    json:async(url,{body})=>{
      const p=JSON.parse(body);
-     const isMorning=p.dateTimeSegmentCmd.units.includes('1');
+     const units=p.dateTimeSegmentCmd.units;
      const isTomorrow=p.dateTimeSegmentCmd.startDateTime.endsWith('17');
-     if(isMorning&&!isTomorrow)return {roomList:[{nameZh:'博远楼JC102',building:{nameZh:'博远楼'},floor:1}]};
-     if(!isMorning&&!isTomorrow)return {roomList:[{nameZh:'博远楼JC203',building:{nameZh:'博远楼'},floor:2}]};
-     if(isMorning&&isTomorrow)return {roomList:[{nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1}]};
-     return {roomList:[{nameZh:'博文楼JA201',building:{nameZh:'博文楼'},floor:2}]};
+     if(!isTomorrow){
+       // 今天：上午、下午为同一个博远楼JC101，晚上为博远楼JC403 -> 合并为白天+晚上
+       if(units.includes('1'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
+       if(units.includes('5'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
+       return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
+     } else {
+       // 明天：全天为同一个博观楼JB101 -> 合并为全天
+       return {roomList:[{id:201,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1}]};
+     }
    }
  };
  let noticeTitle=null,noticeMsg=null;
@@ -1857,11 +1885,10 @@ test('NUFE free classroom query formats today and tomorrow morning and afternoon
  };
  const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
  a.match(msg,/【今天 2026-11-16】/);
- a.match(msg,/上午（第1-4节）：博远楼JC102（1楼）/);
- a.match(msg,/下午（第5-9节）：博远楼JC203（2楼）/);
+ a.ok(msg.includes('白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）'));
+ a.ok(msg.includes('晚上（第10-12节）：博远楼JC403（4楼）'));
  a.match(msg,/【明天 2026-11-17】/);
- a.match(msg,/上午（第1-4节）：博观楼JB101（1楼）/);
- a.match(msg,/下午（第5-9节）：博文楼JA201（2楼）/);
+ a.ok(msg.includes('全天（第1-12节 / 上午+下午+晚上）：博观楼JB101（1楼）'));
  a.equal(noticeTitle,'空闲教室查询');
  a.equal(e.db.length,dbCountBefore);
 });
