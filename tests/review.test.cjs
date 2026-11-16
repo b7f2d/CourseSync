@@ -1376,7 +1376,7 @@ test('incomplete logout exposes cleanup retry but no login or classrooms',async(
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['重试退出登录']);
+ a.deepEqual(Array.from(menus[0]),['退出登录']);
  a.equal(e.requests.length,0);
 });
 test('authentication state machine separates signed-out, paused, ready and unconfigured states',async()=>{
