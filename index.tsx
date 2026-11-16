@@ -2800,7 +2800,9 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     }
     if(sid===info.current&&onCurrentSynced)await onCurrentSynced(http,budget);
     if(sid!==info.current){
-      state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:new Date().toISOString()};
+      if(state.semesters[sid]?.lastSuccess){
+        if(state.historyAttemptAt)delete state.historyAttemptAt[sid];
+      }else state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:new Date().toISOString()};
       // Advance even on a recoverable historical error so one term cannot
       // prevent the remaining terms from being checked.
       state.lastHistoryTerm=sid;store.write(state);
