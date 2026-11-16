@@ -1889,7 +1889,7 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
  a.equal(e.db.length,dbCountBefore);
 });
 
-test('main menu offers 空闲教室 for NUFE and triggers free room query without entering calendar sync',async()=>{
+test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes explanation, and triggers query without calendar sync',async()=>{
  const e=await env({hostEnv:'index'});
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.store.write(e.state);
@@ -1900,12 +1900,16 @@ test('main menu offers 空闲教室 for NUFE and triggers free room query withou
    actionSheetLabels=opts.actions.map(x=>x.label);
    return opts.actions.findIndex(x=>x.label==='空闲教室');
  };
- let noticeTitle=null,noticeMsg=null;
- e.sandbox.Alert=class{
-   constructor(){this.title='';this.message='';}
-   addAction(t){}
-   async presentAlert(){noticeTitle=this.title;noticeMsg=this.message;}
+ let progressShown=0,progressClosed=0;
+ e.sandbox.__sdk.Navigation={present:async()=>null,useDismiss:()=>()=>{}};
+ e.sandbox.__progressUIFactory=(title,subtitle)=>{
+   return {
+     show:()=>{progressShown++;},
+     finish:()=>{progressClosed++;}
+   };
  };
+ let noticeTitle=null,noticeMsg=null;
+ e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
  e.sandbox.fetchImpl=async(url,options)=>{
    if(url.includes('free-list')){
      return {
@@ -1920,7 +1924,10 @@ test('main menu offers 空闲教室 for NUFE and triggers free room query withou
  };
  await e.m.run();
  a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,退出登录,空闲教室');
+ a.equal(progressShown,1);
+ a.equal(progressClosed,1);
  a.equal(noticeTitle,'空闲教室查询');
  a.ok(noticeMsg.includes('博远楼JC101'));
+ a.ok(!noticeMsg.includes('说明：'));
  a.equal(e.db.length,dbCountBefore);
 });
