@@ -13,7 +13,7 @@ type ProgressSession={
   dismiss:(() => void)|null;
 };
 
-function ProgressScreen({session}:{session:ProgressSession}) {
+function ProgressScreen({session,title='正在刷新课表',subtitle='同步完成后自动收起'}:{session:ProgressSession,title?:string,subtitle?:string}) {
   const dismiss=Navigation.useDismiss();
   // The script's synchronization still owns the task. Closing this view
   // hides status only; it never cancels a calendar transaction.
@@ -26,7 +26,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
   }
   return <NavigationStack>
     <VStack
-      navigationTitle="正在刷新课表"
+      navigationTitle={title}
       navigationBarTitleDisplayMode="inline"
       frame={{maxWidth:'infinity',maxHeight:'infinity'}}
       padding={24}
@@ -34,9 +34,9 @@ function ProgressScreen({session}:{session:ProgressSession}) {
     >
       <Spacer/>
       <ProgressView progressViewStyle="circular"/>
-      <Text font="headline">正在刷新课表</Text>
+      <Text font="headline">{title}</Text>
       <Text foregroundStyle="secondaryLabel" font="subheadline">
-        同步完成后自动收起
+        {subtitle}
       </Text>
       <Spacer/>
       <Button title="收起" action={()=>{
@@ -47,7 +47,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
   </NavigationStack>;
 }
 
-export function createNativeProgressView(){
+export function createNativeProgressView(title='正在刷新课表',subtitle='同步完成后自动收起'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
@@ -65,7 +65,7 @@ export function createNativeProgressView(){
       session.shown=true;
       try {
         presented=Promise.resolve(Navigation.present({
-          element:<ProgressScreen session={session}/>,
+          element:<ProgressScreen session={session} title={title} subtitle={subtitle}/>,
           modalPresentationStyle:'pageSheet',
         })).then(()=>{
           if(session.revision!==revision)return;
