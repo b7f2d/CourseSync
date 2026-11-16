@@ -1804,3 +1804,64 @@ test('offline agenda excludes ended lessons and deduplicates cached semesters',a
  const result=e.m.offlineAgenda({semesters:{a:{events:[old,upcoming]},b:{events:[upcoming]}}},Date.parse('2026-11-09T00:00:00Z'));
  a.equal(result.split('课程甲').length-1,1);a.ok(!result.includes('旧课'));a.match(result,/08:00–10:00/);
 });
+
+test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest floor',async()=>{
+ const e=await env();
+ const http={
+   json:async(url,opt)=>{
+     a.match(url,/ws\/room-borrow\/free-list/);
+     return {
+       roomList:[
+         {id:1,nameZh:'德经楼Z1-205',building:{nameZh:'德经楼'},floor:2},
+         {id:2,nameZh:'博文楼JA414',building:{nameZh:'博文楼'},floor:4},
+         {id:3,nameZh:'博文楼JA105',building:{nameZh:'博文楼'},floor:1},
+         {id:4,nameZh:'博观楼JB202',building:{nameZh:'博观楼'},floor:2},
+         {id:5,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1},
+         {id:6,nameZh:'博远楼JC203',building:{nameZh:'博远楼'},floor:2},
+         {id:7,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}
+       ]
+     };
+   }
+ };
+ const rooms=await e.m.queryFreeRoomsForPeriod(http,'2026-11-16',['1','2','3','4']);
+ a.deepEqual(rooms.map(r=>r.nameZh),[
+   '博远楼JC101',
+   '博远楼JC203',
+   '博观楼JB101',
+   '博观楼JB202',
+   '博文楼JA105',
+   '博文楼JA414'
+ ]);
+});
+
+test('NUFE free classroom query formats today and tomorrow morning and afternoon schedule without modifying calendar',async()=>{
+ const e=await env();
+ const dbCountBefore=e.db.length;
+ const http={
+   get:async(url)=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
+   json:async(url,{body})=>{
+     const p=JSON.parse(body);
+     const isMorning=p.dateTimeSegmentCmd.units.includes('1');
+     const isTomorrow=p.dateTimeSegmentCmd.startDateTime.endsWith('17');
+     if(isMorning&&!isTomorrow)return {roomList:[{nameZh:'博远楼JC102',building:{nameZh:'博远楼'},floor:1}]};
+     if(!isMorning&&!isTomorrow)return {roomList:[{nameZh:'博远楼JC203',building:{nameZh:'博远楼'},floor:2}]};
+     if(isMorning&&isTomorrow)return {roomList:[{nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1}]};
+     return {roomList:[{nameZh:'博文楼JA201',building:{nameZh:'博文楼'},floor:2}]};
+   }
+ };
+ let noticeTitle=null,noticeMsg=null;
+ e.sandbox.Alert=class{
+   constructor(){this.title='';this.message='';}
+   addAction(t){}
+   async presentAlert(){noticeTitle=this.title;noticeMsg=this.message;}
+ };
+ const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
+ a.match(msg,/【今天 2026-11-16】/);
+ a.match(msg,/上午（第1-4节）：博远楼JC102（1楼）/);
+ a.match(msg,/下午（第5-9节）：博远楼JC203（2楼）/);
+ a.match(msg,/【明天 2026-11-17】/);
+ a.match(msg,/上午（第1-4节）：博观楼JB101（1楼）/);
+ a.match(msg,/下午（第5-9节）：博文楼JA201（2楼）/);
+ a.equal(noticeTitle,'空闲教室查询');
+ a.equal(e.db.length,dbCountBefore);
+});
