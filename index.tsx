@@ -2113,8 +2113,9 @@ async function pickExamCalendar(state,store){
   // Never create a duplicate if an already bound exam calendar is unavailable.
   if(state.examCalendarId)fail('CALENDAR_MISSING');
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
+  const title=validCalendarName(await input('创建考试日历','请输入自定义考试日历名称'));
   store.check();
-  const created=await createDedicatedCalendar('CourseSync 考试');
+  const created=await createDedicatedCalendar(title);
   assert(created.identifier!==state.calendarId,'CALENDAR_REBIND_UNSAFE');
   state.examCalendarId=created.identifier;
   store.write(state);
