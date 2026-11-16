@@ -42,7 +42,7 @@ function LoginView({ title }: { title: string }) {
       </Section>
       <Section footer={<Text>可尝试使用 iOS「密码」中的已保存网站凭据。此页面不会访问外部网站，也不会自动保存密码。</Text>}>
         <Button
-          title="确认"
+          title="登录账号"
           disabled={!valid}
           action={() => {
             if (!valid) return;
@@ -182,7 +182,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
             onChanged={setPassword} textContentType="password"/>
         </Section>
         <Section footer={<Text>仅在学校要求重新认证时提交登录信息，验证成功后才会保存；支持 iOS「密码」自动填充。</Text>}>
-          <Button title="开始刷新" disabled={!validAccount}
+          <Button title="登录并同步" disabled={!validAccount}
             action={()=>{if(validAccount&&validSchool)dismiss({
               kind:'credentials',schoolId,username:account,password
             });}}/>
