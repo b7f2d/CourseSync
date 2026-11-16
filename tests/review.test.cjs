@@ -874,12 +874,13 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
  const e=await env({hostEnv:'index'});
  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const alerts=[],all=[e.other];
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
- e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'new-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
+ e.sandbox.__sdk.Calendar.create=async opts=>({identifier:opts.title==='Custom Calendar'?'new-icloud':'exam-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
  e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
  a.equal(e.store.read().calendarId,'new-icloud');
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
+ a.equal(e.store.read().examCalendarId,'exam-icloud');
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
 });
