@@ -1290,8 +1290,26 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  a.equal(e.m.hasSavedCredentials(),false);
  a.equal(e.store.read().signedOut,true);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
+ a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
  a.equal(e.requests.length,0);
  a.equal(alerts.at(-1).title,'已退出登录');
+});
+test('logout keeps verified school for direct credential re-entry without restoring session',async()=>{
+ const e=await env({hostEnv:'index'}),menu=[];
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.m.saveCredentials('student','secret');
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
+ e.sandbox.__sdk.Dialog.confirm=async()=>true;
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ a.equal(await e.m.signOut(e.state,e.store),true);
+ a.equal(e.m.loadSelectedSchool(null,true),'nufe');
+ a.equal(e.state.signedOut,true);
+ a.equal(e.m.hasSavedCredentials(),false);
+ e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>{menu.push(o.actions.map(x=>x.label));return null;};
+ await e.m.run();
+ a.deepEqual(Array.from(menu[0]),['登录账号']);
 });
 test('after logout, existing calendar opens normal menu rather than first-setup workflow',async()=>{
  const e=await env({hostEnv:'index'}),menus=[];
