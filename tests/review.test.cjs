@@ -913,14 +913,17 @@ test('free-room entry is hidden before NUFE login and when signed out',async()=>
 test('free-room entry is exclusive to authenticated NUFE, not USTS',async()=>{
  for(const school of ['nufe','usts']){
   const e=await env({hostEnv:'index'}),menus=[];
+  e.store.release();
   e.m.activateSelectedSchool(school);
+  const store=new e.m.Store();store.acquire();
   e.keys.set('CourseSync.Local.v1.school-choice',school);
-  e.keys.set(school==='nufe'?'CourseSync.Local.v1.cookies':'CourseSync.Local.v1.cookies.usts','[]');
   e.m.saveCredentials('test-account','test-secret');
-  e.state.lastCheck='2026-11-16T10:00:00.000Z';
-  e.store.write(e.state);e.store.release();
+  store.write({...e.state,lastCheck:'2026-11-16T10:00:00.000Z'});
+  store.release();
   e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+  e.sandbox.__sdk.Dialog.alert=async()=>{};
   await e.m.run();
+  a.equal(menus.length,1);
   a.equal(menus[0][0],'立即刷新');
   a.equal(menus[0].includes('空闲教室'),school==='nufe');
  }
@@ -945,7 +948,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
    return {kind:'reuse',schoolId:'nufe'};
  };
  e.store.write(e.state);e.store.release();
- e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='登录账号');
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  // The first foreground refresh creates a dedicated iCloud exam calendar.
  e.sandbox.__sdk.Dialog.prompt=async options=>{a.equal(options.title,'创建考试日历');return '考试安排';};
