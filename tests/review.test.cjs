@@ -8,8 +8,8 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { presentScheduleEditor, presentScheduleList } from './schedule-native';",
    'const presentScheduleEditor=(...args)=>globalThis.__scheduleEditor(...args);const presentScheduleList=(...args)=>globalThis.__scheduleList(...args);')
- .replace("import { CourseRefreshActivity } from './live_activity';",
-   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();');
+ .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
+   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -44,26 +44,24 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('foreground refresh uses one Live Activity through verification and dismisses it on exit',async()=>{
- const e=await env({hostEnv:'index'}),calls=[];
+test('shortcut refresh shows one Live Activity and no progress sheet',async()=>{
+ const e=await env(),calls=[];
  e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>({show:()=>calls.push(['sheet']),pause:()=>calls.push(['pause']),resume:()=>calls.push(['resume']),finish:()=>calls.push(['close'])});
+ e.sandbox.__progressUIFactory=()=>{calls.push(['sheet']);return {};};
  e.sandbox.__liveActivityFactory=()=>({
    async start(state){calls.push(['start',state.phase]);return true;},
    async update(state){calls.push(['update',state.phase]);},
    async end(state,options){calls.push(['end',state.phase,options.dismissTimeInterval]);}
  });
- const progress=e.m.createProgress(e.state,e.store,true);
+ const progress=e.m.createProgress(e.state,e.store,false);
  await progress.start();
- progress('等待二次认证');
- await new Promise(resolve=>setImmediate(resolve));
  progress('读取学期 161');
  progress('写入学期 161 的日历事件');
  await new Promise(resolve=>setImmediate(resolve));
  await progress.finish();
  await progress.finish();
- a.deepEqual(calls,[['sheet'],['start','connect'],['pause'],['update','verify'],['resume'],['update','sync'],['close'],['end','finish',0]]);
+ a.deepEqual(calls,[['start','connect'],['update','sync'],['end','finish',0]]);
 });
 
 test('refresh presentation names both courses and exams without removed status UI',()=>{
@@ -78,33 +76,90 @@ test('refresh presentation names both courses and exams without removed status U
  a.doesNotMatch(island,/可在 CourseSync 查看运行状态|正在刷新课表/);
  a.match(source,/读取考试日程\|更新考试日程/);
 });
-test('successful refresh updates the active island before ending it',async()=>{
- const e=await env({hostEnv:'index'}),calls=[];
+test('successful refresh from Shortcuts shows completion before ending',async()=>{
+ const e=await env(),calls=[];
+ e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?10:ms);
  e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
  e.sandbox.__liveActivityFactory=()=>({
-   async start(){return true;},
+   async start(state){calls.push(['start',state.phase]);return true;},
    async update(state){calls.push(['update',state.phase]);},
    async end(state){calls.push(['end',state.phase]);}
  });
- const progress=e.m.createProgress(e.state,e.store,true);
- await progress.start();
- const finishing=progress.finish(true);
- await new Promise(resolve=>setImmediate(resolve));
- a.deepEqual(calls,[['update','complete']]);
- await finishing;
- a.deepEqual(calls,[['update','complete'],['end','complete']]);
+ loggedIn(e,raw([activity()]));
+ await executeDaily(e);
+ a.deepEqual(calls,[['start','connect'],['update','sync'],['update','complete'],['end','complete']]);
+ a.match(e.sandbox.output,/刷新成功/);
 });
 
-test('foreground refresh falls back to the native sheet when Live Activity start is denied',async()=>{
+test('in-app refresh uses the sheet without starting a Live Activity',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('start');return false;}});
+ e.sandbox.__liveActivityFactory=()=>{calls.push('activity');};
  e.sandbox.__progressUIFactory=()=>({show:()=>calls.push('sheet'),finish:()=>calls.push('close')});
  const progress=e.m.createProgress(e.state,e.store,true);
  await progress.start();
  await progress.finish();
- a.deepEqual(calls,['sheet','start','close']);
+ a.deepEqual(calls,['sheet','close']);
+});
+
+test('a shortcut still refreshes when iOS denies the Live Activity',async()=>{
+ const e=await env(),calls=[];
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('start');return false;}});
+ loggedIn(e,raw([activity()]));
+ await executeDaily(e);
+ a.deepEqual(calls,['start']);
+ a.match(e.sandbox.output,/刷新成功/);
+});
+
+test('slow native startup catches up to the current phase or ends after refresh',async()=>{
+ for(const finished of [false,true]){
+   const e=await env(),calls=[];
+   let resolveStart;
+   e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===1500?5:ms);
+   e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+   e.sandbox.__liveActivityFactory=()=>({
+     start:()=>new Promise(resolve=>{resolveStart=resolve;}),
+     async update(state){calls.push(['update',state.phase]);},
+     async end(state){calls.push(['end',state.phase]);}
+   });
+   const progress=e.m.createProgress(e.state,e.store,false);
+   await progress.start();
+   progress('读取学期 161');
+   if(finished)await progress.finish();
+   resolveStart(true);
+   await new Promise(resolve=>setImmediate(resolve));
+   await progress.finish();
+   a.deepEqual(calls,finished?[['end','finish']]:[['update','sync'],['end','finish']]);
+ }
+});
+
+test('a failed dismissal is retried and the next refresh recovers only the stored activity',async()=>{
+ const e=await env(),calls=[];
+ const key='CourseSync.RefreshActivity.Id';
+ e.sandbox.__sdk.LiveActivity={
+   areActivitiesEnabled:async()=>true,
+   from(id,name){
+     calls.push([id,name]);
+     return {activityId:id,async getActivityState(){return 'stale';},async end(){calls.push('recovered');}};
+   }
+ };
+ e.sandbox.__liveActivityFactory=()=>({
+   activityId:'first',
+   async start(){return true;},
+   async end(){calls.push('end attempted');return false;}
+ });
+ let progress=e.m.createProgress(e.state,e.store,false);
+ await progress.start();
+ await progress.finish();
+ a.equal(e.widgetRecords.get(key),'first');
+ e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('next');return false;}});
+ progress=e.m.createProgress(e.state,e.store,false);
+ await progress.start();
+ await progress.finish();
+ a.deepEqual(calls,['end attempted','end attempted',['first','CourseSyncRefresh'],'recovered','next']);
+ a.equal(e.widgetRecords.get(key),'');
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{

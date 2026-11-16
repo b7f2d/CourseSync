@@ -7,10 +7,18 @@ const phases = {
   verify: '请在 Scripting 完成验证',
   sync: '正在同步课程与考试',
   complete: '课程与考试已同步',
-  finish: '请检查本次同步结果',
+  finish: '刷新未完成',
 };
 
 type RefreshState = { phase: keyof typeof phases };
+
+const compactLabels: Record<RefreshState['phase'], string> = {
+  connect: '刷新',
+  verify: '验证',
+  sync: '刷新',
+  complete: '刷新成功',
+  finish: '未完成',
+};
 
 function CalendarIcon({complete=false}:{complete?:boolean}) {
   return <Image systemName={complete?"checkmark.circle.fill":"calendar"} foregroundStyle="systemBlue"/>;
@@ -23,12 +31,14 @@ function RefreshStatus({phase}:RefreshState) {
   </HStack>;
 }
 
-export const CourseRefreshActivity = Scripting.LiveActivity?.register<RefreshState>(
-  'CourseSyncRefresh',
+export const COURSE_REFRESH_ACTIVITY_NAME = 'CourseSyncRefresh';
+
+export const CourseRefreshActivity = Scripting.LiveActivity?.register?.<RefreshState>(
+  COURSE_REFRESH_ACTIVITY_NAME,
   state => <LiveActivityUI
     content={<RefreshStatus {...state}/>}
     compactLeading={<CalendarIcon complete={state.phase==='complete'}/>}
-    compactTrailing={<Text font="caption2">{state.phase==='complete'?'刷新成功':state.phase==='verify'?'验证':'刷新'}</Text>}
+    compactTrailing={<Text font="caption2">{compactLabels[state.phase]}</Text>}
     minimal={<CalendarIcon complete={state.phase==='complete'}/>}
   >
     <LiveActivityUIExpandedCenter>

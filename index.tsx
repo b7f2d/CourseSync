@@ -3,7 +3,7 @@
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation } from './login-native';
 import { createNativeProgressView } from './progress-native';
-import { CourseRefreshActivity } from './live_activity';
+import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
 import { presentScheduleEditor, presentScheduleList } from './schedule-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
@@ -2010,26 +2010,57 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// Manual refresh shows coarse stages on the Lock Screen and Dynamic Island.
-// Detailed diagnostics stay in the app. Shortcuts never present progress UI.
+// The app uses a progress sheet. Shortcut refreshes request a Live Activity
+// when Scripting and iOS allow it. UI errors must not fail synchronization.
+const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
 function createProgress(state,store,interactive){
   let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
-  let phase='connect',updates=Promise.resolve();
+  let phase='connect',updates=Promise.resolve(),finishing;
+  const liveActivity=hostAPI('LiveActivity');
   const activityCall=async work=>{
     try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
     catch(_){return false;}
   };
-  const setPhase=next=>{
-    if(next===phase)return;
-    phase=next;
+  const rememberActivity=id=>{
+    if(!id)return;
+    try{HostStorage?.set?.(COURSE_REFRESH_ACTIVITY_ID,id);}catch(_){}
+  };
+  const endActivity=async(candidate,finalPhase)=>{
+    const ended=await activityCall(async()=>
+      (await candidate.end({phase:finalPhase},{dismissTimeInterval:0}))!==false);
+    if(ended&&candidate.activityId){
+      try{
+        if(HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID)===candidate.activityId)
+          HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
+      }catch(_){}
+    }
+    return ended;
+  };
+  const dismissPreviousActivity=async()=>{
+    const id=HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID);
+    if(typeof id!=='string'||!id||typeof liveActivity?.from!=='function')return true;
+    const previous=await liveActivity.from(id,COURSE_REFRESH_ACTIVITY_NAME);
+    if(previous){
+      const status=await previous.getActivityState();
+      if(status==='active'||status==='stale')return endActivity(previous,'finish');
+    }
+    if(HostStorage.get(COURSE_REFRESH_ACTIVITY_ID)===id)HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
+    return true;
+  };
+  const updatePhase=next=>{
     if(!activity)return;
     updates=updates.then(()=>{
       if(!closed&&next===phase)return activityCall(()=>activity.update({phase:next}));
     });
   };
+  const setPhase=next=>{
+    if(next===phase)return;
+    phase=next;
+    updatePhase(next);
+  };
   const stage=message=>{
     stampStage(state,store,message);
-    if(!interactive||closed||!started)return;
+    if(closed||!started)return;
     const label=String(message||'');
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
@@ -2051,45 +2082,59 @@ function createProgress(state,store,interactive){
     ui?.resume();
   };
   stage.start=async()=>{
-    if(!interactive||started||closed)return;
+    if(started||closed)return;
     started=true;
-    try{
-      if(typeof hostAPI('Navigation')?.present==='function'){
-        ui=createNativeProgressView();
-        ui.show();
-        await new Promise(resolve=>Timer.schedule(100,false,resolve));
-      }
-    }catch(_){ui=null;}
+    // Only the run holding the sync lock reaches this point. Recover our own
+    // previous activity if the app was interrupted before it could end it.
+    if(interactive){
+      try{
+        if(typeof hostAPI('Navigation')?.present==='function'){
+          ui=createNativeProgressView();
+          ui.show();
+          await new Promise(resolve=>Timer.schedule(100,false,resolve));
+        }
+      }catch(_){ui=null;}
+      if(typeof liveActivity?.from==='function')await activityCall(dismissPreviousActivity);
+      return;
+    }
+    if(!await activityCall(dismissPreviousActivity))return;
     if(closed||!CourseRefreshActivity||
-       !await activityCall(()=>Scripting.LiveActivity.areActivitiesEnabled()))return;
-    let accepting=true;
+       !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
     await activityCall(async()=>{
       const candidate=CourseRefreshActivity();
-      if(!await candidate.start({phase},{staleDate:Date.now()+5*60000}))return;
-      if(closed||!accepting){
-        await candidate.end({phase:'finish'},{dismissTimeInterval:0});
+      const initialPhase=phase;
+      if(!await candidate.start({phase:initialPhase},{staleDate:Date.now()+5*60000}))return;
+      if(closed){
+        // A native start can complete after the JavaScript timeout. Never
+        // attach that activity to a refresh that has already finished.
+        if(!await endActivity(candidate,'finish')){
+          try{
+            if(!HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID))rememberActivity(candidate.activityId);
+          }catch(_){}
+        }
         return;
       }
       activity=candidate;
+      rememberActivity(candidate.activityId);
+      if(phase!==initialPhase)updatePhase(phase);
     });
-    accepting=false;
   };
-  stage.finish=async(success=false)=>{
-    if(closed)return;
+  stage.finish=(success=false)=>{
+    if(finishing)return finishing;
     closed=true;
-    try{ui?.finish();}catch(_){}
-    if(activity){
+    finishing=(async()=>{
+      try{ui?.finish();}catch(_){}
+      if(!activity)return;
       await updates;
       const finalPhase=success?'complete':'finish';
       if(success){
-        // Show completion while the activity is still active in Dynamic Island.
-        const shown=await activityCall(async()=>{
-          return (await activity.update({phase:finalPhase}))!==false;
-        });
+        const shown=await activityCall(async()=>
+          (await activity.update({phase:finalPhase}))!==false);
         if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
       }
-      await activityCall(()=>activity.end({phase:finalPhase},{dismissTimeInterval:0}));
-    }
+      if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
+    })();
+    return finishing;
   };
   return stage;
 }
