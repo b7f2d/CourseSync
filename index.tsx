@@ -2940,9 +2940,7 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
     ...todayLines,
     '',
     `【明天 ${tomorrow}】`,
-    ...tmrwLines,
-    '',
-    '说明：仅筛选博远楼、博观楼、博文楼，按楼栋（博远>博观>博文）及低楼层优先选取完整空闲教室，支持跨时段同一教室合并显示；未修改日历日程。'
+    ...tmrwLines
   ].join('\n');
   await notice('空闲教室查询',message);
   return message;
@@ -2981,9 +2979,21 @@ async function run() {
         else {await applyRecovery(recovery,state,store);return;}
       }
       if(canFreeRooms&&selected===(canSignOut?3:2)){
-        const jar=readCookieJar();
-        const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-        await queryAndShowFreeRooms(http,interactive,()=>{},null);
+        let progress=null;
+        try{
+          if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
+            progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
+            progress.show();
+            await new Promise(resolve=>Timer.schedule(100,false,resolve));
+          }
+        }catch(_){progress=null;}
+        try{
+          const jar=readCookieJar();
+          const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
+          await queryAndShowFreeRooms(http,interactive,()=>{},null);
+        }finally{
+          if(progress)await progress.finish();
+        }
         return;
       }
       if(selected===2&&canSignOut)action=13;
@@ -3024,9 +3034,21 @@ async function run() {
         manualAuth=await prepareManualRefresh(state);
         if(!manualAuth)return;
         if(manualAuth.kind==='freeRooms'){
-          const jar=readCookieJar();
-          const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
-          await queryAndShowFreeRooms(http,interactive,stage,manualAuth);
+          let progress=null;
+          try{
+            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
+              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
+              progress.show();
+              await new Promise(resolve=>Timer.schedule(100,false,resolve));
+            }
+          }catch(_){progress=null;}
+          try{
+            const jar=readCookieJar();
+            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
+            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth);
+          }finally{
+            if(progress)await progress.finish();
+          }
           return;
         }
         if(previousSchool!==activeSchoolId){
