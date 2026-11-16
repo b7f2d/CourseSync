@@ -52,7 +52,7 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.match(index,/schoolById\(response\.schoolId\)/);
  assert.match(index,/activateSelectedSchool\(school\.id\)/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
- assert.match(index,/if\(interactive&&action===0\)/);
+ assert.match(index,/if\(interactive&&\(action===0\|\|action===14\)\)/);
  assert.match(index,/if\(!manualAuth\)return;/);
 });
 
@@ -102,10 +102,10 @@ test('native progress replaces the HTML view with one stable system sheet',()=>{
 });
 
 test('routine refresh skips the school/account wizard when credentials are stored',()=>{
- const start=index.indexOf('if(interactive&&action===0){');
+ const start=index.indexOf('if(interactive&&(action===0||action===14)){');
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
- assert.match(routine,/const needsSetup=state\.signedOut\|\|!hasSavedCredentials\(\)/);
+ assert.match(routine,/const needsSetup=action===14\|\|state\.signedOut\|\|!hasSavedCredentials\(\)/);
  assert.match(routine,/if\(needsSetup\)\{/);
  assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
  assert.match(routine,/Keychain\.set\(SCHOOL_KEY,loadSelectedSchool\(\)\)/);

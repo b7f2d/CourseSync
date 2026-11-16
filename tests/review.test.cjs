@@ -308,12 +308,17 @@ test('NUFE endpoint settings keep default URLs and validate academic paths',asyn
   a.throws(()=>m.validateEndpointSettings({...d,auth:d.sso}),code('ENDPOINT_CONFIG'));
 });
 
-test('only Nanjing University of Finance and Economics is whitelisted',async()=>{
+test('school selection restricts requests to the active school',async()=>{
   const {m}=await env();
-  a.deepEqual(Array.from(m.SCHOOL_WHITELIST,s=>s.name),['南京财经大学']);
+  a.deepEqual(Array.from(m.SCHOOL_WHITELIST,s=>s.name),['南京财经大学','苏州科技大学']);
   a.equal(m.SCHOOL_WHITELIST[0].id,'nufe');
   a.equal(m.schoolById('nufe').endpoints.table,m.ENDPOINT_DEFAULTS.table);
   a.equal(m.schoolById('unverified-university'),null);
+  a.throws(()=>m.safeURL('https://jwgl.usts.edu.cn/'),code('DOMAIN_BLOCKED'));
+  m.activateSelectedSchool('usts');
+  a.equal(m.safeURL('https://jwgl.usts.edu.cn/').host,'jwgl.usts.edu.cn');
+  a.throws(()=>m.safeURL('https://jwxt.nufe.edu.cn/'),code('DOMAIN_BLOCKED'));
+  a.throws(()=>m.safeURL('http://jwgl.usts.edu.cn/'),code('DOMAIN_BLOCKED'));
   a.equal(m.loadSelectedSchool(),'nufe');
 });
 
@@ -336,7 +341,7 @@ test('manual school selection uses fixed endpoints and retires old custom URLs',
   a.equal(m.loadEndpointSettings().table,d.table);
   a.equal(e.keys.has(oldKey),false);
   a.equal(e.keys.get(schoolKey),'nufe');
-  a.deepEqual(Array.from(calls[0].schools,s=>s.name),['南京财经大学']);
+  a.deepEqual(Array.from(calls[0].schools,s=>s.name),['南京财经大学','苏州科技大学']);
   a.equal(calls[0].selectedId,'nufe');
   a.equal(calls[0].allowReuse,false);
   a.equal(e.db.length,0);
@@ -358,6 +363,118 @@ test('unsupported school selection is rejected without saving any configuration'
   await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
   a.equal(e.keys.has('CourseSync.Local.v1.school'),false);
   a.equal(e.requests.length,0);
+});
+test('USTS credentials, cookies and calendar state are scoped to the selected school',async()=>{
+  const e=await env({hostEnv:'index'}),m=e.m;
+  m.saveCredentials('nufe-sample','nufe-test-password');
+  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'usts'});
+  await a.rejects(()=>m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
+  e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',schoolId:'usts',username:'usts-sample',password:'usts-test-password'});
+  a.equal((await m.prepareManualRefresh(e.state)).username,'usts-sample');
+  a.equal(m.loadSelectedSchool(),'usts');
+  a.equal(m.readSavedCredentials(),null);
+  a.notEqual(new m.Store().dir,e.store.dir);
+  m.saveCredentials('usts-sample','usts-test-password');
+  const jar=new m.CookieJar();
+  jar.ingest('https://jwgl.usts.edu.cn/',{'set-cookie':'SESSION=school; Domain=usts.edu.cn; Path=/'});
+  a.equal(jar.header('https://jwgl.usts.edu.cn/'),'SESSION=school');
+  a.throws(()=>jar.header('https://jwxt.nufe.edu.cn/'),code('DOMAIN_BLOCKED'));
+  m.activateSelectedSchool('nufe');
+  a.equal(m.readSavedCredentials().username,'nufe-sample');
+});
+test('USTS logs in, verifies account and split teaching weeks, then updates calendar idempotently',async()=>{
+  const e=await env({hostEnv:'index'}),m=e.m;
+  m.activateSelectedSchool('usts');
+  const store=new m.Store();store.acquire();
+  const state={...e.state,owner:'usts-test-installation',anchors:{},signedOut:true};
+  store.write(state);
+  const host='https://jwgl.usts.edu.cn/jwglxt';
+  const login=host+'/xtgl/login_slogin.html';
+  const home=host+'/xtgl/index_initMenu.html';
+  const formHTML='<form action="/jwglxt/xtgl/login_slogin.html" method="post">'+
+    '<input name="csrftoken" value="fixture"><input name="yhm"><input name="mm"><input name="mm"></form>';
+  const cells=(values,tag)=>values.map(v=>`<${tag}>${v}</${tag}>`).join('');
+  const weeks=[0,1,1,2,3,4,5,6,7,8];
+  const titles='<tr><th>2026-2027学年1学期</th></tr><tr><th>月份</th></tr>';
+  const teachingRows=Array.from({length:7},(_,day)=>{
+    const days=weeks.map((week,col)=>{
+      if(week===1&&((day===0)!==(col===1)))return '';
+      const date=new Date(Date.UTC(2026,7,24)+(week*7+day)*86400000).toISOString().slice(0,10);
+      return date;
+    });
+    return '<tr><td>'+day+'</td>'+days.map(date=>date?`<td id="${date}">日</td>`:'<td></td>').join('')+'</tr>';
+  }).join('');
+  const homeHTML='<div id="yhxxIndex"></div><div id="kbDiv"></div><table>'+titles+
+    '<tr>'+cells(weeks.map(String),'th')+'</tr>'+teachingRows+'</table>';
+  const timetable='<select id="xnm"><option value="2026" selected>2026-2027</option></select>'+
+    '<select id="xqm"><option value="3" selected>1</option><option value="12">2</option></select>';
+  const {privateKey,publicKey}=crypto.generateKeyPairSync('rsa',{modulusLength:1024});
+  const jwk=publicKey.export({format:'jwk'});
+  const publicFields={modulus:Buffer.from(jwk.n,'base64url').toString('base64'),exponent:Buffer.from(jwk.e,'base64url').toString('base64')};
+  let logins=0;
+  const get=m.HTTP.prototype.get;
+  m.HTTP.prototype.get=async function(url,opt={}){
+    if(url.startsWith(home+'?'))return logins?{url:home,text:homeHTML}:{url:login,text:formHTML};
+    if(url.includes('login_getPublicKey'))return {url,text:JSON.stringify(publicFields)};
+    if(url.startsWith(login+'?')){
+      const fields=new URLSearchParams(opt.body);
+      a.equal(fields.get('yhm'),'sample-student');
+      a.equal(fields.get('csrftoken'),'fixture');
+      const encrypted=fields.getAll('mm');
+      a.equal(encrypted.length,2);a.equal(encrypted[0],encrypted[1]);
+      const padded=crypto.privateDecrypt({key:privateKey,padding:crypto.constants.RSA_NO_PADDING},Buffer.from(encrypted[0],'base64'));
+      a.equal(padded[0],0);a.equal(padded[1],2);
+      a.equal(padded.subarray(padded.indexOf(0,2)+1).toString(),'fixture-password');
+      logins++;
+      return {url:home,text:homeHTML};
+    }
+    if(url.includes('cxXskbcxIndex'))return {url,text:timetable};
+    if(url.includes('cxXsgrkb')){
+      a.equal(new URLSearchParams(opt.body).get('xqm'),'3');
+      return {url,text:JSON.stringify({xsxx:{XH_ID:'fixture-id',XNM:'2026',XQM:'3',NJDM_ID:'2026'},kbList:[
+        {kcmc:'示例课程',xqj:'2',jcs:'3-4',zcd:'1周,2周',xqh_id:'1',xqmc:'江枫',cdmc:'示例教室',xm:'示例教师'}
+      ]})};
+    }
+    if(url.includes('cxRjc'))return {url,text:JSON.stringify([
+      {jcmc:'3',qssj:'09:55',jssj:'10:40'},{jcmc:'4',qssj:'10:50',jssj:'11:35'}
+    ])};
+    return get.call(this,url,opt);
+  };
+  await m.synchronize(state,store,e.calendar,true,null,{kind:'credentials',username:'sample-student',password:'fixture-password'});
+  const starts=e.db.map(ev=>ev.startDate.toISOString());
+  a.deepEqual(starts,['2026-09-01T01:55:00.000Z','2026-09-08T01:55:00.000Z']);
+  a.equal(m.readSavedCredentials().username,'sample-student');
+  a.equal(state.signedOut,false);
+  const ids=e.db.map(ev=>ev.identifier);
+  await m.synchronize(state,store,e.calendar,false);
+  a.deepEqual(e.db.map(ev=>ev.identifier),ids);
+  a.equal(logins,1);
+  store.release();
+});
+test('USTS exam query writes published times and retains existing future exams while times are hidden',async()=>{
+  const e=await env(),m=e.m;
+  m.activateSelectedSchool('usts');
+  const state={...e.state,availableSemesters:[{id:202603}]};
+  const now=Date.parse('2026-11-16T00:00:00Z');
+  const exam={kcmc:'示例考试',ksmc:'期末',kssj:'2026-12-18 (09:00-11:00)',cdmc:'示例考场'};
+  let items=[exam];
+  const http={json:async(url,{body})=>{
+    a.match(url,/jwgl\.usts\.edu\.cn\/jwglxt\/kwgl\/kscx_cxXsksxxIndex\.html\?doType=query/);
+    const p=new URLSearchParams(body);
+    a.equal(p.get('xnm'),'2026');a.equal(p.get('xqm'),'3');
+    a.equal(p.get('queryModel.currentPage'),'1');
+    return {currentPage:1,totalPage:items.length?1:0,items};
+  }};
+  const sync=()=>m.syncExams(http,state,e.store,e.calendar,()=>{},now);
+  await sync();
+  a.equal(e.db.length,1);
+  a.equal(e.db[0].startDate.toISOString(),'2026-12-18T01:00:00.000Z');
+  const id=e.db[0].identifier;
+  items=[{...exam,kssj:'未放开不可查'}];
+  await sync();
+  a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
+  items=[];await sync();
+  a.equal(e.db.length,0);
 });
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
@@ -675,8 +792,8 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false,false]);
  a.equal(e.requests.length,0);
 });
 test('manual refresh imports finished and upcoming exams and preserves history',async()=>{
@@ -1009,7 +1126,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1024,7 +1141,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','查看课表','切换学校']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1051,7 +1168,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','查看课表','切换学校']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{

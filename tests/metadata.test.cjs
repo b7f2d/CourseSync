@@ -34,8 +34,9 @@ test('README distinguishes public CourseSync name from legacy installation ident
   assert.match(readme,/CourseSync/);
 });
 
-test('README explicitly states verification is limited to the NUFE academic system',()=>{
-  assert.match(read('README.md'),/目前仅验证南京财经大学教务系统/);
+test('README lists the two supported schools and USTS device verification status',()=>{
+  assert.match(read('README.md'),/支持南京财经大学和苏州科技大学/);
+  assert.match(read('README.md'),/仍待实机验证/);
   assert.match(read('README.md'),/请选择你的学校/);
 });
 
@@ -46,7 +47,7 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/目前仅验证南京财经大学教务系统/);
+  assert.match(readme,/切换学校/);
 });
 
 test('release and README describe the same stable installation path',()=>{

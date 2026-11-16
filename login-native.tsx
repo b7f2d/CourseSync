@@ -176,7 +176,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
             action={()=>{if(validAccount&&validSchool)dismiss({
               kind:'credentials',schoolId,username:account,password
             });}}/>
-          {allowReuse?<Button title="使用现有登录信息继续"
+          {allowReuse&&schoolId===initialSchoolId?<Button title="使用现有登录信息继续"
             disabled={!validSchool}
             action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
         </Section>
@@ -193,7 +193,7 @@ export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
   });
   if(!result||!['credentials','reuse'].includes(result.kind))return null;
   if(!schools.some(s=>s.id===result.schoolId))return null;
-  if(result.kind==='reuse')return {kind:'reuse',schoolId:result.schoolId};
+  if(result.kind==='reuse')return allowReuse&&result.schoolId===initialSchoolId?{kind:'reuse',schoolId:result.schoolId}:null;
   const username=typeof result.username==='string'?result.username.trim():'';
   const password=typeof result.password==='string'?result.password:'';
   if(!username||username.length>100||!password||password.length>512)return null;
