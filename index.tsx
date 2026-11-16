@@ -2838,7 +2838,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
     const list=Array.isArray(data?.roomList)?data.roomList:[];
     return list.filter(r=>{
       const bName=r.building?.nameZh||r.buildingName;
-      return Boolean(BUILDING_PRIORITY[bName]);
+      return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
     }).sort((a,b)=>{
       const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
       const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
@@ -2856,14 +2856,14 @@ const AFTERNOON_FALLBACK=['5','6','7','8'];
 const EVENING_UNITS=['10','11','12'];
 
 function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
-  const formatRoom=r=>r?`${r.nameZh||r.name}（${r.floor}楼）`:'无空闲教室';
+  const formatRoom=r=>r?String(r.nameZh||r.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim():'无空闲教室';
   const isSame=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?a.id===b.id:(a.nameZh||a.name)===(b.nameZh||b.name));
   const inList=(list,target)=>list.some(r=>isSame(r,target));
 
   // 1. 全天同一教室 (上午 + 下午 + 晚上)
   const allDayRoom=mornRooms.find(r=>inList(aftRooms,r)&&inList(eveRooms,r));
   if(allDayRoom){
-    return [`• 全天（第1-12节 / 上午+下午+晚上）：${formatRoom(allDayRoom)}`];
+    return [`• 全天：${formatRoom(allDayRoom)}`];
   }
 
   // 2. 白天同一教室 (上午 + 下午)
@@ -2872,16 +2872,16 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
 
   if(mornAftRoom){
     return [
-      `• 白天（第1-9节 / 上午+下午）：${formatRoom(mornAftRoom)}`,
-      `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+      `• 白天：${formatRoom(mornAftRoom)}`,
+      `• 晚上：${formatRoom(eveRooms[0]||null)}`
     ];
   }
 
   // 3. 下午至晚上同一教室 (下午 + 晚上)
   if(aftEveRoom){
     return [
-      `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
-      `• 下午至晚上（第5-12节 / 下午+晚上）：${formatRoom(aftEveRoom)}`
+      `• 上午：${formatRoom(mornRooms[0]||null)}`,
+      `• 下午至晚上：${formatRoom(aftEveRoom)}`
     ];
   }
 
@@ -2889,17 +2889,17 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const mornEveRoom=mornRooms.find(r=>inList(eveRooms,r));
   if(mornEveRoom){
     return [
-      `• 上午（第1-4节）：${formatRoom(mornEveRoom)}`,
-      `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
-      `• 晚上（第10-12节）：${formatRoom(mornEveRoom)}（同上午）`
+      `• 上午：${formatRoom(mornEveRoom)}`,
+      `• 下午：${formatRoom(aftRooms[0]||null)}`,
+      `• 晚上：${formatRoom(mornEveRoom)}`
     ];
   }
 
   // 5. 各时段独立教室
   return [
-    `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
-    `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
-    `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+    `• 上午：${formatRoom(mornRooms[0]||null)}`,
+    `• 下午：${formatRoom(aftRooms[0]||null)}`,
+    `• 晚上：${formatRoom(eveRooms[0]||null)}`
   ];
 }
 
