@@ -132,9 +132,9 @@ test('native secure input preserves exact secret without trimming and supports u
  assert.match(native,/isSecure\?512:120/);
 });
 
-test('NUFE provides free classroom query button in whitelist selection and credential views without calendar sync',()=>{
- assert.match(native,/title="查询空闲教室"/);
- assert.match(native,/kind:'freeRooms'/);
+test('free classrooms are available after authentication, not in school selection or credential forms',()=>{
+ assert.doesNotMatch(native,/title="查询空闲教室"/);
+ assert.doesNotMatch(native,/kind:'freeRooms'/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
