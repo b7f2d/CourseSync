@@ -2017,12 +2017,12 @@ function createProgress(state,store,interactive){
       return ui?.pause();
     }
     if(waitingForVerification){
-      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))return;
       waitingForVerification=false;
       setPhase('connect');
       ui?.resume();
     }
-    if(/^(读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))setPhase('sync');
+    if(/^(读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))setPhase('sync');
   };
   stage.start=async()=>{
     if(!interactive||started||closed)return;
