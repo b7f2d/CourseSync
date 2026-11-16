@@ -792,52 +792,68 @@ async function ustsExamRows(http,state){
   }
   return {rows,unpublished};
 }
-// The user-requested 2027 graduate entrance exam is a manually pinned
-// calendar item, NOT a school-reported exam. The independent ownership marker
-// keeps it outside the school exam reconciliation and cancellation path.
-const FIXED_GRADUATE_EXAM=Object.freeze({
-  title:'2027年全国硕士研究生招生考试（初试）',
-  marker:'[COURSESYNC_FIXED_GRADUATE_EXAM_2027]',
-  start:Date.parse('2026-12-19T00:00:00+08:00'),
-  stop:Date.parse('2026-12-20T00:00:00+08:00')
-});
+// Fixed graduate entrance exams use separate markers from school-reported exams.
+const LEGACY_GRADUATE_EXAM_MARKER='[COURSESYNC_FIXED_GRADUATE_EXAM_2027]';
+const FIXED_GRADUATE_EXAMS=new Map([
+  ['[COURSESYNC_FIXED_GRADUATE_EXAM_2027_199]',{
+    title:'管理类综合能力',
+    start:Date.parse('2026-12-19T08:30:00+08:00'),
+    stop:Date.parse('2026-12-19T11:30:00+08:00')
+  }],
+  ['[COURSESYNC_FIXED_GRADUATE_EXAM_2027_204]',{
+    title:'英语（二）',
+    start:Date.parse('2026-12-19T14:00:00+08:00'),
+    stop:Date.parse('2026-12-19T17:00:00+08:00')
+  }]
+]);
 async function syncFixedGraduateExam(state,store,calendar,budget=()=>store.check()){
   budget();
   assert(calendar.identifier===state.examCalendarId&&
     calendar.identifier!==state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
-  const spec=FIXED_GRADUATE_EXAM;
-  // Widen the scan so all-day EventKit dates are still discovered across
-  // timezone representations. Never touch user-created lookalike events.
-  const items=(await calendarRows(spec.start-2*DAY,spec.stop+2*DAY,calendar))
-    .filter(ev=>ev.notes===spec.marker);
-  for(const ev of items)assert(!ev.isDetached&&!ev.hasRecurrenceRules&&
+  // Include the old all-day event across EventKit timezone representations.
+  const day=Date.parse('2026-12-19T00:00:00+08:00');
+  const read=async()=>{
+    budget();
+    return (await calendarRows(day-2*DAY,day+3*DAY,calendar))
+      .filter(ev=>ev.notes===LEGACY_GRADUATE_EXAM_MARKER||FIXED_GRADUATE_EXAMS.has(ev.notes));
+  };
+  const checkEvent=ev=>assert(!ev.isDetached&&!ev.hasRecurrenceRules&&
     !ev.recurrenceRules?.length&&!ev.attendees?.length,'MANAGED_SERIES');
-  const matches=ev=>ev.title===spec.title&&ev.isAllDay===true&&
+  const matches=(ev,spec)=>ev.title===spec.title&&ev.isAllDay===false&&
     +ev.startDate===spec.start&&+ev.endDate===spec.stop&&
     (ev.location||'')==='';
-  if(items.length===1&&matches(items[0]))return;
-  const primary=items[0]||new CalendarEvent();
-  budget();
-  primary.calendar=calendar;primary.title=spec.title;primary.notes=spec.marker;
-  primary.location='';primary.isAllDay=true;primary.timeZone='Asia/Shanghai';
-  primary.startDate=new Date(spec.start);primary.endDate=new Date(spec.stop);
-  await primary.save();
-  // Verify the write before removing any duplicate owned events.
-  budget();
-  const verified=(await calendarRows(spec.start-2*DAY,spec.stop+2*DAY,calendar))
-    .filter(ev=>ev.notes===spec.marker);
-  assert(verified.some(matches),'CALENDAR_VERIFY');
-  const keeper=verified.find(matches);
-  for(const ev of verified){
-    if(ev.identifier===keeper.identifier)continue;
+  const items=await read();
+  items.forEach(checkEvent);
+  let wrote=false;
+  for(const [marker,spec] of FIXED_GRADUATE_EXAMS){
+    const existing=items.filter(ev=>ev.notes===marker);
+    if(existing.some(ev=>matches(ev,spec)))continue;
     budget();
-    assert(!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
-      !ev.attendees?.length,'MANAGED_SERIES');
+    const ev=existing[0]||new CalendarEvent();
+    ev.calendar=calendar;ev.title=spec.title;ev.notes=marker;
+    ev.location='';ev.isAllDay=false;ev.timeZone='Asia/Shanghai';
+    ev.startDate=new Date(spec.start);ev.endDate=new Date(spec.stop);
+    await ev.save();
+    wrote=true;
+  }
+  // Verify both timed exams before removing the old all-day event or duplicates.
+  const verified=wrote?await read():items;
+  const keepers=new Set();
+  for(const [marker,spec] of FIXED_GRADUATE_EXAMS){
+    const keeper=verified.find(ev=>ev.notes===marker&&matches(ev,spec));
+    assert(keeper?.identifier&&!keepers.has(keeper.identifier),'CALENDAR_VERIFY');
+    keepers.add(keeper.identifier);
+  }
+  if(verified.length===keepers.size)return;
+  for(const ev of verified){
+    if(keepers.has(ev.identifier))continue;
+    budget();
+    checkEvent(ev);
     await ev.remove();
   }
-  const final=(await calendarRows(spec.start-2*DAY,spec.stop+2*DAY,calendar))
-    .filter(ev=>ev.notes===spec.marker);
-  assert(final.length===1&&matches(final[0]),'CALENDAR_VERIFY');
+  const final=await read();
+  assert(final.length===FIXED_GRADUATE_EXAMS.size&&[...FIXED_GRADUATE_EXAMS].every(([marker,spec])=>
+    final.some(ev=>ev.notes===marker&&matches(ev,spec))),'CALENDAR_VERIFY');
 }
 async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now()) {
   const budget=typeof nowOrBudget==='function'?nowOrBudget:()=>store.check();
@@ -3392,7 +3408,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={syncFixedGraduateExam,FIXED_GRADUATE_EXAM,menuAuthState,canOfferSignOut,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={syncFixedGraduateExam,menuAuthState,canOfferSignOut,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 /*

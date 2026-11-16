@@ -535,17 +535,18 @@ test('background sync refreshes bound exams and only notifies verified changes o
    return {url:url+'/info/123',text:html};
  };
  e.m.HTTP.prototype.json=async()=>raw([activity({weekIndexes:[1]})]);
+ const schoolExam=()=>e.db.find(v=>v.calendar.identifier===e.other.identifier&&v.title==='模拟考试');
  await executeDaily(e);
  a.equal(e.store.read().lastExamError,null);
- a.equal(e.db.filter(v=>v.calendar.identifier===e.other.identifier).length,1);
+ a.equal(e.db.filter(v=>v.calendar.identifier===e.other.identifier).length,3);
  a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,0);
  location='202';
  await e.m.run();
- a.equal(e.db.find(v=>v.calendar.identifier===e.other.identifier).location,'202');
+ a.equal(schoolExam().location,'202');
  a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
- const id=e.db.find(v=>v.calendar.identifier===e.other.identifier).identifier;
+ const id=schoolExam().identifier;
  await e.m.run();
- a.equal(e.db.find(v=>v.calendar.identifier===e.other.identifier).identifier,id);
+ a.equal(schoolExam().identifier,id);
  a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
 });
 
@@ -572,50 +573,70 @@ test('archived term checks respect weekly or monthly cooldown',async()=>{
  e.state.semesters['159'].lastSuccess=iso(31);
  a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,159]);
 });
-test('official 2027 graduate exam is pinned all-day on 2026-12-19, exactly once',async()=>{
+const graduateExamMarker='[COURSESYNC_FIXED_GRADUATE_EXAM_2027]';
+const oldGraduateExam={title:'2027年全国硕士研究生招生考试（初试）',
+ start:'2026-12-18T16:00:00.000Z',end:'2026-12-19T16:00:00.000Z',location:''};
+test('graduate exam migrates to two timed subjects in the exam calendar without duplicates',async()=>{
  const e=await env(),m=e.m;
  e.state.examCalendarId=e.other.identifier;
- const spec=m.FIXED_GRADUATE_EXAM;
- a.equal(spec.title,'2027年全国硕士研究生招生考试（初试）');
- a.equal(new Date(spec.start).toISOString(),'2026-12-18T16:00:00.000Z');
- a.equal(new Date(spec.stop).toISOString(),'2026-12-19T16:00:00.000Z');
+ e.add(oldGraduateExam,{cal:e.other,notes:graduateExamMarker,allDay:true});
  await m.syncFixedGraduateExam(e.state,e.store,e.other);
- a.equal(e.db.length,1);
- a.equal(e.db[0].calendar.identifier,e.other.identifier);
- a.equal(e.db[0].isAllDay,true);
- a.equal(e.db[0].title,spec.title);
- a.equal(e.db[0].notes,spec.marker);
- const id=e.db[0].identifier;
+ a.deepEqual(e.db.map(ev=>[ev.title,ev.startDate.toISOString(),ev.endDate.toISOString()]),[
+  ['管理类综合能力','2026-12-19T00:30:00.000Z','2026-12-19T03:30:00.000Z'],
+  ['英语（二）','2026-12-19T06:00:00.000Z','2026-12-19T09:00:00.000Z']
+ ]);
+ for(const ev of e.db){
+  a.equal(ev.calendar.identifier,e.other.identifier);
+  a.equal(ev.isAllDay,false);
+  a.equal(ev.location,'');
+  a.equal(ev.timeZone,'Asia/Shanghai');
+ }
+ const ids=e.db.map(ev=>ev.identifier);
+ const writes=e.requests.length;
  await m.syncFixedGraduateExam(e.state,e.store,e.other);
- a.equal(e.db.length,1);
- a.equal(e.db[0].identifier,id);
+ a.deepEqual(e.db.map(ev=>ev.identifier),ids);
+ a.equal(e.requests.length,writes);
 });
-test('pinned graduate exam does not modify a personal lookalike or school exams',async()=>{
+test('graduate exam migration keeps the all-day event until both subjects are verified',async()=>{
  const e=await env(),m=e.m;
  e.state.examCalendarId=e.other.identifier;
- const spec=m.FIXED_GRADUATE_EXAM;
- const personal=e.add({title:spec.title,start:new Date(spec.start).toISOString(),
-   end:new Date(spec.stop).toISOString(),location:''},{cal:e.other,notes:'my event',allDay:true});
- const unrelated=e.add({title:'期末考试',start:'2026-12-15T00:00:00.000Z',
-   end:'2026-12-15T02:00:00.000Z',location:''},{cal:e.other,notes:'personal exam'});
- await m.syncFixedGraduateExam(e.state,e.store,e.other);
- a.equal(e.db.length,3);
- a.ok(e.db.some(v=>v.identifier===personal.identifier&&v.notes==='my event'));
- a.ok(e.db.some(v=>v.identifier===unrelated.identifier));
+ const old=e.add(oldGraduateExam,{cal:e.other,notes:graduateExamMarker,allDay:true});
+ const sync=()=>m.syncFixedGraduateExam(e.state,e.store,e.other);
+ const originalSave=e.Event.prototype.save;
+ e.Event.prototype.save=async function(){
+  if(this.title!=='英语（二）')await originalSave.call(this);
+ };
+ await a.rejects(sync(),code('CALENDAR_VERIFY'));
+ a.ok(e.db.includes(old));
+ const morning=e.db.find(ev=>ev.title==='管理类综合能力');
+ a.ok(morning);
+ e.Event.prototype.save=originalSave;
+ await sync();
+ a.equal(e.db.length,2);
+ a.ok(e.db.some(ev=>ev.identifier===morning.identifier));
+ a.ok(!e.db.includes(old));
 });
-test('pinned graduate exam survives empty school exam responses',async()=>{
+test('graduate exam migration leaves personal events and other calendars untouched',async()=>{
+ const e=await env(),m=e.m;
+ e.state.examCalendarId=e.other.identifier;
+ const personal=e.add(oldGraduateExam,{cal:e.other,notes:'个人日程',allDay:true});
+ const elsewhere=e.add(oldGraduateExam,{notes:graduateExamMarker,allDay:true});
+ await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ a.equal(e.db.length,4);
+ a.ok(e.db.includes(personal));
+ a.ok(e.db.includes(elsewhere));
+});
+test('both graduate exam subjects survive empty school exam responses',async()=>{
  const e=await env(),m=e.m;
  m.activateSelectedSchool('nufe');
  e.state.examCalendarId=e.other.identifier;
- const spec=m.FIXED_GRADUATE_EXAM;
  await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ const ids=e.db.map(ev=>ev.identifier);
  const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
   text:'<table id="exams"><tr class="tr-empty"><td>暂无考试</td></tr></table>'})};
  await m.syncExams(http,e.state,e.store,e.other,()=>{},Date.parse('2026-11-17T00:00:00Z'));
  await m.syncExams(http,e.state,e.store,e.other,()=>{},Date.parse('2026-11-17T00:00:00Z'));
- const fixed=e.db.filter(v=>v.notes===spec.marker);
- a.equal(fixed.length,1);
- a.equal(fixed[0].isAllDay,true);
+ a.deepEqual(e.db.map(ev=>ev.identifier),ids);
 });
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
@@ -1057,7 +1078,9 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
  const exams=()=>e.db.filter(x=>x.calendar.identifier!==e.calendar.identifier);
  a.equal(alerts.length,0,JSON.stringify(alerts));
- a.equal(exams().length,2);
+ a.equal(exams().length,4);
+ const fixedIds=exams().filter(x=>['管理类综合能力','英语（二）'].includes(x.title)).map(x=>x.identifier);
+ a.equal(fixedIds.length,2);
  const upcoming=exams().find(x=>x.title==='测试 & 统计');
  const finished=exams().find(x=>x.title==='旧考试');
  const ids=()=>exams().map(x=>x.identifier).sort();
@@ -1091,7 +1114,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run(); // Guard transient empty responses.
  a.deepEqual(ids(),initialIds);
  await e.m.run();
- a.deepEqual(ids(),[finished.identifier]);
+ a.deepEqual(ids(),[...fixedIds,finished.identifier].sort());
  a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});

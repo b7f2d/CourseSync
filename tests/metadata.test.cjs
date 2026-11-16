@@ -34,7 +34,7 @@ test('README distinguishes public CourseSync name from legacy installation ident
 test('README lists the two supported schools and USTS device verification status',()=>{
   assert.match(read('README.md'),/支持南京财经大学和苏州科技大学/);
   assert.match(read('README.md'),/仍待实机验证/);
-  assert.match(read('README.md'),/请选择你的学校/);
+  assert.match(read('README.md'),/选择南京财经大学或苏州科技大学，再点击「登录账号」/);
 });
 
 test('README remains text-only without image markup or references',()=>{
@@ -44,7 +44,7 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/本次配置周期内记住学校/);
+  assert.match(readme,/日常刷新无需重复选择，退出登录会清除已选学校/);
   assert.match(readme,/退出登录即完全重置/);
 });
 

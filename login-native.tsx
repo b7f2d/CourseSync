@@ -40,7 +40,7 @@ function LoginView({ title }: { title: string }) {
           textContentType="password"
         />
       </Section>
-      <Section footer={<Text>可尝试使用 iOS「密码」中的已保存网站凭据。此页面不会访问外部网站，也不会自动保存密码。</Text>}>
+      <Section>
         <Button
           title="登录账号"
           disabled={!valid}
@@ -105,7 +105,7 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
           <SecureField title={label} prompt="请输入" value={value}
             onChanged={setValue} />:
           <TextField title={label}
-            prompt={otp?'请输入或填充验证码':'请输入'}
+            prompt={otp?'请输入验证码':'请输入'}
             value={value} onChanged={setValue}
             autofocus={!image}
             textContentType={otp?'oneTimeCode':undefined}
@@ -159,8 +159,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
     {step==='school'?
       <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
-        <Section header={<Text>请选择你的学校</Text>}
-          footer={<Text>点开下拉菜单，选择南京财经大学或苏州科技大学。</Text>}>
+        <Section>
           <Picker title="学校" pickerStyle="menu"
             value={schoolId} onChanged={setSchoolId}>
             <Text key="unselected" tag="unselected">请选择</Text>
@@ -168,25 +167,25 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           </Picker>
         </Section>
         <Section>
-          <Button title="下一步：账号密码" disabled={!validSchool}
+          <Button title="登录账号" disabled={!validSchool}
             action={()=>{if(validSchool)setStep('account');}}/>
         </Section>
       </List>:
-      <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
+      <List navigationTitle="登录账号" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
-        <Section header={<Text>账号登录</Text>}>
+        <Section>
           <TextField title="学号" prompt="请输入学号" value={username}
             onChanged={setUsername} textContentType="username"
             textInputAutocapitalization="never"/>
           <SecureField title="密码" prompt="请输入密码" value={password}
             onChanged={setPassword} textContentType="password"/>
         </Section>
-        <Section footer={<Text>仅在学校要求重新认证时提交登录信息，验证成功后才会保存；支持 iOS「密码」自动填充。</Text>}>
+        <Section>
           <Button title="登录并同步" disabled={!validAccount}
             action={()=>{if(validAccount&&validSchool)dismiss({
               kind:'credentials',schoolId,username:account,password
             });}}/>
-          {allowReuse&&schoolId===initialSchoolId?<Button title="使用现有登录信息继续"
+          {allowReuse&&schoolId===initialSchoolId?<Button title="使用已保存的账号"
             disabled={!validSchool}
             action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
         </Section>
