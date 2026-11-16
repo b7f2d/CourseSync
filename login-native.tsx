@@ -49,6 +49,12 @@ function LoginView({ title }: { title: string }) {
             dismiss({ username: account, password });
           }}
         />
+        <Button
+          title="选择其他学校"
+          action={() => {
+            dismiss({ changeSchool: true });
+          }}
+        />
       </Section>
     </List>
   </NavigationStack>;
@@ -60,6 +66,7 @@ export async function presentNativeCredentialForm(title = 'CourseSync 登录') {
     modalPresentationStyle: 'pageSheet',
   });
   if (!result || typeof result !== 'object') return null;
+  if (result.changeSchool === true) return { changeSchool: true };
   const username = typeof result.username === 'string' ? result.username.trim() : '';
   const password = typeof result.password === 'string' ? result.password : '';
   if (!username || username.length > 100 || !password || password.length > 512) return null;
