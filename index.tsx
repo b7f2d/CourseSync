@@ -225,8 +225,9 @@ const LEGACY_DEVICE_KEYS=Object.freeze([
 ]);
 const LEGACY_CLOUD_CRED_KEY='NUFE.Schedule.v1.icloud-credentials';
 const LEGACY_IMPORT_KEY='CourseSync.Local.v1.migrated';
+const RESET_GUARD_KEY='CourseSync.Local.v1.user-reset';
 function migrateLegacyKeychainData(){
-  if(Keychain.contains(LEGACY_IMPORT_KEY))return;
+  if(Keychain.contains(RESET_GUARD_KEY)||Keychain.contains(LEGACY_IMPORT_KEY))return;
   try{
     for(const [current,old] of LEGACY_DEVICE_KEYS){
       if(Keychain.contains(current)||!Keychain.contains(old))continue;
@@ -1362,6 +1363,7 @@ class Store {
     if(activeSchoolId==='nufe')this.migrateLegacyState();
   }
   migrateLegacyState(){
+    if(Keychain.contains(RESET_GUARD_KEY))return;
     const states=()=>this.fm.listContents(this.dir)
       .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();
     if(states().length)return;
@@ -2843,33 +2845,81 @@ async function loginPreflight(state,store,progress){
 // Credentials are automatically stored only after the school verifies login.
 // Logging out deletes local session cookies and Scripting's saved credentials,
 // without touching the iOS Passwords website entry or Apple Calendar.
+// Logout resets all CourseSync configuration. The technical guard prevents
+// old NUFE files from silently re-importing data after a user reset.
+function resetStateSkeleton(){
+  return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},
+    minutes:0,failures:0,signedOut:true,authPaused:true,runStatus:'signed_out'};
+}
+function resetLocalFiles(store){
+  const fm=store.fm,base=fm.libraryDirectory();
+  const dirs=[fm.joinPath(base,'CourseSync-v2'),fm.joinPath(base,'CourseSync-v2.usts')];
+  for(const dir of dirs){
+    if(dir===store.dir||!fm.fileExists(dir))continue;
+    const lock=fm.joinPath(dir,'run-lock.json');
+    if(fm.fileExists(lock)){
+      let owner;
+      try{owner=JSON.parse(fm.readString(lock));}catch(_){fail('LOCK_CORRUPT');}
+      if(Number.isFinite(owner.at)&&Date.now()-owner.at<20*60000)fail('BUSY');
+    }
+  }
+  for(const dir of dirs){
+    if(!fm.fileExists(dir))continue;
+    const own=dir===store.dir;
+    for(const name of fm.listContents(dir)){
+      if(own&&['run-lock.json','run-heartbeat.json','run-cancel.json'].includes(name))continue;
+      const path=fm.joinPath(dir,name);
+      fm.remove(path);
+      assert(!fm.fileExists(path),'LOGOUT_INCOMPLETE');
+    }
+  }
+}
+function resetProjectCredentials(){
+  const keys=[SCHOOL_CHOICE_KEY,SCHOOL_KEY,ENDPOINT_KEY,LEGACY_IMPORT_KEY,
+    ...LEGACY_DEVICE_KEYS.flatMap(([current,old])=>[current,old])];
+  for(const school of ['nufe','usts']){
+    const suffix=school==='nufe'?'':'.'+school;
+    for(const key of [KEY,CRED_KEY,'CourseSync.Local.v1.person',
+      'CourseSync.Local.v1.student','CourseSync.Local.v1.device'])keys.push(key+suffix);
+  }
+  for(const key of new Set(keys)){
+    if(key===RESET_GUARD_KEY)continue;
+    if(Keychain.contains(key))Keychain.remove(key);
+    assert(!Keychain.contains(key),'LOGOUT_INCOMPLETE');
+  }
+  for(const key of [CLOUD_CRED_KEY,CLOUD_CRED_KEY+'.usts',LEGACY_CLOUD_CRED_KEY]){
+    if(CloudKeychain.contains(key))CloudKeychain.remove(key);
+    assert(!CloudKeychain.contains(key),'LOGOUT_INCOMPLETE');
+  }
+}
 async function signOut(state,store){
-  // Saved credentials and the local authenticated session are separate.
   if(!await confirm('退出登录',
-    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
-
-  // Persist a fail-closed marker before touching the Keychain, so scheduled
-  // refreshes cannot silently sign back in even if deletion partially fails.
-  state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
-  state.nextAttempt=0;state.failures=0;state.lastError=null;
-  state.runStatus='signed_out';state.credentialCloudStatus=null;
-  store.write(state);
+    '将清除 CourseSync 的账号凭据、学校选择、日历绑定、学期记录和本地配置。下次需要重新初始设置。已写入 Apple 日历的课程与考试不会自动删除；重新导入同一日历可能产生重复日程。确认退出登录吗？'))return false;
+  state.signedOut=true;state.authPaused=true;state.lastError='LOGOUT_INCOMPLETE';
+  state.runStatus='signed_out';store.write(state);
+  Keychain.set(RESET_GUARD_KEY,'1');
   try{
-    if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
-    // School selection is a non-secret preference. Keep it across logout so
-    // the next login opens the same school's credential form. The login form
-    // still offers an explicit school switch.
-    if(activeSchoolId==='nufe'&&Keychain.contains('NUFE.Local.v1.cookies'))
-      Keychain.remove('NUFE.Local.v1.cookies');
-    removeSavedCredentials();
-    if(Keychain.contains(schoolKey(KEY))||hasSavedCredentials()||
-      (activeSchoolId==='nufe'&&(Keychain.contains('NUFE.Local.v1.cookies')||CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))))
-      fail('CREDENTIALS_UNAVAILABLE');
-  }catch(_){
-    // Stay signed out and offer retry rather than declaring a false success.
+    resetProjectCredentials();
+    resetLocalFiles(store);
+    const fresh=resetStateSkeleton();
+    for(const key of Object.keys(state))delete state[key];
+    Object.assign(state,fresh);
+    store.generation=0;
+    store.write(state);
+    // Replace the saved widget snapshot with a valid empty representation.
+    try{HostStorage?.set?.(WIDGET_CACHE_KEY,{version:1,lastCheck:new Date().toISOString(),events:[]});}catch(_){}
+    try{
+      const pending=await Notification.allPending();
+      const ids=pending.map(n=>n.identifier).filter(id=>typeof id==='string'&&
+        (id.startsWith('nufe-local-')||id.startsWith('coursesync-change-')));
+      if(ids.length)await Notification.removePending(ids);
+    }catch(_){}
+  }catch(e){
+    state.signedOut=true;state.authPaused=true;state.lastError='LOGOUT_INCOMPLETE';
+    try{store.write(state);}catch(_){}
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','账号凭据与会话已清除，原学校选择和已同步日历保留。下次点击「登录账号」即可重新登录。');}catch(_){}
+  try{await notice('已退出登录','CourseSync 的登录与配置状态已重置。下次启动需重新选择学校、登录并配置日历；Apple 日历中的原课程和考试保留。');}catch(_){}
   return true;
 }
 async function refreshFailure(code){
@@ -3096,7 +3146,7 @@ async function run() {
   let store=new Store();
   let firstSetup=false;
   // A configured calendar stays configured even after explicitly logging out.
-  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
+  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId&&initial.lastError!=='LOGOUT_INCOMPLETE';}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
@@ -3110,8 +3160,8 @@ async function run() {
       const status=menuAuthState(state);
       const confirmedSchool=loadSelectedSchool(null,true);
       const ready=status==='ready';
-      menu.message=status==='cleanup'?'上次退出登录未完成，请再次点击「退出登录」；只处理账号凭据和会话，不删除课程、考试或日历。':
-        status==='signed_out'?'已退出登录。请先登录账号；已同步日历保留。':
+      menu.message=status==='cleanup'?'退出登录未完成，请再次点击「退出登录」完成本地配置与凭据重置；Apple 日历事件不会删除。':
+        status==='signed_out'?'已退出登录。重新启动将进入首次设置；Apple 日历中的原日程保留。':
         ready?'上次刷新：'+localDateTime(state.lastCheck):
         state.authPaused?'登录需要重新验证，请登录账号；已同步日历保留。':
         '请先登录账号，成功后可使用课程、考试及学校专属功能。';
