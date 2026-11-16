@@ -117,7 +117,7 @@ test('native foreground progress shows once, pauses for verification and resumes
    finish:()=>calls.push('finish')
  });
  const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查目标日历');await progress.start();
+ progress('检查课表日历');await progress.start();
  progress('读取学期 161');
  progress('等待输入学校登录信息');
  progress('提交学校认证请求');
@@ -171,7 +171,7 @@ test('native progress unavailable never blocks foreground synchronization',async
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
  e.sandbox.__progressUIFactory=()=>{throw Error('UI_NOT_AVAILABLE');};
  const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查目标日历');await progress.start();
+ progress('检查课表日历');await progress.start();
  progress('请求学期 161 课表数据');progress.finish();
  a.equal(e.state.lastStage,'请求学期 161 课表数据');
 });
@@ -541,15 +541,15 @@ test('background sync refreshes bound exams and only notifies verified changes o
  await executeDaily(e);
  a.equal(e.store.read().lastExamError,null);
  a.equal(e.db.filter(v=>v.calendar.identifier===e.other.identifier).length,1);
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,0);
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,0);
  location='202';
  await e.m.run();
  a.equal(schoolExam().location,'202');
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,1);
  const id=schoolExam().identifier;
  await e.m.run();
  a.equal(schoolExam().identifier,id);
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变动').length,1);
+ a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,1);
 });
 
 test('initialization retries missing historical terms without starving peers',async()=>{
@@ -856,7 +856,7 @@ test('partial refresh notification failure keeps partial status and semester err
 });
 test('compact status shows outcome and hides technical diagnostics',async()=>{
  const e=await env();
- for(const [status,label] of Object.entries({success:'上次刷新成功',partial:'部分学期未完成',failed:'上次刷新失败',cancelled:'上次操作已取消'})){
+ for(const [status,label] of Object.entries({success:'上次刷新成功',partial:'部分学期未同步',failed:'上次刷新失败',cancelled:'上次操作已取消'})){
   e.state.runStatus=status;a.ok(e.m.statusText(e.state).includes('结果：'+label));
  }
  e.state.runStatus='success';e.state.lastCheck='2026-11-02T06:30:00.000Z';
@@ -921,7 +921,7 @@ test('end-to-end daily refresh adds, adjusts, cancels and purges old series with
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
  e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.filter(n=>/日程变动/.test(n.title)).length,1);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
+ const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.filter(n=>/日程变更/.test(n.title)).length,1);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
  // A second entire run must change neither logical nor native event IDs.
  const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
@@ -2069,7 +2069,7 @@ test('environment inspection only reads existing local state and never mutates d
  const results=await e.m.inspectEnvironment(e.state,e.store);
  a.ok(results.length>=7);
  a.equal(results.find(x=>x.name==='本地状态').level,'正常');
- a.equal(results.find(x=>x.name==='目标日历').level,'正常');
+ a.equal(results.find(x=>x.name==='课表日历').level,'正常');
  a.equal(results.find(x=>x.name==='学校连接').level,'待确认');
  a.match(e.m.environmentCheckText(results,e.state),/只读检查/);
  a.equal(JSON.stringify([...e.keys]),oldKeys);
@@ -2129,8 +2129,8 @@ test('self-check distinguishes an inaccessible original calendar from a healthy 
  const e=await env();
  e.sandbox.__sdk.Calendar.forEvents=async()=>[e.other];
  const checks=await e.m.inspectEnvironment(e.state,e.store);
- a.equal(checks.find(x=>x.name==='目标日历').level,'注意');
- a.match(checks.find(x=>x.name==='目标日历').detail,/原日历当前不可见/);
+ a.equal(checks.find(x=>x.name==='课表日历').level,'注意');
+ a.match(checks.find(x=>x.name==='课表日历').detail,/原日历当前不可见/);
  a.equal(e.state.calendarId,e.calendar.identifier);
 });
 test('self-check flags pending transactions and does not clear their journal',async()=>{
@@ -2268,7 +2268,7 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
  a.ok(msg.includes('晚上：博远楼JC403'));
  a.match(msg,/【明天 2026-11-17】/);
  a.ok(msg.includes('全天：博观楼JB101'));
-  a.equal(noticeTitle,'空闲教室查询');
+  a.equal(noticeTitle,'空闲教室');
  a.equal(e.db.length,dbCountBefore);
 });
 
@@ -2316,7 +2316,7 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
  a.equal(progressShown,1);
  a.equal(progressClosed,1);
  a.equal(progressClosedWhenNotice,true);
- a.equal(noticeTitle,'空闲教室查询');
+ a.equal(noticeTitle,'空闲教室');
  a.ok(noticeMsg.includes('博远楼JC101'));
  a.ok(!noticeMsg.includes('说明：'));
  a.equal(e.db.length,dbCountBefore);

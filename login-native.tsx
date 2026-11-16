@@ -20,7 +20,7 @@ function LoginView({ title }: { title: string }) {
       navigationTitle={title}
       navigationBarTitleDisplayMode="inline"
     >
-      <Section header={<Text>账号登录</Text>}>
+      <Section header={<Text>登录账号</Text>}>
         <TextField
           title="学号"
           prompt="请输入学号"

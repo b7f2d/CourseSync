@@ -45,7 +45,7 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
   assert.match(readme,/日常刷新无需重复选择，退出登录会清除已选学校/);
-  assert.match(readme,/退出登录即完全重置/);
+  assert.match(readme,/\*\*退出登录\*\*：清除 CourseSync 已保存的账号和设置/);
 });
 
 test('release and README describe the same stable installation path',()=>{

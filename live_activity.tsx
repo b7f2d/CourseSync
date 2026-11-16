@@ -28,7 +28,7 @@ export const CourseRefreshActivity = Scripting.LiveActivity?.register<RefreshSta
   state => <LiveActivityUI
     content={<RefreshStatus {...state}/>}
     compactLeading={<CalendarIcon complete={state.phase==='complete'}/>}
-    compactTrailing={<Text font="caption2">{state.phase==='complete'?'刷新完成':state.phase==='verify'?'验证':'刷新'}</Text>}
+    compactTrailing={<Text font="caption2">{state.phase==='complete'?'刷新成功':state.phase==='verify'?'验证':'刷新'}</Text>}
     minimal={<CalendarIcon complete={state.phase==='complete'}/>}
   >
     <LiveActivityUIExpandedCenter>

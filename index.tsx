@@ -117,7 +117,7 @@ class WebView{
    this.inner=new Controller({ephemeral:true});__webviews.add(this.inner);
  }
  async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
- async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
+ async present(title='登录验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
  constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;this.triggerDate=null;}
@@ -938,7 +938,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   for(const ev of final)index[ev.identifier]=keyOf(ev);
   state.examIndex=index;
   state.examBaselineReady=true;
-  if(examChanges.length)appendChangeNotice(state,'考试安排',examChanges);
+  if(examChanges.length)appendChangeNotice(state,'考试日程',examChanges);
   store.write(state);
   // Only remove an old managed event once its new counterpart was verified.
   for(const {ev,key} of legacy){
@@ -1693,13 +1693,13 @@ async function notifyAuthExpiredOnce(state,store) {
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
   const code=state.lastError;
   n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'CourseSync · 登录需要处理':'CourseSync · 登录已失效';
-  n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课程及考试日历均保留，请打开 Scripting 手动验证。':
-    code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课程及考试日历均保留，请在 Scripting 中更新凭据。':
-    code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课程及考试日历均保留，请在 Scripting 中检查凭据设置。':
+  n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表日历和考试日历均保留，请打开 Scripting 手动验证。':
+    code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表日历和考试日历均保留，请在 Scripting 中更新凭据。':
+    code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课表日历和考试日历均保留，请在 Scripting 中检查凭据设置。':
     code==='ACCOUNT_CHANGED'?'自动登录使用的账号与原课表绑定账号不一致。程序已停止写入；请在 Scripting 中核对学号。':
-    code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课程及考试日历均保留，请打开 Scripting 前台手动同步。':
-    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课程及考试日历均保留，请打开 Scripting 手动登录。':
-    '自动登录未能完成。课程及考试日历均保留，请在 Scripting 中检查登录状态或完成认证。';
+    code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课表日历和考试日历均保留，请打开 Scripting 前台手动同步。':
+    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课表日历和考试日历均保留，请打开 Scripting 手动登录。':
+    '自动登录未能完成。课表日历和考试日历均保留，请在 Scripting 中检查登录状态或完成认证。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
   state.authExpiryNotifiedAt=new Date().toISOString();state.authNoticeError=null;
@@ -1904,11 +1904,11 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课程及考试日历均保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分凭据或本地配置尚未清除，后台自动登录已暂停，请解锁后再次点击「退出登录」。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校课表数据不完整或格式异常，已保留原课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课程及考试日历均保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课程及考试日历均保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录会话已失效或需要验证，请解锁并在 Scripting 内重新登录。课表日历和考试日历均保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分凭据或本地配置尚未清除，后台自动登录已暂停，请解锁后再次点击「退出登录」。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校课表数据不完整或格式异常，已保留原课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，课表日历和考试日历均保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；课表日历和考试日历均保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 找不到可写入的课表日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
-  MANUAL_CALENDAR:['找不到可用的日程日历。','请先运行「立即刷新」，完成课表或考试日历设置。'],
+  MANUAL_CALENDAR:['找不到所需的课表日历或考试日历。','请在 Apple 日历确认原日历可见，再打开 CourseSync 点击「立即刷新」。'],
   MANUAL_FIELDS:['日程信息有误。','请填写标题，并确认结束时间晚于开始时间。'],
   MANUAL_CHANGED:['日程已变更或已删除。','请重新打开「管理日程」查看。'],
   MANUAL_VERIFY:['无法确认日历已更新。','请先在「管理日程」核对结果。'],
@@ -1920,14 +1920,14 @@ const ERROR_GUIDE={
   TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
   EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
   LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
-  LEGACY_INVITATION:['专用日历中存在带邀请信息的旧事件，删除可能通知其他人，已停止。','先在 Apple 日历核对这条事件，勿将会议邀请混入专用课表日历。'],
+  LEGACY_INVITATION:['专用日历中存在带邀请信息的旧事件，删除可能通知其他人，已停止。','先在 Apple 日历核对这条事件，勿将会议邀请混入课表日历。'],
   LEGACY_VERIFY:['部分旧内容仍然可见，或 iCloud 尚未反映删除，不能报告刷新成功。','稍后再运行；将重新抓取、备份、扫描，不重复创建已有课程。'],
 
   RETRY_LATER:['上次刷新失败，当前处于退避等待期，未重复请求学校。','稍后重试；可前台运行查看上次失败原因。'],
   PARTIAL_SYNC:['部分学期未同步。','请稍后再次刷新。'],
   NOTIFICATION_FAILED:['课表写入已核验，但课程提醒提交失败。','检查 Scripting 通知权限。'],
 
-  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录弹出的错误代码并联系维护者处理；不要删除课程日历。'],
+  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录弹出的错误代码并联系维护者处理；不要删除课表日历。'],
   BACKUP_FAILED:['同步或核对前的本地备份无法写入或校验，已停止写入。','检查存储空间，保留现有状态。'],
   CALENDAR_TIMEOUT:['读取 Apple 日历超过 20 秒，未继续写入。','解锁设备，在前台检查日历权限和 iCloud 同步后重试。'],
   CALENDAR_VERIFY:['无法确认日历已更新。','请等待 iCloud 同步后再刷新。'],
@@ -1943,7 +1943,7 @@ const ERROR_GUIDE={
   AUTH_REQUIRED:['学校登录已失效。','请打开 CourseSync，点击「登录账号」。'],
   AUTH_INTERACTIVE_REQUIRED:['学校要求完成登录验证。','请在 Scripting 中打开 CourseSync 并完成验证。'],
   AUTO_LOGIN_REJECTED:['学校未通过自动登录。','请在 CourseSync 中重新登录。'],
-  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「登录账号」使用原生界面重新登录。'],
+  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「登录账号」重新登录。'],
   CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台重试；部分凭据操作可能不可用。'],
   LOGOUT_INCOMPLETE:['退出登录未完成，后台同步已暂停。','请解锁 iPhone 后再次点击「退出登录」。'],
   WEBVIEW_TIMEOUT:['输入窗口未及时响应。','请重新打开 Scripting 后再试。'],
@@ -1966,7 +1966,7 @@ const ERROR_GUIDE={
   CALENDAR_MISSING:['找不到对应的日历。','请确认原日历在 Apple 日历中可见，再打开 CourseSync 点击「立即刷新」。'],
   CALENDAR_PERMISSION:['CourseSync 无法访问日历。','请在 iPhone 设置中将 Scripting 的日历权限设为「完全访问」。'],
   CALENDAR_CREATE_FAILED:['无法创建 iCloud 日历。','请检查 iCloud 日历是否已开启，以及 Scripting 是否可以完全访问日历。'],
-  CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
+  CALENDAR_NOT_VISIBLE:['找不到可写入的课表日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
   BUSY:['已有同步任务在运行。','请等本次同步结束后再试。'],
   LOCK_LOST:['运行过程中同步锁失效，程序为防止重复写入主动停止。','检查是否存在多个并发任务；停止自动化后稍候重新同步。'],
   STATE_CORRUPT:['本地状态文件无法通过校验，不能安全恢复以前的同步进度。','不要清理状态目录或删除日历；先备份文件并检查。'],
@@ -2233,7 +2233,7 @@ async function clearBrokenCookies(state,store){
   // A credential-based automatic login can be attempted on the next refresh.
   state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;
   state.lastError=null;store.write(state);
-  await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程日历均已保留，下次刷新将重新认证。');
+  await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课表日历均已保留，下次刷新将重新认证。');
 }
 async function exportRecoveryBackups(state,store){
   const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName]
@@ -2293,8 +2293,8 @@ function statusText(state){
     state.signedOut?'已退出登录':
     state.authPaused?'需要处理登录':
     state.runStatus==='failed'?'上次刷新失败':
-    state.lastExamError&&state.runStatus==='partial'?'考试日程未完成':
-    state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未完成':
+    state.lastExamError&&state.runStatus==='partial'?'考试日程未同步':
+    state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未同步':
     state.runStatus==='running'?'上次同步可能仍在运行':
     state.runStatus==='success'?'上次刷新成功':
     state.runStatus==='cancelled'?'上次操作已取消':'尚未完成首次同步';
@@ -2327,7 +2327,7 @@ async function probeSchoolSession(jar){
     try{
       const r=await new HTTP(jar||new CookieJar()).get(USTS_HOME+'?jsdm=xs&echarts=1');
       const valid=ustsStudentMenu(r.text);
-      return {connection:{level:'正常',detail:'苏州科技���学教务入口已响应'},
+      return {connection:{level:'正常',detail:'苏州科技大学教务入口已响应'},
         auth:valid?{level:'正常',detail:'当前会话可访问学生主菜单'}:
           {level:'注意',detail:'当前会话未通过登录检查'}};
     }catch(error){
@@ -2405,14 +2405,14 @@ async function inspectEnvironment(state,store){
 
   try{
     const all=await bounded(visibleCalendars(),6500,'CALENDAR_TIMEOUT');
-    if(!state.calendarId)put('目标日历','注意','未绑定课表日历');
+    if(!state.calendarId)put('课表日历','注意','未绑定课表日历');
     else{
       const found=all.find(c=>c&&c.identifier===state.calendarId);
-      if(!found)put('目标日历','注意','原日历当前不可见；勿直接新建替换');
-      else if(!liveCalendar(found))put('目标日历','注意','原日历不可写入');
-      else put('目标日历','正常','绑定的日历可见且可编辑');
+      if(!found)put('课表日历','注意','原日历当前不可见；勿直接新建替换');
+      else if(!liveCalendar(found))put('课表日历','注意','原日历不可写入');
+      else put('课表日历','正常','绑定的日历可见且可编辑');
     }
-  }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
+  }catch(_){put('课表日历','待确认','无法读取日历列表；检查完全访问权限');}
 
   let jar=null;
   if(state.signedOut){
@@ -2665,7 +2665,7 @@ async function finishTx(state,store,adapter,budget) {
     notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
   const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
-  if(tx.hadBaseline&&count)appendChangeNotice(state,'课程调整',
+  if(tx.hadBaseline&&count)appendChangeNotice(state,'课程',
     ['新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed,
     ...tx.changes.examples]);
   state.tx=null;store.write(state);
@@ -2687,7 +2687,7 @@ async function deliverChangeNotices(state,store){
     try{
       const n=new Notification();
       n.identifier='coursesync-change-'+item.id;
-      n.title='CourseSync · 日程变动';n.body=item.body;
+      n.title='CourseSync · 日程变更';n.body=item.body;
       n.sound=null;await n.schedule();
       state.pendingChangeNotices=state.pendingChangeNotices.filter(x=>x.id!==item.id);
       store.write(state);
@@ -2957,8 +2957,8 @@ async function signOut(state,store){
   return true;
 }
 async function refreshFailure(code){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新失败';
-  n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分学期未同步':'CourseSync · 刷新失败';
+  n.body=code==='PARTIAL_SYNC'?'请打开 CourseSync，点击「立即刷新」重试。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 // Notification delivery is separate from the verified calendar result.
@@ -2988,7 +2988,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终��正在写入的日历操作。';
+    choice.message='上次同步还在运行。可以等待完成，或在上次任务安全停止后再刷新。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
@@ -3048,7 +3048,7 @@ function offlineAgenda(state,now=Date.now()) {
     if(lines.length===20)break;
   }
   return (state.lastCheck?'上次同步：'+localDateTime(state.lastCheck)+'\n\n':'')+
-    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
+    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在 Apple 日历的考试日历中查看。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
@@ -3169,7 +3169,7 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
     ...tmrwLines
   ].join('\n');
   if(progress)await progress.finish();
-  await notice('空闲教室查询',message);
+  await notice('空闲教室',message);
   return message;
 }
 
@@ -3322,7 +3322,7 @@ async function run() {
         status==='signed_out'?'已退出登录。请重新登录并设置日历。':
         ready?'上次刷新：'+localDateTime(state.lastCheck):
         state.authPaused?'需要重新验证，请登录账号。':
-        '登录后可同步课程和考试。';
+        '登录后可同步课程与考试。';
       const actions=[];
       const add=(label,kind,destructive=false)=>{
         if(destructive)menu.addDestructiveAction(label);else menu.addAction(label);
@@ -3497,8 +3497,8 @@ async function run() {
       if(interactive)await notice('部分学期未同步','请稍后再次刷新。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
-    if(examError)await notice('考试日历未完成同步',reasonFor(examError)+'\n'+actionFor(examError)+'\n错误代码：'+examError);
-    if(config.runsWithSiri)Script.setShortcutOutput(examError?'考试日历未完成同步。':state.termErrors?.length?'部分学期未同步。':'刷新成功。');
+    if(examError)await notice('考试日程未同步',reasonFor(examError)+'\n'+actionFor(examError)+'\n错误代码：'+examError);
+    if(config.runsWithSiri)Script.setShortcutOutput(examError?'考试日程未同步。':state.termErrors?.length?'部分学期未同步。':'刷新成功。');
   }catch(e){
     const code=diagnosticCode(e);
     if(code==='SYNC_SUPERSEDED'){
