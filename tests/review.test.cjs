@@ -948,7 +948,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
    return {kind:'reuse',schoolId:'nufe'};
  };
  e.store.write(e.state);e.store.release();
- e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='登录账号');
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>['登录账号','立即刷新'].includes(x.label));
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  // The first foreground refresh creates a dedicated iCloud exam calendar.
  e.sandbox.__sdk.Dialog.prompt=async options=>{a.equal(options.title,'创建考试日历');return '考试安排';};
