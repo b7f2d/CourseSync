@@ -82,8 +82,8 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   const [value,setValue]=useState('');
   const secret=kind==='secure';
   const otp=kind==='sms'||kind==='totp';
-  const response=value.trim();
-  const maxLength=kind==='captcha'?32:otp?48:120;
+  const response=secret?value:value.trim();
+  const maxLength=kind==='captcha'?32:otp?48:secret?512:120;
   const valid=response.length>0&&response.length<=maxLength;
 
   return <NavigationStack>
@@ -120,9 +120,10 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
     modalPresentationStyle:'pageSheet'
   });
   if(typeof result!=='string')return null;
-  const code=result.trim();
+  const isSecure=options.kind==='secure';
+  const code=isSecure?result:result.trim();
   const max=options.kind==='captcha'?32:
-    options.kind==='sms'||options.kind==='totp'?48:120;
+    options.kind==='sms'||options.kind==='totp'?48:isSecure?512:120;
   return code&&code.length<=max?code:null;
 }
 
