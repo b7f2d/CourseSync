@@ -572,6 +572,51 @@ test('archived term checks respect weekly or monthly cooldown',async()=>{
  e.state.semesters['159'].lastSuccess=iso(31);
  a.deepEqual(Array.from(e.m.selectTermIds(info,e.state,false,now)),[161,159]);
 });
+test('official 2027 graduate exam is pinned all-day on 2026-12-19, exactly once',async()=>{
+ const e=await env(),m=e.m;
+ e.state.examCalendarId=e.other.identifier;
+ const spec=m.FIXED_GRADUATE_EXAM;
+ a.equal(spec.title,'2027年全国硕士研究生招生考试（初试）');
+ a.equal(new Date(spec.start).toISOString(),'2026-12-18T16:00:00.000Z');
+ a.equal(new Date(spec.stop).toISOString(),'2026-12-19T16:00:00.000Z');
+ await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].calendar.identifier,e.other.identifier);
+ a.equal(e.db[0].isAllDay,true);
+ a.equal(e.db[0].title,spec.title);
+ a.equal(e.db[0].notes,spec.marker);
+ const id=e.db[0].identifier;
+ await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,id);
+});
+test('pinned graduate exam does not modify a personal lookalike or school exams',async()=>{
+ const e=await env(),m=e.m;
+ e.state.examCalendarId=e.other.identifier;
+ const spec=m.FIXED_GRADUATE_EXAM;
+ const personal=e.add({title:spec.title,start:new Date(spec.start).toISOString(),
+   end:new Date(spec.stop).toISOString(),location:''},{cal:e.other,notes:'my event',allDay:true});
+ const unrelated=e.add({title:'期末考试',start:'2026-12-15T00:00:00.000Z',
+   end:'2026-12-15T02:00:00.000Z',location:''},{cal:e.other,notes:'personal exam'});
+ await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ a.equal(e.db.length,3);
+ a.ok(e.db.some(v=>v.identifier===personal.identifier&&v.notes==='my event'));
+ a.ok(e.db.some(v=>v.identifier===unrelated.identifier));
+});
+test('pinned graduate exam survives empty school exam responses',async()=>{
+ const e=await env(),m=e.m;
+ m.activateSelectedSchool('nufe');
+ e.state.examCalendarId=e.other.identifier;
+ const spec=m.FIXED_GRADUATE_EXAM;
+ await m.syncFixedGraduateExam(e.state,e.store,e.other);
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+  text:'<table id="exams"><tr class="tr-empty"><td>暂无考试</td></tr></table>'})};
+ await m.syncExams(http,e.state,e.store,e.other,()=>{},Date.parse('2026-11-17T00:00:00Z'));
+ await m.syncExams(http,e.state,e.store,e.other,()=>{},Date.parse('2026-11-17T00:00:00Z'));
+ const fixed=e.db.filter(v=>v.notes===spec.marker);
+ a.equal(fixed.length,1);
+ a.equal(fixed[0].isAllDay,true);
+});
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>null;
