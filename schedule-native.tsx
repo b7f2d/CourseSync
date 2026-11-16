@@ -23,7 +23,7 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
       navigationBarTitleDisplayMode="inline">
       <Section header={<Text>必填</Text>}
         footer={end <= start ? <Text>结束时间须晚于开始时间。</Text> : undefined}>
-        <TextField title="标题" prompt="填写标题" value={title} onChanged={setTitle}/>
+        <TextField title="标题" prompt="标题" value={title} onChanged={setTitle}/>
         <DatePicker title="开始时间" value={start} datePickerStyle="compact"
           onChanged={next => {setEnd(end + next - start); setStart(next);}}/>
         <DatePicker title="结束时间" value={end} datePickerStyle="compact" onChanged={setEnd}/>
