@@ -795,8 +795,8 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录','空闲教室']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true,false]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,false,true]);
  a.equal(e.requests.length,0);
 });
 test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
@@ -1132,7 +1132,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
-   return 2; // direct destructive logout
+   return options.actions.findIndex(x=>x.destructive||x.label==='退出登录');
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    a.match(options.message,/Cookie/);
@@ -1141,7 +1141,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1205,7 +1205,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -1885,7 +1885,7 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
  a.ok(msg.includes('晚上（第10-12节）：博远楼JC403（4楼）'));
  a.match(msg,/【明天 2026-11-17】/);
  a.ok(msg.includes('全天（第1-12节 / 上午+下午+晚上）：博观楼JB101（1楼）'));
- a.equal(noticeTitle,'空闲教室查询');
+  a.equal(noticeTitle,'空闲教室查询');
  a.equal(e.db.length,dbCountBefore);
 });
 
@@ -1900,16 +1900,20 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
    actionSheetLabels=opts.actions.map(x=>x.label);
    return opts.actions.findIndex(x=>x.label==='空闲教室');
  };
- let progressShown=0,progressClosed=0;
+ let progressShown=0,progressClosed=0,closed=false;
  e.sandbox.__sdk.Navigation={present:async()=>null,useDismiss:()=>()=>{}};
  e.sandbox.__progressUIFactory=(title,subtitle)=>{
    return {
      show:()=>{progressShown++;},
-     finish:()=>{progressClosed++;}
+     finish:()=>{if(!closed){closed=true;progressClosed++;}}
    };
  };
- let noticeTitle=null,noticeMsg=null;
- e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
+ let noticeTitle=null,noticeMsg=null,progressClosedWhenNotice=false;
+ e.sandbox.__sdk.Dialog.alert=async o=>{
+   noticeTitle=o.title;
+   noticeMsg=o.message;
+   progressClosedWhenNotice=(progressClosed===1);
+ };
  e.sandbox.fetchImpl=async(url,options)=>{
    if(url.includes('free-list')){
      return {
@@ -1923,9 +1927,10 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
    };
  };
  await e.m.run();
- a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,退出登录,空闲教室');
+ a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,空闲教室,退出登录');
  a.equal(progressShown,1);
  a.equal(progressClosed,1);
+ a.equal(progressClosedWhenNotice,true);
  a.equal(noticeTitle,'空闲教室查询');
  a.ok(noticeMsg.includes('博远楼JC101'));
  a.ok(!noticeMsg.includes('说明：'));
