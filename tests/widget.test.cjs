@@ -505,7 +505,7 @@ test('README documents the three-day UI without screenshots',()=>{
  a.equal(readme.includes('docs/images/'),false);
  a.equal(readme.includes('<img'),false);
  a.equal(readme.includes('!['),false);
- a.match(readme,/releases\/download\/stable\/CourseSync\.zip/);
+ a.match(readme,/github\.com\/b7f2d\/CourseSync\/tree\/main/);
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });

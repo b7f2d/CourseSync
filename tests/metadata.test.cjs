@@ -48,11 +48,12 @@ test('README remains text-only without image markup or references',()=>{
   assert.match(readme,/\*\*退出登录\*\*：清除 CourseSync 已保存的账号和设置/);
 });
 
-test('release and README describe the same stable installation path',()=>{
-  const url='https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip';
+test('installation and migration instructions point to the same GitHub branch',()=>{
+  const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
-  assert.match(read('docs/release-notes.md'),/CourseSync\.zip/);
+  assert.ok(read('docs/release-notes.md').includes(url));
+  assert.match(read('README.md'),/把远程来源改为上面的 GitHub 分支链接/);
   assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx live_activity\.tsx schedule-native\.tsx script\.json/);
 });
 
@@ -67,17 +68,14 @@ test('error guidance does not direct users to removed menu actions',()=>{
   assert.match(guide,/点击「立即刷新」/);
 });
 
-test('only the Release archive is distributed',()=>{
+test('GitHub branch distribution retains read-only CI validation',()=>{
   assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
-    'stale root ZIP should not be tracked or distributed');
+    'the source branch should not include a generated ZIP');
   assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
-  const workflow=read('.github/workflows/release.yml');
-  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
-  assert.doesNotMatch(workflow,/build\.py|unsigned\.ipa/);
-  assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
-  assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
-  assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
-  assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
+  const validation=read('.github/workflows/validate.yml');
+  assert.match(validation,/contents: read/);
+  assert.match(validation,/node --test tests\/\*\.test\.cjs/);
+  assert.match(validation,/bash scripts\/package\.sh/);
 });
 
 test('widget distribution includes the native entry and safe cache model',()=>{

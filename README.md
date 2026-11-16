@@ -23,10 +23,10 @@ CourseSync 在 iPhone 上通过 [Scripting](https://scriptingapp.github.io/) 运
 
 1. 在 iPhone 上安装并启动 [Scripting](https://scriptingapp.github.io/) 应用。
 2. 点击右上角「+」，选择「导入远程脚本」。
-3. 复制并粘贴以下稳定版 ZIP 下载链接并导入（Scripting 脚本标识为 `CourseSync`）：
+3. 复制并粘贴以下 GitHub 分支链接并导入（Scripting 脚本标识为 `CourseSync`）：
 
 ```text
-https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip
+https://github.com/b7f2d/CourseSync/tree/main
 ```
 
 4. 导入成功后，返回 Scripting 主界面点击 **CourseSync** 卡片运行。
@@ -66,7 +66,7 @@ https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip
 - **日程变更通知**：首次导入不提示，之后仅在核实课程或考试有变更时发送通知；无变化静默结束。考试列表意外变空时，连续两次确认后才考虑删除此前已公布的未来考试。
 - **菜单随登录状态变化**：首次打开时先选校登录。完成设置后可刷新、添加和管理日程、退出登录。南京财经大学还可查询「空闲教室」。
 - **退出登录**：清除 CourseSync 已保存的账号和设置，保留 Apple 日历中的课程与考试日程。下次从选择学校开始配置。重新导入同一日历可能产生重复日程。
-- **更新 CourseSync**：当发布新版本时，在 Scripting 主界面点击 CourseSync 卡片右上角「···」→「远程资源」→「立即更新」即可，**不需要重新导入项目**，也**不需要重新创建**日历或重设小组件。
+- **更新 CourseSync**：在 Scripting 主界面打开 CourseSync 卡片的「···」→「远程资源」。如果仍使用旧的 Release ZIP 链接，把远程来源改为上面的 GitHub 分支链接，再点「立即更新」。在现有脚本内更改来源，不需要重新导入项目。
 
 ---
 

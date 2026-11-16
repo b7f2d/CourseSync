@@ -1,4 +1,8 @@
-# CourseSync 稳定版发布
+# CourseSync 已迁移到 GitHub 分支
+
+此 Release 的 ZIP 是历史版本。首次安装时，在 Scripting 中选择「导入远程脚本」，粘贴 [CourseSync 的 GitHub 分支链接](https://github.com/b7f2d/CourseSync/tree/main)。
+
+已安装时，在 CourseSync 卡片的「···」→「远程资源」中用同一链接替换旧的 Release ZIP 链接，再点「立即更新」。操作详情见 [用户指南](https://github.com/b7f2d/CourseSync#用户指南)。
 
 CourseSync 在 iPhone 上通过 Scripting 运行，将课程与考试日程同步到 Apple 日历，提供课表小组件和快捷指令自动刷新。
 
@@ -10,7 +14,3 @@ CourseSync 在 iPhone 上通过 Scripting 运行，将课程与考试日程同�
 - **支持的学校**：首次登录可选择南京财经大学或苏州科技大学，各校凭据与日历状态在本地独立存储与管理。
 - **课表小组件**：支持浅色和深色外观，中、大尺寸显示昨天、今天和明天的课程。
 - **安全与纯本地运行**：所有请求直连学校官方系统，无需任何自建服务器或第三方中转，凭据安全保存在 iOS 钥匙串中。
-
-### 安装与更新
-
-首次安装时，在 [Scripting](https://scriptingapp.github.io/) 选择「导入远程脚本」，粘贴 [CourseSync.zip 下载链接](https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip)。已安装时，打开 CourseSync 卡片菜单，选择「远程资源」→「立即更新」。详细配置见 [用户指南](https://github.com/b7f2d/CourseSync#用户指南)。
