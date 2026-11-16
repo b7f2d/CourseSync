@@ -3103,11 +3103,15 @@ async function run() {
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const menu=new Alert();menu.title='CourseSync';
-      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
-      menu.addAction('立即刷新');
-      const canFreeRooms=activeSchoolId==='nufe';
-      if(canFreeRooms)menu.addAction('空闲教室');
+      const confirmedSchool=loadSelectedSchool(null,true);
       const canSignOut=canOfferSignOut(state);
+      // A previously selected school alone is not an authenticated session.
+      // Keep free-room queries hidden until a successful refresh for NUFE.
+      const loggedIn=!state.signedOut&&!!state.lastCheck&&canSignOut&&!!confirmedSchool;
+      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。请先登录账号；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请登录账号并绑定专用课表日历。';
+      menu.addAction(loggedIn?'立即刷新':'登录账号');
+      const canFreeRooms=loggedIn&&confirmedSchool==='nufe'&&activeSchoolId==='nufe';
+      if(canFreeRooms)menu.addAction('空闲教室');
       if(canSignOut)menu.addDestructiveAction('退出登录');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(canFreeRooms&&selected===1){
