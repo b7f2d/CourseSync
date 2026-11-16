@@ -68,6 +68,8 @@ test('refresh presentation names both courses and exams without removed status U
  const island=fs.readFileSync(__dirname+'/../live_activity.tsx','utf8');
  a.match(progress,/正在同步课程与考试/);
  a.match(progress,/课程与考试同步完成后自动收起/);
+ a.doesNotMatch(progress,/<Button\b|title="收起"/);
+ a.match(progress,/modalPresentationStyle:'pageSheet'/);
  a.match(island,/同步课程与考试日程/);
  a.match(island,/课程与考试同步已完成/);
  a.match(island,/正在同步课程与考试/);
