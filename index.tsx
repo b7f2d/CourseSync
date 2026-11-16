@@ -1524,6 +1524,8 @@ function validateState(s){
   assert(s&&s.version===1&&s.semesters&&typeof s.semesters==='object'&&!Array.isArray(s.semesters)&&s.anchors&&typeof s.anchors==='object'&&!Array.isArray(s.anchors),'STATE_CORRUPT');
   const allIds=new Set();
   assert(s.owner===null||typeof s.owner==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(s.owner),'STATE_CORRUPT');
+  if(s.historyAttemptAt!=null)assert(typeof s.historyAttemptAt==='object'&&!Array.isArray(s.historyAttemptAt)&&
+    Object.entries(s.historyAttemptAt).every(([sid,date])=>/^\\d+$/.test(sid)&&Number.isFinite(Date.parse(date))),'STATE_CORRUPT');
   if(s.examCalendarId!=null)assert(typeof s.examCalendarId==='string'&&s.examCalendarId.length>0&&
     s.examCalendarId!==s.calendarId,'STATE_CORRUPT');
   if(s.examIndex!=null)assert(s.owner&&typeof s.examIndex==='object'&&!Array.isArray(s.examIndex)&&
@@ -2677,8 +2679,15 @@ function selectTermIds(info,state,interactive,now=Date.now()){
   // subsequently picks missing baselines first until every term is covered.
   if(interactive&&!Object.values(state.semesters||{}).some(term=>term.lastSuccess))
     return [info.current,...history];
-  const pending=history.filter(sid=>!state.semesters[sid]?.lastSuccess);
-  if(pending.length)return [info.current,pending[0]];
+  // A permanently unavailable history term must not monopolize the retry slot.
+  // Retry failed/missing terms daily, rotating to other missing terms meanwhile.
+  const pending=history.filter(sid=>{
+    if(state.semesters[sid]?.lastSuccess)return false;
+    const last=Date.parse(state.historyAttemptAt?.[sid]||'');
+    return !Number.isFinite(last)||now-last>=DAY;
+  });
+  if(pending.length)return [info.current,
+    pending.find(sid=>sid>state.lastHistoryTerm)??pending[0]];
   // A recent archived term is checked weekly; older terms monthly. Each run
   // checks at most one due term, with a persistent fairness cursor.
   const due=history.filter(sid=>{
@@ -2758,6 +2767,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
       const term=sid===info.current?ustsCurrent:await ustsCourseData(http,sid);
       assert(term.person===info.person,'ACCOUNT_CHANGED');
       if(sid!==info.current&&!term.data.kbList.length&&!state.semesters[sid]&&interrupted?.sid!==String(sid)){
+        state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:new Date().toISOString()};
         state.lastHistoryTerm=sid;store.write(state);
         continue;
       }
@@ -2789,6 +2799,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     }
     if(sid===info.current&&onCurrentSynced)await onCurrentSynced(http,budget);
     if(sid!==info.current){
+      state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:new Date().toISOString()};
       // Advance even on a recoverable historical error so one term cannot
       // prevent the remaining terms from being checked.
       state.lastHistoryTerm=sid;store.write(state);
