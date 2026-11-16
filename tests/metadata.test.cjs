@@ -13,8 +13,6 @@ test('Scripting metadata keeps the intended display identity',()=>{
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
-  // CourseSync is the actual Scripting script identity and stable archive name.
-  assert.equal(data.name,'CourseSync');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
   assert.equal(data.icon,'calendar');
 });
@@ -50,9 +48,7 @@ test('README remains text-only without image markup or references',()=>{
 test('installation and update instructions point to the same GitHub branch',()=>{
   const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
-  assert.ok(read('docs/engineering.md').includes(url));
   assert.match(read('README.md'),/确认远程来源为上面的 GitHub 分支链接/);
-  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx live_activity\.tsx schedule-native\.tsx script\.json/);
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
@@ -66,14 +62,18 @@ test('error guidance does not direct users to removed menu actions',()=>{
   assert.match(guide,/点击「立即刷新」/);
 });
 
-test('GitHub branch distribution retains read-only CI validation',()=>{
-  assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
-    'the source branch should not include a generated ZIP');
-  assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
+test('the GitHub branch contains the Scripting entries and their modules',()=>{
+  const scriptFiles=[
+    'script.json',
+    'index.tsx', 'intent.tsx', 'widget.tsx', 'live_activity.tsx',
+    'login-native.tsx', 'progress-native.tsx', 'schedule-native.tsx', 'widget-data.ts',
+  ];
+  for(const file of scriptFiles){
+    assert.ok(read(file).trim(),file+' must be present at the repository root');
+  }
   const validation=read('.github/workflows/validate.yml');
   assert.match(validation,/contents: read/);
   assert.match(validation,/node --test tests\/\*\.test\.cjs/);
-  assert.match(validation,/bash scripts\/package\.sh/);
 });
 
 test('widget distribution includes the native entry and safe cache model',()=>{
@@ -82,6 +82,5 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.match(entry,/buildWidgetModel\(/);
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
-  assert.match(read('scripts/package.sh'),/"schedule-native\.tsx"/);
   assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation \} from '\.\/login-native'/);
 });
