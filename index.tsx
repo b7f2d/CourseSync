@@ -2691,6 +2691,7 @@ function selectTermIds(info,state,interactive,now=Date.now()){
   // A recent archived term is checked weekly; older terms monthly. Each run
   // checks at most one due term, with a persistent fairness cursor.
   const due=history.filter(sid=>{
+    if(!state.semesters[sid]?.lastSuccess)return false;
     const last=Date.parse(state.semesters[sid]?.lastSuccess||'');
     const days=info.current-sid<=1?7:30;
     return !Number.isFinite(last)||now-last>=days*DAY;
