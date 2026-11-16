@@ -1,7 +1,7 @@
 // One native, indeterminate progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Button, Navigation, NavigationStack, ProgressView, Spacer, Text, VStack,
+  Navigation, NavigationStack, ProgressView, Spacer, Text, VStack,
 } from 'scripting';
 
 type ProgressSession={
@@ -39,10 +39,6 @@ function ProgressScreen({session,title='正在同步课程与考试',subtitle='�
         {subtitle}
       </Text>
       <Spacer/>
-      <Button title="收起" action={()=>{
-        session.suppressed=true;
-        dismiss();
-      }}/>
     </VStack>
   </NavigationStack>;
 }
