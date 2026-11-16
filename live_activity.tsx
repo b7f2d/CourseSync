@@ -5,9 +5,9 @@ const { HStack, VStack, Image, Text, LiveActivityUI, LiveActivityUIExpandedCente
 const phases = {
   connect: '连接教务系统',
   verify: '请在 Scripting 完成验证',
-  sync: '同步课表与日历',
-  complete: '课表与日历已同步',
-  finish: '可在 CourseSync 查看运行状态',
+  sync: '同步课程与考试日程',
+  complete: '课程与考试同步已完成',
+  finish: '请检查本次同步结果',
 };
 
 type RefreshState = { phase: keyof typeof phases };
@@ -20,7 +20,7 @@ function RefreshStatus({phase}:RefreshState) {
   return <HStack spacing={12} padding={12}>
     <CalendarIcon complete={phase==='complete'}/>
     <VStack alignment="leading" spacing={3}>
-      <Text font="headline">{phase==='complete'?'刷新完成':phase==='finish'?'课表刷新已结束':'正在刷新课表'}</Text>
+      <Text font="headline">{phase==='complete'?'刷新完成':phase==='finish'?'同步已结束':'正在同步课程与考试'}</Text>
       <Text font="subheadline" foregroundStyle="secondaryLabel">{phases[phase]}</Text>
     </VStack>
   </HStack>;
