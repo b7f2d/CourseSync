@@ -1902,7 +1902,7 @@ const ERROR_GUIDE={
   PARTIAL_SYNC:['部分学期读取或同步失败，不能报告整次刷新成功。','查看状态中的学期错误。'],
   NOTIFICATION_FAILED:['课表写入已核验，但课程提醒提交失败。','检查 Scripting 通知权限。'],
 
-  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请在运行状态中记录错误代码并联系维护者处理；不要删除课表日历。'],
+  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录弹出的错误代码并联系维护者处理；不要删除课程日历。'],
   BACKUP_FAILED:['同步或核对前的本地备份无法写入或校验，已停止写入。','检查存储空间，保留现有状态。'],
   CALENDAR_TIMEOUT:['读取 Apple 日历超过 20 秒，未继续写入。','解锁设备，在前台检查日历权限和 iCloud 同步后重试。'],
   CALENDAR_VERIFY:['写后重新扫描尚未确认目标结果，事务已保留，不能报告成功。','等待 iCloud 更新后再运行；会按相同标记恢复，勿手动重复导入 ICS。'],
@@ -1911,8 +1911,8 @@ const ERROR_GUIDE={
 
   COOKIE_DOMAIN:['学校响应包含与当前认证域名不匹配的 Cookie，安全校验拒绝接收；它可能是学校配置问题，也可能是旧脚本解析兼容问题。','更新脚本以安全跳过无效 Cookie，同时保留域名验证。不要关闭域名校验或分享 Cookie 内容。'],
   COOKIE_FORMAT:['学校响应包含格式异常的 Cookie，无法安全解析。','保留最近阶段记录供适配；不要上传含 Cookie 值的网络请求日志。'],
-  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留「运行状态」中的错误代码，不要反复提交密码。'],
-  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
+  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请记录弹出的错误代码，不要反复提交密码。'],
+  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请记录弹出的错误代码供适配。'],
   LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
   AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','点击「立即刷新」通过原生界面重新登录，学校确认认证成功后才会自动保存账号密码。'],
@@ -1956,7 +1956,7 @@ const ERROR_GUIDE={
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
   CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
   CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','请保留错误代码和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -2281,7 +2281,7 @@ function statusText(state){
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
     '\n课表日历：'+calendar+
-    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「登录账号」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
+    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请点击「退出登录」重试':state.signedOut?'\n登录：已退出，点击「登录账号」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+termDetails+noticeWarning+
@@ -3110,7 +3110,7 @@ async function run() {
       const status=menuAuthState(state);
       const confirmedSchool=loadSelectedSchool(null,true);
       const ready=status==='ready';
-      menu.message=status==='cleanup'?'上次退出登录未完成，请重试清理残留凭据；已同步日历保留。':
+      menu.message=status==='cleanup'?'上次退出登录未完成，请再次点击「退出登录」；只处理账号凭据和会话，不删除课程、考试或日历。':
         status==='signed_out'?'已退出登录。请先登录账号；已同步日历保留。':
         ready?'上次刷新：'+localDateTime(state.lastCheck):
         state.authPaused?'登录需要重新验证，请登录账号；已同步日历保留。':
@@ -3120,7 +3120,7 @@ async function run() {
         if(destructive)menu.addDestructiveAction(label);else menu.addAction(label);
         actions.push(kind);
       };
-      if(status==='cleanup')add('重试退出登录','logout',true);
+      if(status==='cleanup')add('退出登录','logout',true);
       else if(ready){
         add('立即刷新','refresh');
         if(confirmedSchool==='nufe'&&activeSchoolId==='nufe')add('空闲教室','rooms');
@@ -3217,7 +3217,7 @@ async function run() {
     }
     if(!interactive){
       // Manual logout is intentional and must never cause background login or warning spam.
-      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
+      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中点击「登录账号」重新登录。');return;}
       if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
       if(state.nextAttempt&&Date.now()<state.nextAttempt){if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
@@ -3261,7 +3261,7 @@ async function run() {
       if(interactive)await notice('部分学期未同步','部分旧学期未能同步，请重新刷新后核查。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
-    if(examError)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
+    if(examError)await notice('考试日程未完成','课程已更新，考试日程尚未确认完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
     if(config.runsWithSiri)Script.setShortcutOutput(examError?'部分完成：考试日程未更新完成。':state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
