@@ -965,7 +965,7 @@ test('first manual sync imports all history and subsequent refreshes rotate one 
  failHistorical=true;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
  a.deepEqual(fetched.splice(0),[161]); // Historical baseline is fresh.
- a.deepEqual(e.state.termErrors,[]);
+ a.deepEqual(Array.from(e.state.termErrors),[]);
  const distant=Date.now()+31*86400000;
  a.deepEqual(e.m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161}]},e.state,false,distant),[161,159]);
  e.state.semesters['159'].lastSuccess=null;
