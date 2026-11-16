@@ -481,6 +481,28 @@ test('USTS exam query writes published times and retains existing future exams w
   items=[];await sync();
   a.equal(e.db.length,0);
 });
+test('legacy exams migrate to the separate calendar with plain titles and no duplicates',async()=>{
+ const e=await env(),m=e.m,state=e.state;
+ m.activateSelectedSchool('nufe');
+ state.examCalendarId=e.other.identifier;
+ const start='2020-01-01T00:00:00.000Z',end='2020-01-01T02:00:00.000Z';
+ const key='[COURSESYNC_EXAM '+state.owner+'] '+JSON.stringify(['旧考试','期末',Date.parse(start)]);
+ const old=e.add({title:'📝 旧考试',start,end,location:'教室101'},
+   {id:'legacy-exam',notes:'同步：2026-11-01 08:00'});
+ state.examIndex={[old.identifier]:key};
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+   text:'<table id="exams"><tr class="tr-empty"><td>暂无考试</td></tr></table>'})};
+ const sync=()=>m.syncExams(http,state,e.store,e.other,()=>{},Date.parse('2026-11-16T00:00:00Z'));
+ await sync();
+ a.equal(e.db.filter(ev=>ev.calendar.identifier===e.calendar.identifier).length,0);
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].title,'旧考试');
+ a.equal(e.db[0].calendar.identifier,e.other.identifier);
+ const id=e.db[0].identifier;
+ await sync();
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,id);
+});
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>null;
