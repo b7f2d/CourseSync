@@ -622,11 +622,14 @@ test('real sign-out removes both device cookies and synced/legacy credentials bu
  a.equal(e.state.signedOut,true);
  a.equal(e.state.authPaused,true);
  a.equal(e.state.runStatus,'signed_out');
- a.equal(e.state.calendarId,e.calendar.identifier);
+ a.equal(e.state.calendarId,null);
+ a.equal(e.state.owner,null);
+ a.deepEqual(Object.keys(e.state.semesters),[]);
  a.equal(JSON.stringify(e.db.map(ev=>({id:ev.identifier,title:ev.title,notes:ev.notes}))),before);
  a.equal(e.requests.length,0);
  a.match(e.m.statusText(e.state),/已退出登录/);
- a.match(e.m.statusText(e.state),/登录账号/);
+ a.equal(e.m.loadSelectedSchool(null,true),null);
+ a.ok(e.keys.has('CourseSync.Local.v1.user-reset'));
  a.doesNotMatch(JSON.stringify(e.state),/local-secret|old-secret|local-session/);
 });
 test('cancelling sign-out retains the existing session and credentials',async()=>{
@@ -649,7 +652,7 @@ test('incomplete Keychain removal stays safely signed out and supports retry',as
  a.equal(e.state.authPaused,true);
  a.equal(e.store.read().signedOut,true);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),true);
- a.match(e.m.statusText(e.state),/已退出登录/);
+ a.match(e.m.statusText(e.state),/退出未完成/);
 });
 test('invalid saved credentials do not leak raw errors',async()=>{const e=await env();e.keys.set('CourseSync.Local.v1.saved-login','{"password":"SENSITIVE"}');a.throws(()=>e.m.readSavedCredentials(),code('CREDENTIALS_INVALID'));});
 test('Cookie storage rejects header injection',async()=>{const e=await env();e.keys.set('CourseSync.Local.v1.cookies',JSON.stringify([{name:'x',value:'bad\r\nInjected',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));a.throws(()=>e.m.readCookieJar(),code('COOKIE_STORAGE'));});
@@ -1278,8 +1281,8 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
    return options.actions.findIndex(x=>x.destructive||x.label==='退出登录');
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
-   a.match(options.message,/Cookie/);
-   a.match(options.message,/课表与日历不会删除/);
+   a.match(options.message,/账号凭据/);
+   a.match(options.message,/Apple 日历/);
    return true;
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
@@ -1289,13 +1292,13 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
  a.equal(e.store.read().signedOut,true);
- a.equal(e.store.read().calendarId,e.calendar.identifier);
- a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
+ a.equal(e.store.read().calendarId,null);
+ a.equal(e.keys.has('CourseSync.Local.v1.school-choice'),false);
  a.equal(e.requests.length,0);
  a.equal(alerts.at(-1).title,'已退出登录');
 });
-test('logout keeps verified school for direct credential re-entry without restoring session',async()=>{
- const e=await env({hostEnv:'index'}),menu=[];
+test('logout resets school and calendar binding and re-enters first-time setup',async()=>{
+ const e=await env({hostEnv:'index'});
  e.keys.set('CourseSync.Local.v1.school-choice','nufe');
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.m.saveCredentials('student','secret');
@@ -1303,13 +1306,15 @@ test('logout keeps verified school for direct credential re-entry without restor
  e.sandbox.__sdk.Dialog.confirm=async()=>true;
  e.sandbox.__sdk.Dialog.alert=async()=>{};
  a.equal(await e.m.signOut(e.state,e.store),true);
- a.equal(e.m.loadSelectedSchool(null,true),'nufe');
+ a.equal(e.m.loadSelectedSchool(null,true),null);
  a.equal(e.state.signedOut,true);
+ a.equal(e.state.calendarId,null);
  a.equal(e.m.hasSavedCredentials(),false);
  e.store.release();
- e.sandbox.__sdk.Dialog.actionSheet=async o=>{menu.push(o.actions.map(x=>x.label));return null;};
+ let setup=0;
+ e.sandbox.__nativeRefreshMock=async()=>{setup++;return null;};
  await e.m.run();
- a.deepEqual(Array.from(menu[0]),['登录账号']);
+ a.equal(setup,1);
 });
 test('after logout, existing calendar opens normal menu rather than first-setup workflow',async()=>{
  const e=await env({hostEnv:'index'}),menus=[];
