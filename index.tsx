@@ -2856,8 +2856,9 @@ async function signOut(state,store){
   store.write(state);
   try{
     if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
-    if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
-    if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
+    // School selection is a non-secret preference. Keep it across logout so
+    // the next login opens the same school's credential form. The login form
+    // still offers an explicit school switch.
     if(activeSchoolId==='nufe'&&Keychain.contains('NUFE.Local.v1.cookies'))
       Keychain.remove('NUFE.Local.v1.cookies');
     removeSavedCredentials();
@@ -2868,7 +2869,7 @@ async function signOut(state,store){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已清除本机会话和 CourseSync 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
+  try{await notice('已退出登录','账号凭据与会话已清除，原学校选择和已同步日历保留。下次点击「登录账号」即可重新登录。');}catch(_){}
   return true;
 }
 async function refreshFailure(code){
