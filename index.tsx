@@ -2621,19 +2621,29 @@ async function finishTx(state,store,adapter,budget) {
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
   await refreshReminders(state,store);
 }
-function selectTermIds(info,state,interactive){
+function selectTermIds(info,state,interactive,now=Date.now()){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   const history=available.filter(sid=>sid!==info.current).sort((a,b)=>a-b);
   if(!history.length)return [info.current];
-  // The initial manual sync imports all missing history. Subsequent runs
-  // share a persisted rotation, with at most one historical term per run.
+  // The first foreground run attempts a full import. Interrupted initialization
+  // subsequently picks missing baselines first until every term is covered.
   if(interactive&&!Object.values(state.semesters||{}).some(term=>term.lastSuccess))
     return [info.current,...history];
-  const next=history.find(sid=>sid>state.lastHistoryTerm)??history[0];
+  const pending=history.filter(sid=>!state.semesters[sid]?.lastSuccess);
+  if(pending.length)return [info.current,pending[0]];
+  // A recent archived term is checked weekly; older terms monthly. Each run
+  // checks at most one due term, with a persistent fairness cursor.
+  const due=history.filter(sid=>{
+    const last=Date.parse(state.semesters[sid]?.lastSuccess||'');
+    const days=info.current-sid<=1?7:30;
+    return !Number.isFinite(last)||now-last>=days*DAY;
+  });
+  if(!due.length)return [info.current];
+  const next=due.find(sid=>sid>state.lastHistoryTerm)??due[0];
   return [info.current,next];
 }
-async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
+async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null,onCurrentSynced=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
@@ -2689,6 +2699,10 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
   state.termErrors=[];
   for(const sid of sids) {
+    // Reserve time for the current term and exam data before a historical fetch.
+    if(sid!==info.current&&Date.now()-begun>limit-(interactive?60000:35000)){
+      state.historyDeferredAt=new Date().toISOString();store.write(state);break;
+    }
     try {
     budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
     let anchor,normalized;
@@ -2726,6 +2740,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
       if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
       state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
     }
+    if(sid===info.current&&onCurrentSynced)await onCurrentSynced(http,budget);
     if(sid!==info.current){
       // Advance even on a recoverable historical error so one term cannot
       // prevent the remaining terms from being checked.
