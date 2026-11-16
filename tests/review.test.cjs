@@ -626,7 +626,7 @@ test('real sign-out removes both device cookies and synced/legacy credentials bu
  a.equal(JSON.stringify(e.db.map(ev=>({id:ev.identifier,title:ev.title,notes:ev.notes}))),before);
  a.equal(e.requests.length,0);
  a.match(e.m.statusText(e.state),/已退出登录/);
- a.match(e.m.statusText(e.state),/立即刷新/);
+ a.match(e.m.statusText(e.state),/登录账号/);
  a.doesNotMatch(JSON.stringify(e.state),/local-secret|old-secret|local-session/);
 });
 test('cancelling sign-out retains the existing session and credentials',async()=>{
