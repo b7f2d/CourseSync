@@ -886,12 +886,48 @@ test('main menu has only actions and relies on native dismissal',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
  a.equal(menus[0].cancelButton,false);
  a.deepEqual(Array.from(menus[0].actions,x=>x.label),['立即刷新','空闲教室','退出登录']);
  a.deepEqual(Array.from(menus[0].actions,x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
+});
+test('free-room entry is hidden before NUFE login and when signed out',async()=>{
+ for(const signedOut of [false,true]){
+  const e=await env({hostEnv:'index'}),menus=[];
+  e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+  e.state.signedOut=signedOut;
+  e.state.lastCheck=signedOut?'2026-11-16T10:00:00.000Z':null;
+  if(signedOut)e.keys.set('CourseSync.Local.v1.cookies','[]');
+  e.store.write(e.state);e.store.release();
+  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+  await e.m.run();
+  a.equal(menus.length,1);
+  a.equal(menus[0][0],'登录账号');
+  a.equal(menus[0].includes('空闲教室'),false);
+ }
+});
+test('free-room entry is exclusive to authenticated NUFE, not USTS',async()=>{
+ for(const school of ['nufe','usts']){
+  const e=await env({hostEnv:'index'}),menus=[];
+  e.m.activateSelectedSchool(school);
+  e.keys.set('CourseSync.Local.v1.school-choice',school);
+  e.keys.set(school==='nufe'?'CourseSync.Local.v1.cookies':'CourseSync.Local.v1.cookies.usts','[]');
+  e.m.saveCredentials('test-account','test-secret');
+  e.state.lastCheck='2026-11-16T10:00:00.000Z';
+  e.store.write(e.state);e.store.release();
+  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+  await e.m.run();
+  a.equal(menus[0][0],'立即刷新');
+  a.equal(menus[0].includes('空闲教室'),school==='nufe');
+ }
+});
+test('school selection and credential screens contain no pre-login free-room entry',()=>{
+ const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
+ a.doesNotMatch(native,/查询空闲教室|kind:\s*['"]freeRooms['"]/);
 });
 test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
  const e=await env({hostEnv:'index'}),alerts=[];
@@ -1243,7 +1279,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['登录账号','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1258,7 +1294,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['登录账号']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1270,7 +1306,7 @@ test('re-login opens credentials for the saved school without showing the school
   const store=new m.Store();store.acquire();
   store.write({...e.state,signedOut:true,authPaused:true});store.release();
   e.keys.set(id==='nufe'?'CourseSync.Local.v1.school-choice':'CourseSync.Local.v1.school',id);
-  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
+  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='登录账号');
   e.sandbox.__sdk.Navigation={present:async()=>null};
   let schoolPrompts=0;
   const credentialPrompts=[];
@@ -1307,7 +1343,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['登录账号','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -1995,6 +2031,8 @@ test('NUFE free classroom query supports morning, afternoon and evening with sma
 test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes explanation, and triggers query without calendar sync',async()=>{
  const e=await env({hostEnv:'index'});
  e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
  e.store.write(e.state);
  e.store.release();
  const dbCountBefore=e.db.length;
