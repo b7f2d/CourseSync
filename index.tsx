@@ -3109,7 +3109,6 @@ async function run() {
       if(canFreeRooms)menu.addAction('空闲教室');
       const canSignOut=canOfferSignOut(state);
       if(canSignOut)menu.addDestructiveAction('退出登录');
-      menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
       if(canFreeRooms&&selected===1){
         let progress=null;
