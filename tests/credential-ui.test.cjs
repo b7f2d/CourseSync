@@ -41,7 +41,7 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.match(native,/schools\.map\(s=><Text key=\{s\.id\} tag=\{s\.id\}>\{s\.name\}<\/Text>\)/);
  assert.match(native,/title="下一步：账号密码"/);
  assert.match(native,/navigationTitle="账号密码"/);
- assert.match(native,/title="开始刷新"/);
+ assert.match(native,/title="登录并同步"/);
  assert.match(native,/title="使用现有登录信息继续"/);
  assert.match(native,/textContentType="username"/);
  assert.match(native,/textContentType="password"/);
