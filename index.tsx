@@ -1525,7 +1525,7 @@ function validateState(s){
   const allIds=new Set();
   assert(s.owner===null||typeof s.owner==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(s.owner),'STATE_CORRUPT');
   if(s.historyAttemptAt!=null)assert(typeof s.historyAttemptAt==='object'&&!Array.isArray(s.historyAttemptAt)&&
-    Object.entries(s.historyAttemptAt).every(([sid,date])=>/^\\d+$/.test(sid)&&Number.isFinite(Date.parse(date))),'STATE_CORRUPT');
+    Object.entries(s.historyAttemptAt).every(([sid,date])=>/^\d+$/.test(sid)&&Number.isFinite(Date.parse(date))),'STATE_CORRUPT');
   if(s.examCalendarId!=null)assert(typeof s.examCalendarId==='string'&&s.examCalendarId.length>0&&
     s.examCalendarId!==s.calendarId,'STATE_CORRUPT');
   if(s.examIndex!=null)assert(s.owner&&typeof s.examIndex==='object'&&!Array.isArray(s.examIndex)&&
