@@ -795,8 +795,8 @@ test('main menu keeps refresh, status and available sign-out',async()=>{
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','空闲教室','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
 });
 test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
@@ -1141,7 +1141,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1156,7 +1156,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1205,7 +1205,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -1928,7 +1928,7 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
    };
  };
  await e.m.run();
- a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,空闲教室,退出登录');
+ a.equal(actionSheetLabels.join(','),'立即刷新,空闲教室,退出登录');
  a.equal(progressShown,1);
  a.equal(progressClosed,1);
  a.equal(progressClosedWhenNotice,true);
