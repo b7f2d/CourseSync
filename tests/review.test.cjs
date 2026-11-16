@@ -1270,6 +1270,8 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  const e=await env({hostEnv:'index'}),menus=[],alerts=[];
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.m.saveCredentials('student','test-only-secret');
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
@@ -1282,7 +1284,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['登录账号','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1338,7 +1340,7 @@ test('successful verified synchronization clears signed-out state without changi
  a.equal(e.state.calendarId,e.calendar.identifier);
  a.equal(e.db.length,1);
 });
-test('a crash after persisting logout intent still offers credential cleanup retry',async()=>{
+test('residual credentials after a completed logout never show logout again',async()=>{
  const e=await env({hostEnv:'index'}),menus=[];
  e.state.signedOut=true;e.state.authPaused=true;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
@@ -1346,8 +1348,35 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['登录账号','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['登录账号']);
  a.equal(e.requests.length,0);
+});
+test('incomplete logout exposes cleanup retry but no login or classrooms',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
+ e.state.signedOut=true;e.state.authPaused=true;e.state.lastError='LOGOUT_INCOMPLETE';
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+ await e.m.run();
+ a.deepEqual(Array.from(menus[0]),['重试退出登录']);
+ a.equal(e.requests.length,0);
+});
+test('authentication state machine separates signed-out, paused, ready and unconfigured states',async()=>{
+ const e=await env(),m=e.m;
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.m.saveCredentials('student','test-only');
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
+ a.equal(m.menuAuthState(e.state),'ready');
+ e.state.authPaused=true;
+ a.equal(m.menuAuthState(e.state),'login');
+ e.state.authPaused=false;e.state.signedOut=true;
+ a.equal(m.menuAuthState(e.state),'signed_out');
+ a.equal(m.canOfferSignOut(e.state),false);
+ e.state.lastError='LOGOUT_INCOMPLETE';
+ a.equal(m.menuAuthState(e.state),'cleanup');
+ e.state.lastError=null;e.state.signedOut=false;
+ e.keys.delete('CourseSync.Local.v1.school-choice');
+ a.equal(m.menuAuthState(e.state),'login');
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
  const e=await env(),seen=[];
