@@ -1219,10 +1219,10 @@ function ustsScheduleTerms(html){
   const current=ustsTerm(year.current,term.current);
   const semesters=[];
   // The year dropdown includes future years and decades before enrollment.
-  for(const y of year.options.filter(y=>y>=year.current-5&&y<=year.current)){
+  for(const y of year.options.filter(y=>y>=year.current-5&&y<=year.current+1)){
     for(const xqm of term.options.filter(x=>x===3||x===12||(x===16&&term.current===16))){
       const id=ustsTerm(y,xqm);
-      if(id<=current)semesters.push({id,name:y+'-'+(y+1)+' 第'+({3:1,12:2,16:3}[xqm])+'学期'});
+      semesters.push({id,name:y+'-'+(y+1)+' 第'+({3:1,12:2,16:3}[xqm])+'学期'});
     }
   }
   assert(semesters.some(s=>s.id===current),'SCHEMA');
