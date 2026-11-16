@@ -842,6 +842,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  // The first foreground refresh creates a dedicated iCloud exam calendar.
+ e.sandbox.__sdk.Dialog.prompt=async options=>{a.equal(options.title,'创建考试日历');return '考试安排';};
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
  const get=e.m.HTTP.prototype.get;
  e.m.HTTP.prototype.get=async url=>{
@@ -897,12 +898,13 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const alerts=[],all=[e.other];
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:opts.title==='Custom Calendar'?'new-icloud':'exam-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
- e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
+ e.sandbox.__sdk.Dialog.prompt=async options=>options.title==='创建考试日历'?'我的考试':'Custom Calendar';
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
  a.equal(e.store.read().calendarId,'new-icloud');
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
  a.equal(e.store.read().examCalendarId,'exam-icloud');
+ a.equal(all.find(c=>c.identifier==='exam-icloud').title,'我的考试');
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
 });
