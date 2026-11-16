@@ -2967,20 +2967,14 @@ async function run() {
       publishWidgetCache(state);
       const menu=new Alert();menu.title='CourseSync';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
-      menu.addAction('立即刷新');menu.addAction('运行状态');
+      menu.addAction('立即刷新');
       const canFreeRooms=activeSchoolId==='nufe';
       if(canFreeRooms)menu.addAction('空闲教室');
       const canSignOut=canOfferSignOut(state);
       if(canSignOut)menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
-      if(selected===1){
-        const recovery=await showRunStatus(state,store);
-        if(!recovery)return;
-        if(recovery==='cookie')action=5;
-        else {await applyRecovery(recovery,state,store);return;}
-      }
-      if(canFreeRooms&&selected===2){
+      if(canFreeRooms&&selected===1){
         let progress=null;
         try{
           if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
@@ -2998,7 +2992,7 @@ async function run() {
         }
         return;
       }
-      if(canSignOut&&selected===(canFreeRooms?3:2))action=13;
+      if(canSignOut&&selected===(canFreeRooms?2:1))action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
