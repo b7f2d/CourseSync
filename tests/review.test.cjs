@@ -632,6 +632,51 @@ test('real sign-out removes both device cookies and synced/legacy credentials bu
  a.ok(e.keys.has('CourseSync.Local.v1.user-reset'));
  a.doesNotMatch(JSON.stringify(e.state),/local-secret|old-secret|local-session/);
 });
+test('logout clears all school scopes, cached files, bindings and widget snapshot but keeps Apple events',async()=>{
+ const e=await env(),m=e.m;
+ const ev=e.add(lesson());
+ e.state.examCalendarId=e.other.identifier;
+ e.state.lastCheck='2026-11-16T10:00:00.000Z';
+ e.baseline([lesson()]);
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.keys.set('CourseSync.Local.v1.school','nufe');
+ e.keys.set('CourseSync.Local.v1.person','student-1');
+ e.keys.set('CourseSync.Local.v1.student','student-1');
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ m.saveCredentials('student','password-nufe');
+ m.activateSelectedSchool('usts');
+ m.saveCredentials('student','password-usts');
+ e.keys.set('CourseSync.Local.v1.cookies.usts','[]');
+ m.activateSelectedSchool('nufe');
+ e.store.write(e.state);
+ const root='/local/CourseSync/';
+ e.files.set(root+'CourseSync-v2/同步前快照.json','sensitive-data');
+ e.files.set(root+'CourseSync-v2.usts','directory');
+ e.files.set(root+'CourseSync-v2.usts/state-0000000001.json','old-usts-state');
+ e.sandbox.__sdk.Dialog.confirm=async()=>true;
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ a.equal(await m.signOut(e.state,e.store),true);
+ a.equal(e.state.owner,null);
+ a.equal(e.state.calendarId,null);
+ a.equal(e.state.examCalendarId,undefined);
+ a.equal(e.state.lastCheck,undefined);
+ a.deepEqual(Object.keys(e.state.semesters),[]);
+ a.equal(m.loadSelectedSchool(null,true),null);
+ for(const key of ['CourseSync.Local.v1.school-choice','CourseSync.Local.v1.school',
+   'CourseSync.Local.v1.person','CourseSync.Local.v1.student',
+   'CourseSync.Local.v1.cookies','CourseSync.Local.v1.cookies.usts',
+   'CourseSync.v1.icloud-credentials','CourseSync.v1.icloud-credentials.usts'])
+   a.equal(e.keys.has(key),false,key);
+ a.ok(e.keys.has('CourseSync.Local.v1.user-reset'));
+ a.equal(e.files.has(root+'CourseSync-v2/同步前快照.json'),false);
+ a.equal(e.files.has(root+'CourseSync-v2.usts/state-0000000001.json'),false);
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,ev.identifier);
+ const cache=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
+ a.deepEqual(cache.events,[]);
+ a.equal(typeof cache.lastCheck,'string');
+ a.doesNotThrow(()=>m.validateState(e.store.read()));
+});
 test('cancelling sign-out retains the existing session and credentials',async()=>{
  const e=await env();
  e.keys.set('CourseSync.Local.v1.cookies','[]');
