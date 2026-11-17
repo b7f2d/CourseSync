@@ -11,7 +11,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
    'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";');
 async function env({mode="sync",hostEnv="intent"}={}){
- const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
+ const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],pendingNotifications=new Map(),requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
  const calendar={identifier:'calendar-dedicated',title:'课表',allowsContentModifications:true,isSubscribed:false},other={...calendar,identifier:'calendar-personal',title:'个人'};
   const calendars=[calendar,other];
@@ -27,7 +27,9 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const sandbox={module:{exports:{}},process:{versions:{node:'24'}},console:{log(){},error(){}},FileManager:{local:()=>fm},UUID:{string:()=>crypto.randomUUID()},Timer:{schedule:(ms,repeat,cb)=>{const t=setTimeout(cb,ms);return {invalidate:()=>clearTimeout(t)}}},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k),set:(k,v)=>keys.set(k,v),remove:k=>keys.delete(k)},CalendarEvent:Event,Notification,Calendar:{forEvents:async()=>[calendar,other]},config:{runsInApp:false,runsWithSiri:true},args:{shortcutParameter:'sync'},Script:{name:()=> 'CourseSync',complete(){},setShortcutOutput(s){sandbox.output=s;}},Alert:class{constructor(){throw Error('UNEXPECTED FRONTEND PROMPT')}},Request:class{constructor(){throw Error('NETWORK NOT MOCKED')}}};
  Event.getAll=Event.between;
  const nativeScript={name:'CourseSync',env:hostEnv,queryParameters:mode==='menu'?{mode:'menu'}:{},exit:r=>{sandbox.output=r;},createRunURLScheme:(name,q)=>'scripting://run/'+encodeURIComponent(name)+'?mode='+q.mode};
- const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>calendars,presentChooser:async()=>[calendar],create:async opts=>({identifier:'exam-created-'+(++serial),title:opts.title,source:{title:'iCloud',type:'calDAV'},allowsContentModifications:true,isSubscribed:false,save:async function(){calendars.push(this);}})},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
+ const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>calendars,presentChooser:async()=>[calendar],create:async opts=>({identifier:'exam-created-'+(++serial),title:opts.title,source:{title:'iCloud',type:'calDAV'},allowsContentModifications:true,isSubscribed:false,save:async function(){calendars.push(this);}})},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},removeAllPendingsOfCurrentScript:async()=>{
+   for(const [id,entry] of pendingNotifications)if(entry.script===nativeScript.name)pendingNotifications.delete(id);
+ }},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
  sandbox.__sdk=sdk;sandbox.__COURSESYNC_TEST__=true;sandbox.setTimeout=setTimeout;sandbox.clearTimeout=clearTimeout;sandbox.setInterval=setInterval;sandbox.clearInterval=clearInterval;sandbox.crypto=crypto.webcrypto;
  sandbox.Data={fromBase64String:value=>({getBytes:()=>Buffer.from(value,'base64')})};
  await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',sandbox);
@@ -36,7 +38,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const state={version:1,owner:'installation-owner',calendarId:calendar.identifier,anchors:{'161':'2026-09-07'},semesters:{},minutes:0,failures:0};
  function add(rec,{owner=state.owner,cal=calendar,id,notes,offset=0,allDay=false}={}){const e=new Event();e.identifier=id||'event-'+(++serial);e.calendar=cal;e.title=rec.title;e.location=rec.location;e.notes=notes===undefined?m.notes(rec,owner,'2026-11-01T00:00:00Z'):notes;e.startDate=new Date(Date.parse(rec.start)+offset);e.endDate=new Date(Date.parse(rec.end)+offset);e.isAllDay=allDay;db.push(e);return e;}
  function baseline(events){state.semesters['161']={events,index:{},anchor:'2026-09-07',name:'2026-2027-1',lastSuccess:'2026-11-01T00:00:00Z'};return state;}
- return {m,sandbox,store,state,db,files,keys,widgetRecords,notices,requests,calendar,other,calendars,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
+ return {m,sandbox,store,state,db,files,keys,widgetRecords,notices,pendingNotifications,requests,calendar,other,calendars,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
 }
 const lesson=(extra={})=>({id:'lesson-1',sid:'161',title:'高等数学',week:1,su:1,eu:2,start:'2026-09-07T00:00:00.000Z',end:'2026-09-07T01:40:00.000Z',location:'仙林 教A101',teachers:['张老师'],...extra});
 const raw=(activities)=>({studentTableVms:[{code:'sample-local',activities}]});
@@ -576,7 +578,7 @@ test('legacy exams migrate to the separate calendar with plain titles and no dup
  a.equal(e.db[0].identifier,id);
 });
 
-test('background sync refreshes bound exams and only notifies verified changes once',async()=>{
+test('background sync imports and updates bound exams silently',async()=>{
  const e=await env();
  e.state.examCalendarId=e.other.identifier;
  const future=new Date(Date.now()+9*86400000);
@@ -596,15 +598,15 @@ test('background sync refreshes bound exams and only notifies verified changes o
  await executeDaily(e);
  a.equal(e.store.read().lastExamError,null);
  a.equal(e.db.filter(v=>v.calendar.identifier===e.other.identifier).length,1);
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,0);
+ a.equal(e.notices.length,0);
  location='202';
  await e.m.run();
  a.equal(schoolExam().location,'202');
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,1);
+ a.equal(e.notices.length,0);
  const id=schoolExam().identifier;
  await e.m.run();
  a.equal(schoolExam().identifier,id);
- a.equal(e.notices.filter(n=>n.title==='CourseSync · 日程变更').length,1);
+ a.equal(e.notices.length,0);
 });
 
 test('initialization retries missing historical terms without starving peers',async()=>{
@@ -786,9 +788,12 @@ test('logout clears all school scopes, cached files, bindings and widget snapsho
  e.files.set(root+'CourseSync-v2/同步前快照.json','sensitive-data');
  e.files.set(root+'CourseSync-v2.usts','directory');
  e.files.set(root+'CourseSync-v2.usts/state-0000000001.json','old-usts-state');
+ e.pendingNotifications.set('scripting-generated-id',{script:'CourseSync',title:'课程即将开始'});
+ e.pendingNotifications.set('unrelated-id',{script:'OtherScript',title:'课程即将开始'});
  e.sandbox.__sdk.Dialog.confirm=async()=>true;
  e.sandbox.__sdk.Dialog.alert=async()=>{};
  a.equal(await m.signOut(e.state,e.store),true);
+ a.deepEqual([...e.pendingNotifications.keys()],['unrelated-id']);
  a.equal(e.state.owner,null);
  a.equal(e.state.calendarId,null);
  a.equal(e.state.examCalendarId,undefined);
@@ -976,7 +981,7 @@ test('end-to-end daily refresh adds, adjusts, cancels and purges old series with
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
  e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.filter(n=>/日程变更/.test(n.title)).length,1);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
+ const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
  // A second entire run must change neither logical nor native event IDs.
  const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
@@ -1183,7 +1188,44 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
-test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.filter(n=>/失败/.test(n.title)).length,0);});
+test('opening the menu clears pending old school alerts before any sync or account change',async()=>{
+ const e=await env({hostEnv:'index',mode:'menu'});
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.keys.set('CourseSync.Local.v1.school','nufe');
+ e.state.notificationMode='result-only-v1.9';
+ e.store.write(e.state);e.store.release();
+ e.pendingNotifications.set('scripting-generated-id',{script:'CourseSync',title:'课程即将开始',body:'城市社会学'});
+ e.pendingNotifications.set('nufe-local-class-other-owner-lesson',{script:'CourseSync',title:'课程即将开始'});
+ e.pendingNotifications.set('other-script-id',{script:'OtherScript',title:'课程即将开始'});
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>{
+   a.deepEqual([...e.pendingNotifications.keys()],['other-script-id']);
+   return -1;
+ };
+ await e.m.run();
+ a.deepEqual([...e.pendingNotifications.keys()],['other-script-id']);
+ a.equal(e.notices.length,0);
+ a.equal(e.requests.length,0);
+});
+
+test('background refresh discards obsolete change notices and retries pending notification cleanup',async()=>{
+ const e=await env();
+ e.state.minutes=10;
+ e.state.pendingChangeNotices=[{id:'old-change',body:'旧课程变更'}];
+ e.pendingNotifications.set('old-request',{script:'CourseSync',title:'课程即将开始'});
+ const notifications=e.sandbox.__sdk.Notification;
+ const clearPending=notifications.removeAllPendingsOfCurrentScript;
+ notifications.removeAllPendingsOfCurrentScript=async()=>{throw Error('temporarily unavailable');};
+ e.baseline([lesson()]);e.add(lesson());
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.store.read().pendingChangeNotices,undefined);
+ a.equal(e.pendingNotifications.size,1);
+ notifications.removeAllPendingsOfCurrentScript=clearPending;
+ await e.m.run();
+ a.equal(e.pendingNotifications.size,0);
+ a.equal(e.notices.length,0);
+});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
 test('first setup labels the course and exam calendars separately and binds both custom names',async()=>{
  const e=await env({hostEnv:'index'});
@@ -1289,7 +1331,6 @@ test('Scripting process/module compatibility globals do not turn production star
 test('Scripting 3.2.1 entry parses as an ordinary script without a module async wrapper',()=>{a.doesNotThrow(()=>new vm.Script(source));});
 test('production ordinary-script entry runs even with process and module compatibility globals',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
 test('storage-constructor failures now reach startup error UI',async()=>{const e=await env(),alerts=[];e.store.release();e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(alerts.length,1);a.match(alerts[0].title,/启动失败/);a.match(alerts[0].message,/STARTUP_TYPE/);a.doesNotMatch(alerts[0].message,/private native detail/);});
-test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
 test('widget has a single dedicated Scripting entry with no legacy ListWidget renderer',()=>{
  const native=fs.readFileSync(__dirname+'/../index.tsx','utf8');
