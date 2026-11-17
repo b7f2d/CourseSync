@@ -977,13 +977,26 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
  a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
  a.match(e.m.actionFor('CALENDAR_READONLY'),/检查该日历是否可编辑/);
 });
-test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
+test('end-to-end daily refresh updates courses silently and preserves unmatched events',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
- e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
+ e.baseline([old,cancelled]);e.add(old);e.add(cancelled);
+ for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});
+ const personal=e.add(old,{cal:e.other,notes:'personal'});
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
- // A second entire run must change neither logical nor native event IDs.
- const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
+ const saved=e.store.read();
+ const managed=()=>e.db.filter(ev=>e.m.eventRecord(ev,saved.owner,e.m.storedEventIndex(saved)));
+ a.equal(managed().length,2);
+ a.ok(managed().every(ev=>ev.location==='教B202'));
+ a.ok(e.db.some(ev=>ev.identifier===personal.identifier));
+ // Two old occurrences match the new timetable. The unmatched one stays.
+ a.equal(e.db.filter(ev=>ev.identifier==='old-ics').length,1);
+ a.equal(e.notices.length,0);
+ a.equal(saved.runStatus,'success');a.equal(saved.tx,null);
+ a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
+ const ids=managed().map(ev=>ev.identifier).sort();
+ await e.m.run();
+ a.deepEqual(managed().map(ev=>ev.identifier).sort(),ids);
+ a.equal(e.notices.length,0);
 });
 test('end-to-end malformed source preserves every old event and reports one failure',async()=>{const e=await env();e.baseline([lesson()]);const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});loggedIn(e,{});await executeDaily(e);a.ok(e.db.some(x=>x.identifier===own.identifier));a.ok(e.db.some(x=>x.identifier===legacy.identifier));a.equal(e.requests.length,0);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.equal(e.store.read().lastError,'SCHEMA');});
 test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'EMPTY_SOURCE');a.match(e.notices[0].title,/失败/);});
@@ -1407,6 +1420,26 @@ test('verified duplicated legacy title is removed without touching kept lesson',
   e.store.write(e.state);
   await e.m.removeMatchedOldCourses(e.calendar,e.state,e.store,'161',()=>{});
   a.equal(e.db.length,1);a.equal(e.db[0].identifier,good.identifier);
+});
+
+test('matching courses from another source are protected in a shared calendar',async()=>{
+ for(const school of ['nufe','usts']){
+  const e=await env(),m=e.m,rec=lesson();
+  m.activateSelectedSchool(school);
+  const store=school==='nufe'?e.store:new m.Store();
+  if(school!=='nufe')store.acquire();
+  e.baseline([rec]);
+  const current=e.add(rec);
+  e.state.semesters['161'].index={[rec.id]:current.identifier};
+  const otherMarked=e.add(rec,{owner:'other-school-owner'});
+  const otherIndexed=e.add(rec,{notes:m.readableNotes(rec,'2026-11-02T03:00:00Z')});
+  const oldImport=e.add(rec,{notes:'legacy calendar import'});
+  store.write(e.state);
+  await m.removeMatchedOldCourses(e.calendar,e.state,store,'161',()=>{});
+  a.deepEqual(e.db.map(ev=>ev.identifier),[current.identifier,otherMarked.identifier,otherIndexed.identifier]);
+  a.ok(e.requests.some(([operation,id])=>operation==='remove'&&id===oldImport.identifier));
+  store.release();
+ }
 });
 
 test('renaming a bound calendar never triggers an automatic rename',async()=>{

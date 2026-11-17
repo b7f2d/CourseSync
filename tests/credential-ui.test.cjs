@@ -114,13 +114,14 @@ test('routine refresh and re-login keep using the selected school',()=>{
  assert.doesNotMatch(index,/menu\.addAction\('切换学校'\)/);
 });
 test('expired foreground cookie automatically retries saved credentials',()=>{
- const start=index.indexOf('async function coursePage(');
- const end=index.indexOf('// Immutable generation files',start);
+ const start=index.indexOf('async function readNufeSession(');
+ const end=index.indexOf('async function coursePage(',start);
  const login=index.slice(start,end);
  assert.match(login,/manualAuth\?\.kind==='credentials'\?manualAuth:readSavedCredentials\(\)/);
  assert.match(login,/passwordLogin\(http,r,account\.username,account\.password,interactive,onStage\)/);
  assert.match(login,/if\(!interactive\)fail\('AUTH_REQUIRED'\)/);
- assert.match(login,/if\(shouldSave\)\{[\s\S]*?'ACCOUNT_CHANGED'\);\s*saveCredentials\(account\.username,account\.password\)/);
+ assert.match(login,/return \{page,credentials:shouldSave\?account:null\}/);
+ assert.match(index,/const accountKey=verifySourceIdentity\(info\.person\);\s*if\(credentials\)saveCredentials/);
  assert.match(login,/\['LOGIN_FAILED','AUTO_LOGIN_REJECTED'\]/);
  assert.match(login,/const fresh=await http\.get\(SSO\)/);
 });
