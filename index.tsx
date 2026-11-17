@@ -3181,17 +3181,10 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
   }
   stage('正在查询空闲教室...');
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
-  const tomorrow=localDateTime(new Date(now+86400000).toISOString()).slice(0,10);
-  const [todayLines,tmrwLines]=await Promise.all([
-    source.readFreeRooms(http,today),
-    source.readFreeRooms(http,tomorrow)
-  ]);
+  const todayLines=await source.readFreeRooms(http,today);
   const message=[
     `【今天 ${today}】`,
-    ...todayLines,
-    '',
-    `【明天 ${tomorrow}】`,
-    ...tmrwLines
+    ...todayLines
   ].join('\n');
   if(progress)await progress.finish();
   await notice('空闲教室',message);

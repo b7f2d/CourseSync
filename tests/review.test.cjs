@@ -2369,35 +2369,36 @@ test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms
  a.equal(sepLines.join('\n'),'• 上午：博远楼JC101\n• 下午：博远楼JC203\n• 晚上：博观楼JB105');
 });
 
-test('NUFE free classroom query supports morning, afternoon and evening with smart room merging without modifying calendar',async()=>{
+test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
  const e=await env();
  const dbCountBefore=e.db.length;
+ const requestedSegments=[];
  const http={
    get:async(url)=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
    json:async(url,{body})=>{
      const p=JSON.parse(body);
+     requestedSegments.push(p.dateTimeSegmentCmd);
      const units=p.dateTimeSegmentCmd.units;
-     const isTomorrow=p.dateTimeSegmentCmd.startDateTime.endsWith('17');
-     if(!isTomorrow){
        // 今天：上午、下午为同一个博远楼JC101，晚上为博远楼JC403 -> 合并为白天+晚上
        if(units.includes('1'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        if(units.includes('5'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
-     } else {
-       // 明天：全天为同一个博观楼JB101 -> 合并为全天
-       return {roomList:[{id:201,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1}]};
-     }
    }
  };
  let noticeTitle=null,noticeMsg=null;
  e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
- const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
+ const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-15T16:30:00Z'));
  a.match(msg,/【今天 2026-11-16】/);
  a.ok(msg.includes('白天：博远楼JC101'));
  a.ok(msg.includes('晚上：博远楼JC403'));
- a.match(msg,/【明天 2026-11-17】/);
- a.ok(msg.includes('全天：博观楼JB101'));
-  a.equal(noticeTitle,'空闲教室');
+ a.doesNotMatch(msg,/明天|2026-11-17/);
+ a.equal(requestedSegments.length,3);
+ for(const segment of requestedSegments){
+   a.equal(segment.startDateTime,'2026-11-16');
+   a.equal(segment.endDateTime,'2026-11-16');
+ }
+ a.equal(noticeTitle,'空闲教室');
+ a.equal(noticeMsg,msg);
  a.equal(e.db.length,dbCountBefore);
 });
 
