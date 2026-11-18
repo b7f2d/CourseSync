@@ -16,3 +16,5 @@ jobs:
           node-version: '22'
       - name: Run regressions
         run: node --test tests/*.test.cjs
+      - name: Check Scripting ZIP construction
+        run: bash scripts/package.sh

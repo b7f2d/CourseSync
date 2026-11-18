@@ -2,7 +2,7 @@
   "name": "CourseSync",
   "icon": "calendar",
   "color": "#2456A6",
-  "description": "CourseSync：将课程与考试日程同步到 Apple 日历，支持快捷指令自动刷新。",
+  "description": "CourseSync：本地同步课程至 Apple 日历，支持快捷指令自动更新。",
   "localizedNames": {
     "en": "CourseSync",
     "zh": "CourseSync",
