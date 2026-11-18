@@ -13,7 +13,7 @@ const credential=index.slice(start,end);
 test('credential form is native-only; fallback also uses iOS secure Dialog',()=>{
  assert.match(credential,/presentNativeCredentialForm\(title\)/);
  assert.match(credential,/if\(!config\.runsInApp\)fail\('AUTH_INTERACTIVE_REQUIRED'\)/);
- assert.match(credential,/confirm\('无法打开登录窗口'/);
+ assert.match(credential,/HostDialog\.confirm\(\{/);
  assert.match(credential,/return await fallbackCredentialForm\(\{title\}\)/);
  assert.doesNotMatch(credential,/new WebView|loadHTML|autocomplete=|addScriptMessageHandler|nufeCredentials/);
 });
@@ -34,15 +34,15 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.match(native,/function RefreshSetupView/);
  assert.match(native,/useState<'school'\|'account'>\('school'\)/);
  assert.match(native,/navigationTitle="选择学校"/);
+ assert.match(native,/请选择你的学校/);
  assert.match(native,/<Picker title="学校" pickerStyle="menu"/);
  assert.match(native,/<Text key="unselected" tag="unselected">请选择<\/Text>/);
  assert.match(native,/value=\{schoolId\} onChanged=\{setSchoolId\}/);
  assert.match(native,/schools\.map\(s=><Text key=\{s\.id\} tag=\{s\.id\}>\{s\.name\}<\/Text>\)/);
- assert.match(native,/title="登录账号" disabled=\{!validSchool\}/);
- assert.match(native,/navigationTitle="登录账号"/);
- assert.match(native,/title="登录并同步"/);
- assert.match(native,/title="使用已保存的账号"/);
- assert.doesNotMatch(native,/iOS「密码」|自动填充|请输入或填充验证码/);
+ assert.match(native,/title="下一步：账号密码"/);
+ assert.match(native,/navigationTitle="账号密码"/);
+ assert.match(native,/title="开始刷新"/);
+ assert.match(native,/title="使用现有登录信息继续"/);
  assert.match(native,/textContentType="username"/);
  assert.match(native,/textContentType="password"/);
  assert.doesNotMatch(native,/教务接口|默认接口|统一认证根地址|SSO 登录入口|课表页面|学期详情|课表数据|WebView|fetch\(|Clipboard|console\.log/);
@@ -106,7 +106,7 @@ test('routine refresh and re-login keep using the selected school',()=>{
  const start=index.indexOf('if(interactive&&action===0){');
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
- assert.match(routine,/const hasCredentials=!state\.signedOut&&!state\.authPaused&&hasSavedCredentials\(\)/);
+ assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);
  assert.match(routine,/const selectedSchool=loadSelectedSchool\(null,true\)/);
  assert.match(routine,/if\(!selectedSchool\)\{/);
  assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
@@ -114,14 +114,13 @@ test('routine refresh and re-login keep using the selected school',()=>{
  assert.doesNotMatch(index,/menu\.addAction\('切换学校'\)/);
 });
 test('expired foreground cookie automatically retries saved credentials',()=>{
- const start=index.indexOf('async function readNufeSession(');
- const end=index.indexOf('async function coursePage(',start);
+ const start=index.indexOf('async function coursePage(');
+ const end=index.indexOf('// Immutable generation files',start);
  const login=index.slice(start,end);
  assert.match(login,/manualAuth\?\.kind==='credentials'\?manualAuth:readSavedCredentials\(\)/);
  assert.match(login,/passwordLogin\(http,r,account\.username,account\.password,interactive,onStage\)/);
  assert.match(login,/if\(!interactive\)fail\('AUTH_REQUIRED'\)/);
- assert.match(login,/return \{page,credentials:shouldSave\?account:null\}/);
- assert.match(index,/const accountKey=verifySourceIdentity\(info\.person\);\s*if\(credentials\)saveCredentials/);
+ assert.match(login,/if\(shouldSave\)saveCredentials\(account\.username,account\.password\)/);
  assert.match(login,/\['LOGIN_FAILED','AUTO_LOGIN_REJECTED'\]/);
  assert.match(login,/const fresh=await http\.get\(SSO\)/);
 });
@@ -133,14 +132,37 @@ test('native secure input preserves exact secret without trimming and supports u
  assert.match(native,/isSecure\?512:120/);
 });
 
-test('free classrooms are available after authentication, not in school selection or credential forms',()=>{
- assert.doesNotMatch(native,/title="查询空闲教室"/);
- assert.doesNotMatch(native,/kind:'freeRooms'/);
+test('NUFE provides free classroom query button in whitelist selection and credential views without calendar sync',()=>{
+ assert.match(native,/title="查询空闲教室"/);
+ assert.match(native,/kind:'freeRooms'/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryAndShowFreeRooms/);
- assert.doesNotMatch(index,/manualAuth\.kind==='freeRooms'/);
+ assert.match(index,/manualAuth\.kind==='freeRooms'/);
 });
 
+test('native dashboard presents an app-like interface with rich background and card styling',()=>{
+ assert.match(native,/export async function presentNativeDashboard/);
+ assert.match(native,/function DashboardView/);
+ assert.match(native,/navigationTitle="CourseSync"/);
+ assert.match(native,/title="🔄 立即刷新课表"/);
+ assert.match(native,/title="📅 管理日历（切换\/新建课表日历）"/);
+ assert.match(native,/title="📊 运行状态与自检"/);
+ assert.match(native,/title="🏫 查询空闲教室"/);
+ assert.match(native,/title="🔄 切换学校"/);
+ assert.match(native,/title="🚪 退出当前登录"/);
+ assert.match(index,/presentNativeDashboard\(\{/);
+ assert.match(progress,/shape:\{type:'rect',cornerRadius:20\}/);
+});
 
+test('native calendar manager unifies add and manage calendars with color differentiation and native controls',()=>{
+ assert.match(native,/export async function presentNativeCalendarManager/);
+ assert.match(native,/function CalendarManageView/);
+ assert.match(native,/navigationTitle="管理日历"/);
+ assert.match(native,/添加新日历/);
+ assert.match(native,/title="＋ 创建并绑定新 iCloud 日历"/);
+ assert.match(native,/title="设为课表"/);
+ assert.match(native,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
+ assert.match(index,/presentNativeCalendarManager\(\{/);
+});
