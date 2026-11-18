@@ -2,9 +2,10 @@
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
-import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';
+import { presentNativeConfirmation, presentNativeDashboard } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity } from './live_activity';
+import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
@@ -3011,43 +3012,29 @@ async function run() {
         selected=await menu.presentSheet();
       }
       if(selected===null||selected===undefined||selected<0)return;
-      if(typeof selected==='object'&&selected.changeSchool){
-        manualAuth=await prepareManualRefresh(state);
-        if(!manualAuth)return;
-        action=0;
-      }else if(typeof selected==='object'&&selected.manageCalendar){
-        const all=await visibleCalendars();
-        const calItems=all.map(c=>({
-          identifier:c.identifier,
-          title:c.title,
-          color:c.color,
-          sourceTitle:c.source?.title,
-          allowsContentModifications:c.allowsContentModifications
-        }));
+      if(typeof selected==='object'&&selected.schedule){
         const nav=hostAPI('Navigation');
         if(typeof nav?.present==='function'){
-          const res=await presentNativeCalendarManager({
-            calendars:calItems,
-            currentCalendarId:state.calendarId
+          const res=await presentNativeCalendarSchedule({
+            courses:state.courses||[],
+            exams:state.exams||[]
           });
-          if(res?.action==='select'){
-            const target=all.find(c=>c.identifier===res.calendarId);
-            if(target&&liveCalendar(target)){
-              state.calendarId=target.identifier;
-              state.calendarTitle=target.title;
-              store.write(state);
-              await notice('日历绑定已更新','已将课表同步目标切换为「'+target.title+'」。');
+          if(res?.action==='saveCourse'||res?.action==='saveExam'){
+            if(res.action==='saveCourse'){
+              const courses=state.courses||[];
+              const idx=courses.findIndex(c=>c.id===res.course?.id);
+              if(idx>=0)courses[idx]=res.course;
+              else if(res.course)courses.push(res.course);
+              state.courses=courses;
+            }else{
+              const exams=state.exams||[];
+              const idx=exams.findIndex(e=>e.id===res.exam?.id);
+              if(idx>=0)exams[idx]=res.exam;
+              else if(res.exam)exams.push(res.exam);
+              state.exams=exams;
             }
-          }else if(res?.action==='create'){
-            try{
-              const created=await createDedicatedCalendar(res.title);
-              state.calendarId=created.identifier;
-              state.calendarTitle=created.title;
-              store.write(state);
-              await notice('已创建并绑定','新 iCloud 课表日历「'+created.title+'」创建成功并已设为同步目标。');
-            }catch(err){
-              await notice('创建日历失败','无法创建指定日历：'+diagnosticCode(err));
-            }
+            store.write(state);
+            await notice('日程已保存','日程信息已成功记录到本地状态。');
           }
         }
         return;

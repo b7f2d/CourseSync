@@ -5,8 +5,8 @@ destination="${1:-dist}"
 mkdir -p "$destination"
 output="$destination/CourseSync.zip"
 rm -f "$output"
-zip -q -X -j "$output" index.tsx intent.tsx widget.tsx widget-data.ts login-native.tsx progress-native.tsx live_activity.tsx script.json
-test "$(unzip -Z1 "$output" | wc -l | tr -d " ")" = "8"
+zip -q -X -j "$output" index.tsx intent.tsx widget.tsx widget-data.ts login-native.tsx progress-native.tsx live_activity.tsx schedule-native.tsx script.json
+test "$(unzip -Z1 "$output" | wc -l | tr -d " ")" = "9"
 unzip -t "$output"
 # Verify the published archive contains exactly the intended entry points and
 # that its embedded metadata matches the repository source.
@@ -19,7 +19,7 @@ from zipfile import ZipFile
 expected_files = {
     "index.tsx", "intent.tsx", "widget.tsx", "widget-data.ts",
     "login-native.tsx", "progress-native.tsx", "live_activity.tsx",
-    "script.json",
+    "schedule-native.tsx", "script.json",
 }
 with ZipFile(sys.argv[1]) as archive:
     if set(archive.namelist()) != expected_files:

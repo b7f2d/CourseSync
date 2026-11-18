@@ -4,12 +4,14 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
    'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
- .replace("import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';",
-   'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__nativeCalendarManagerMock?globalThis.__nativeCalendarManagerMock(...args):null);')
+ .replace("import { presentNativeConfirmation, presentNativeDashboard } from './login-native';",
+   'const presentNativeConfirmation=(...args)=>true;const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { CourseRefreshActivity } from './live_activity';",
-   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();');
+   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();')
+ .replace("import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';",
+   'const presentScheduleEditor=(...args)=>null;const presentNativeCalendarSchedule=(...args)=>null;const presentScheduleList=(...args)=>null;');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};

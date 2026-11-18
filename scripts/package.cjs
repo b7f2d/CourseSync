@@ -19,6 +19,7 @@ const files = [
   'login-native.tsx',
   'progress-native.tsx',
   'live_activity.tsx',
+  'schedule-native.tsx',
   'script.json',
 ];
 

@@ -280,9 +280,10 @@ export type DashboardOptions = {
   canFreeRooms: boolean;
   canSignOut: boolean;
   statusMessage: string;
+  hasCalendar?: boolean;
 };
 
-function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMessage }: DashboardOptions) {
+function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMessage, hasCalendar = true }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const isSignedOut = !!state?.signedOut;
   const isFailed = state?.runStatus === 'failed';
@@ -349,35 +350,27 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
           </VStack>
         </Section>
 
-        <Section header={<Text>课表同步与日历管理</Text>}>
+        <Section header={<Text>功能菜单</Text>}>
           <Button
             title="🔄 立即刷新课表"
             action={() => dismiss(0)}
           />
-          <Button
-            title="📅 管理日历（切换/新建课表日历）"
-            action={() => dismiss({ manageCalendar: true })}
-          />
+          {hasCalendar ? (
+            <Button
+              title="📅 日程管理（日历视图）"
+              action={() => dismiss({ schedule: true })}
+            />
+          ) : null}
           {canFreeRooms ? (
             <Button
               title="🏫 查询空闲教室"
               action={() => dismiss(2)}
             />
           ) : null}
-          <Button
-            title="📊 运行状态与自检"
-            action={() => dismiss(1)}
-          />
-        </Section>
-
-        <Section header={<Text>高校与账号</Text>} footer={<Text>数据直接与高校教务系统通信并写入本地系统日历，无任何外部服务器中转。</Text>}>
-          <Button
-            title="🔄 切换学校"
-            action={() => dismiss({ changeSchool: true })}
-          />
           {canSignOut ? (
             <Button
               title="🚪 退出当前登录"
+              role="destructive"
               action={() => dismiss(canFreeRooms ? 3 : 2)}
             />
           ) : null}
@@ -530,3 +523,22 @@ export async function presentNativeCalendarManager(options: CalendarManageOption
   if (!result || typeof result !== 'object') return null;
   return result as CalendarManageResult;
 }
+
+export async function presentNativeConfirmation(options: {title: string; message?: string; cancelLabel?: string; confirmLabel?: string}) {
+  const result = await Navigation.present({
+    element: (
+      <NavigationStack>
+        <List navigationTitle={options.title} navigationBarTitleDisplayMode="inline">
+          {options.message ? <Section><Text>{options.message}</Text></Section> : null}
+          <Section>
+            <Button title={options.confirmLabel || '确定'} action={() => Navigation.dismiss(true)} />
+            <Button title={options.cancelLabel || '取消'} role="cancel" action={() => Navigation.dismiss(false)} />
+          </Section>
+        </List>
+      </NavigationStack>
+    ),
+    modalPresentationStyle: 'pageSheet'
+  });
+  return !!result;
+}
+

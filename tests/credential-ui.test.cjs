@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const index=fs.readFileSync(__dirname+'/../index.tsx','utf8');
 const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
+const schedule=fs.readFileSync(__dirname+'/../schedule-native.tsx','utf8');
 const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
 const start=index.indexOf('async function credentialForm(');
 const end=index.indexOf('function validSliderResult(',start);
@@ -147,24 +148,23 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(native,/function DashboardView/);
  assert.match(native,/navigationTitle="CourseSync"/);
  assert.match(native,/title="🔄 立即刷新课表"/);
- assert.match(native,/title="📅 管理日历（切换\/新建课表日历）"/);
- assert.match(native,/title="📊 运行状态与自检"/);
+ assert.match(native,/title="📅 日程管理（日历视图）"/);
  assert.match(native,/title="🏫 查询空闲教室"/);
- assert.match(native,/title="🔄 切换学校"/);
  assert.match(native,/title="🚪 退出当前登录"/);
+ assert.doesNotMatch(native,/运行状态与自检|切换学校/);
  assert.match(index,/presentNativeDashboard\(\{/);
  assert.match(progress,/shape:\{type:'rect',cornerRadius:20\}/);
 });
 
-test('native calendar manager unifies add and manage calendars with color differentiation and native controls',()=>{
- assert.match(native,/export async function presentNativeCalendarManager/);
- assert.match(native,/function CalendarManageView/);
- assert.match(native,/navigationTitle="管理日历"/);
- assert.match(native,/添加新日历/);
- assert.match(native,/title="＋ 创建并绑定新 iCloud 日历"/);
- assert.match(native,/title="设为课表"/);
- assert.match(native,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
- assert.match(index,/presentNativeCalendarManager\(\{/);
+test('native calendar schedule view presents a real calendar with year, month, 1-30/31 days, and click-to-edit',()=>{
+ assert.match(schedule,/export function presentNativeCalendarSchedule/);
+ assert.match(schedule,/function CalendarScheduleView/);
+ assert.match(schedule,/navigationTitle="日程管理"/);
+ assert.match(schedule,/title="＋ 添加此日课程"/);
+ assert.match(schedule,/title="＋ 添加此日考试"/);
+ assert.match(schedule,/1 至 \{totalDays\} 号/);
+ assert.match(schedule,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
+ assert.match(index,/presentNativeCalendarSchedule\(\{/);
 });
 
 
