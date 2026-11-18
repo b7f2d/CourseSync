@@ -13,12 +13,15 @@ test('Scripting metadata keeps the intended display identity',()=>{
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
+  // CourseSync is the actual Scripting script identity and stable archive name.
+  assert.equal(data.name,'CourseSync');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
   assert.equal(data.icon,'calendar');
 });
 
 test('script identity is independent of the selected school',()=>{
   assert.doesNotMatch(read('script.json'),/南京财经大学|苏州科技大学|南财/);
+  assert.match(read('docs/release-notes.md'),/首次登录可选择南京财经大学或苏州科技大学/);
 });
 
 test('README distinguishes public CourseSync name from legacy installation identity',()=>{
@@ -31,7 +34,7 @@ test('README distinguishes public CourseSync name from legacy installation ident
 test('README lists the two supported schools and USTS device verification status',()=>{
   assert.match(read('README.md'),/支持南京财经大学和苏州科技大学/);
   assert.match(read('README.md'),/仍待实机验证/);
-  assert.match(read('README.md'),/选择南京财经大学或苏州科技大学，再点击「登录账号」/);
+  assert.match(read('README.md'),/请选择你的学校/);
 });
 
 test('README remains text-only without image markup or references',()=>{
@@ -41,14 +44,15 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/日常刷新无需重复选择，退出登录会清除已选学校/);
-  assert.match(readme,/\*\*退出登录\*\*：清除 CourseSync 已保存的账号和设置/);
+  assert.match(readme,/沿用首次选定的学校/);
 });
 
-test('installation and update instructions point to the same GitHub branch',()=>{
+test('release and README describe the same stable installation path',()=>{
   const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
-  assert.match(read('README.md'),/确认远程来源为上面的 GitHub 分支链接/);
+  assert.ok(read('docs/engineering.md').includes(url));
+  assert.match(read('docs/release-notes.md'),/CourseSync\.zip/);
+  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx live_activity\.tsx script\.json/);
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
@@ -57,23 +61,22 @@ test('error guidance does not direct users to removed menu actions',()=>{
   const end=source.indexOf('function diagnosticCode(',start);
   assert.ok(start>=0&&end>start);
   const guide=source.slice(start,end);
-  assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课程日历」/);
+  assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课表日历」/);
   assert.doesNotMatch(guide,/账号与日历设置/);
-  assert.match(guide,/点击「立即刷新」/);
+  assert.match(guide,/主菜单「立即刷新」/);
 });
 
-test('the GitHub branch contains the Scripting entries and their modules',()=>{
-  const scriptFiles=[
-    'script.json',
-    'index.tsx', 'intent.tsx', 'widget.tsx', 'live_activity.tsx',
-    'login-native.tsx', 'progress-native.tsx', 'schedule-native.tsx', 'widget-data.ts',
-  ];
-  for(const file of scriptFiles){
-    assert.ok(read(file).trim(),file+' must be present at the repository root');
-  }
-  const validation=read('.github/workflows/validate.yml');
-  assert.match(validation,/contents: read/);
-  assert.match(validation,/node --test tests\/\*\.test\.cjs/);
+test('only the Release archive is distributed',()=>{
+  assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
+    'stale root ZIP should not be tracked or distributed');
+  assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
+  const workflow=read('.github/workflows/release.yml');
+  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
+  assert.doesNotMatch(workflow,/build\.py|unsigned\.ipa/);
+  assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
+  assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
+  assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
+  assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
 });
 
 test('widget distribution includes the native entry and safe cache model',()=>{
@@ -82,5 +85,6 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.match(entry,/buildWidgetModel\(/);
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
-  assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation \} from '\.\/login-native'/);
+  assert.match(read('scripts/package.sh'),/"8"/);
+  assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm \} from '\.\/login-native'/);
 });
