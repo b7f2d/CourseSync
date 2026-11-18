@@ -351,12 +351,12 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
 
         <Section header={<Text>功能菜单</Text>}>
           <Button
-            title="🔄 立即刷新课表"
+            title="🔄 立即刷新"
             action={() => dismiss(0)}
           />
           {hasCalendar ? (
             <Button
-              title="📅 日程管理（日历视图）"
+              title="📅 管理日程"
               action={() => dismiss({ schedule: true })}
             />
           ) : null}
@@ -384,7 +384,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
     element: <DashboardView {...options} />,
     modalPresentationStyle: 'pageSheet'
   });
-  if (result === null || result === undefined) return -1;
+  if (result === null || result === undefined || result === -1) return 'dismiss';
   return result;
 }
 

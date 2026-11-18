@@ -147,13 +147,13 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(native,/export async function presentNativeDashboard/);
  assert.match(native,/function DashboardView/);
  assert.match(native,/navigationTitle="CourseSync"/);
- assert.match(native,/title="🔄 立即刷新课表"/);
- assert.match(native,/title="📅 日程管理（日历视图）"/);
+ assert.match(native,/title="🔄 立即刷新"/);
+ assert.match(native,/title="📅 管理日程"/);
  assert.match(native,/title="🏫 查询空闲教室"/);
  assert.match(native,/title="🚪 退出当前登录"/);
  assert.doesNotMatch(native,/运行状态与自检|切换学校/);
  assert.match(index,/presentNativeDashboard\(\{/);
- assert.match(progress,/shape:\{type:'rect',cornerRadius:20\}/);
+ assert.match(progress,/正在同步课程与考试/);
 });
 
 test('native calendar schedule view presents a real calendar with year, month, 1-30/31 days, and click-to-edit',()=>{
