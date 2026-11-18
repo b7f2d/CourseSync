@@ -116,7 +116,8 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   const secret=kind==='secure';
   const otp=kind==='sms'||kind==='totp';
   const response=secret?value:value.trim();
-  const maxLength=kind==='captcha'?32:otp?48:secret?512:120;\n  const valid=response.length>0&&response.length<=maxLength;
+  const maxLength=kind==='captcha'?32:otp?48:secret?512:120;
+  const valid=response.length>0&&response.length<=maxLength;
 
   return <NavigationStack>
     <List navigationTitle={title} navigationBarTitleDisplayMode="inline"
@@ -283,7 +284,8 @@ export type DashboardOptions = {
 
 function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMessage }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
-  const isSignedOut = !!state?.signedOut;\n  const isFailed = state?.runStatus === 'failed';
+  const isSignedOut = !!state?.signedOut;
+  const isFailed = state?.runStatus === 'failed';
   const isSuccess = state?.runStatus === 'success';
   const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : isSuccess ? '#10B981' : '#3B82F6';
   const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '就绪';

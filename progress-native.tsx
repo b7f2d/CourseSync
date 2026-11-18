@@ -83,18 +83,63 @@ export function createNativeProgressView(title='正在刷新课表',subtitle='�
     closed:false,hidden:false,suppressed:false,shown:false,
     revision:0,dismiss:null,
   };
-  const closeVisible=()=>{\n    const dismiss=session.dismiss;\n    session.dismiss=null;\n    if(dismiss)try{dismiss();}catch(_){}\n  };
+  const closeVisible=()=>{
+    const dismiss=session.dismiss;
+    session.dismiss=null;
+    if(dismiss)try{dismiss();}catch(_){}
+  };
   return {
     show(){
-      if(session.closed||session.hidden||session.suppressed||session.shown)return;\n      const revision=++session.revision;\n      session.shown=true;\n      try {\n        presented=Promise.resolve(Navigation.present({\n          element:<ProgressScreen session={session} title={title} subtitle={subtitle}/>,\n          modalPresentationStyle:'pageSheet',\n        })).then(()=>{\n          if(session.revision!==revision)return;\n          session.shown=false;\n          session.dismiss=null;\n          session.suppressed=true; // A dismissed sheet must stay dismissed.\n        },()=>{\n          if(session.revision!==revision)return;\n          session.shown=false;\n          session.dismiss=null;\n          session.suppressed=true;\n        });\n      }catch(_){\n        if(session.revision===revision){\n          session.shown=false;\n          session.suppressed=true;\n        }\n      }\n    },
+      if(session.closed||session.hidden||session.suppressed||session.shown)return;
+      const revision=++session.revision;
+      session.shown=true;
+      try {
+        presented=Promise.resolve(Navigation.present({
+          element:<ProgressScreen session={session} title={title} subtitle={subtitle}/>,
+          modalPresentationStyle:'pageSheet',
+        })).then(()=>{
+          if(session.revision!==revision)return;
+          session.shown=false;
+          session.dismiss=null;
+          session.suppressed=true; // A dismissed sheet must stay dismissed.
+        },()=>{
+          if(session.revision!==revision)return;
+          session.shown=false;
+          session.dismiss=null;
+          session.suppressed=true;
+        });
+      }catch(_){
+        if(session.revision===revision){
+          session.shown=false;
+          session.suppressed=true;
+        }
+      }
+    },
     pause(){
-      if(session.closed||session.hidden)return Promise.resolve();\n      session.hidden=true;\n      session.revision++;\n      session.shown=false;\n      closeVisible();\n      return Promise.race([\n        presented.then(()=>{},()=>{}),\n        new Promise<void>(resolve=>setTimeout(resolve,800)),\n      ]);
+      if(session.closed||session.hidden)return Promise.resolve();
+      session.hidden=true;
+      session.revision++;
+      session.shown=false;
+      closeVisible();
+      // Native presentation dismissal is asynchronous. Wait briefly for the
+      // actual sheet to leave before presenting verification input.
+      // Never let a hung host UI block the school login indefinitely.
+      return Promise.race([
+        presented.then(()=>{},()=>{}),
+        new Promise<void>(resolve=>setTimeout(resolve,800)),
+      ]);
     },
     resume(){
-      if(session.closed||!session.hidden)return;\n      session.hidden=false;\n      this.show();
+      if(session.closed||!session.hidden)return;
+      session.hidden=false;
+      this.show();
     },
     finish(){
-      session.closed=true;\n      session.revision++;\n      session.shown=false;\n      closeVisible();\n      return presented.then(()=>{},()=>{});
+      session.closed=true;
+      session.revision++;
+      session.shown=false;
+      closeVisible();
+      return presented.then(()=>{},()=>{});
     }
   };
 }

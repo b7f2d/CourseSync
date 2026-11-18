@@ -1,10 +1,10 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm, presentNativeConfirmation } from './login-native';
+import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
+import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';
 import { createNativeProgressView } from './progress-native';
-import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
-import { presentScheduleEditor, presentScheduleList } from './schedule-native';
+import { CourseRefreshActivity } from './live_activity';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
@@ -88,13 +88,7 @@ class Alert{
  async presentSheet(){const n=await HostDialog.actionSheet({title:this.title,message:this.message,actions:this.actions,cancelButton:this.cancel});return n==null?-1:n;}
  async presentAlert(){
    if(this.fields.length){const f=this.fields[0];const value=await HostDialog.prompt({title:this.title,message:this.message,placeholder:f.placeholder,defaultValue:f.value,obscureText:f.secure,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0]?.label||'继续'});if(value===null)return -1;this.values=[value];return 0;}
-   if(this.cancel&&this.actions.length===1){
-     const options={title:this.title,message:this.message,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0].label};
-     if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
-       try{return await presentNativeConfirmation(options)?0:-1;}catch(_){}
-     }
-     return await HostDialog.confirm(options)?0:-1;
-   }
+   if(this.cancel&&this.actions.length===1)return await HostDialog.confirm({title:this.title,message:this.message,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0].label})?0:-1;
    if(this.actions.length>1)return this.presentSheet();
    await HostDialog.alert({title:this.title,message:this.message,buttonLabel:this.actions[0]?.label||'好'});return 0;
  }
@@ -117,15 +111,24 @@ class WebView{
    this.inner=new Controller({ephemeral:true});__webviews.add(this.inner);
  }
  async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
- async present(title='登录验证'){await this.inner.present({navigationTitle:title});}
+ async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
- constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;}
+ constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;this.triggerDate=null;}
+ setTriggerDate(date){this.triggerDate=date;}
  async schedule(){
    const options={title:this.title,body:this.body,silent:this.sound===null,threadIdentifier:'NUFE-Local-refresh',tapAction:{type:'openURL',url:this.openURL||HostScript.createRunURLScheme(HostScript.name,{mode:'menu'})}};
    if(this.identifier)options.identifier=this.identifier;
+   if(this.triggerDate){
+     const diff=Math.max(1,Math.round((this.triggerDate.getTime()-Date.now())/1000));
+     const Trigger=hostAPI('TimeIntervalNotificationTrigger');
+     if(Trigger)options.trigger=new Trigger({timeInterval:diff,repeats:false});
+     else options.triggerDate=this.triggerDate;
+   }
    return HostNotification.schedule(options);
  }
+ static async allPending(){const rows=await HostNotification.getAllPendingsOfCurrentScript();return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:r.trigger?.date||null}));}
+ static async removePending(ids){if(ids.length)await HostNotification.removePendings(ids);}
 }
 const Data=hostAPI('Data'),Image={fromData:data=>hostAPI('UIImage').fromData(data)};
 const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
@@ -181,26 +184,12 @@ const USTS_TERM_MONDAYS=Object.freeze({
   202512:'2026-03-02',
   202603:'2026-08-31'
 });
-// Each source supplies school-specific transport and normalized academic data.
+let activeSchoolId='nufe';
 const SCHOOL_WHITELIST=Object.freeze([
-  Object.freeze({
-    id:'nufe',name:'南京财经大学',endpoints:ENDPOINT_DEFAULTS,storageSuffix:'',
-    hosts:Object.freeze(['authserver.nufe.edu.cn','jwxt.nufe.edu.cn']),cookieDomain:'nufe.edu.cn',
-    legacyDefaults:true,isLoginResponse:nufeLoginResponse,
-    open:openNufeSource,readTerm:readNufeTerm,termAnchor:nufeTermAnchor,
-    readExams:async http=>({rows:await fetchExamRows(http),unpublished:false}),
-    probe:probeNufeSession,preflight:preflightNufe,readFreeRooms:queryDayRooms
-  }),
-  Object.freeze({
-    id:'usts',name:'苏州科技大学',storageSuffix:'.usts',
-    hosts:Object.freeze(['jwgl.usts.edu.cn']),cookieDomain:'usts.edu.cn',
-    isLoginResponse:ustsLoginPage,normalizeRedirect:normalizeUstsRedirect,
-    open:openUstsSource,readTerm:readUstsTerm,termAnchor:ustsTermAnchor,
-    readExams:ustsExamRows,probe:probeUstsSession,preflight:preflightUsts
-  })
+  Object.freeze({id:'nufe',name:'南京财经大学',endpoints:ENDPOINT_DEFAULTS}),
+  Object.freeze({id:'usts',name:'苏州科技大学'})
 ]);
-let activeSource=SCHOOL_WHITELIST[0];
-function schoolKey(key,source=activeSource){return key+source.storageSuffix;}
+function schoolKey(key){return activeSchoolId==='nufe'?key:key+'.'+activeSchoolId;}
 function schoolById(id){return SCHOOL_WHITELIST.find(s=>s.id===id)||null;}
 function loadSelectedSchool(fallback='nufe',requireConfirmation=false){
   try{
@@ -211,15 +200,14 @@ function loadSelectedSchool(fallback='nufe',requireConfirmation=false){
     if(!Keychain.contains(SCHOOL_KEY))return fallback;
     const id=Keychain.get(SCHOOL_KEY);
     // NUFE used to be stored as a default. A legacy USTS selection was explicit.
-    const source=schoolById(id);
-    return source&&(!requireConfirmation||!source.legacyDefaults)?source.id:fallback;
+    return schoolById(id)&&(!requireConfirmation||id==='usts')?id:fallback;
   }catch(_){return fallback;}
 }
 function activateSelectedSchool(id){
   const school=schoolById(id);
   assert(school,'SCHOOL_UNSUPPORTED');
   if(school.endpoints)activateEndpointSettings(school.endpoints);
-  activeSource=school;
+  activeSchoolId=id;
   return school;
 }
 const KEY = 'CourseSync.Local.v1.cookies';
@@ -238,9 +226,8 @@ const LEGACY_DEVICE_KEYS=Object.freeze([
 ]);
 const LEGACY_CLOUD_CRED_KEY='NUFE.Schedule.v1.icloud-credentials';
 const LEGACY_IMPORT_KEY='CourseSync.Local.v1.migrated';
-const RESET_GUARD_KEY='CourseSync.Local.v1.user-reset';
 function migrateLegacyKeychainData(){
-  if(Keychain.contains(RESET_GUARD_KEY)||Keychain.contains(LEGACY_IMPORT_KEY))return;
+  if(Keychain.contains(LEGACY_IMPORT_KEY))return;
   try{
     for(const [current,old] of LEGACY_DEVICE_KEYS){
       if(Keychain.contains(current)||!Keychain.contains(old))continue;
@@ -317,9 +304,9 @@ function removeSavedCredentials(){
     // Deleting a synchronized item also deletes the other devices' copies.
     if(CloudKeychain.contains(schoolKey(CLOUD_CRED_KEY)))CloudKeychain.remove(schoolKey(CLOUD_CRED_KEY));
     if(Keychain.contains(schoolKey(CRED_KEY)))Keychain.remove(schoolKey(CRED_KEY));
-    if(activeSource.legacyDefaults&&CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
+    if(activeSchoolId==='nufe'&&CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
       CloudKeychain.remove(LEGACY_CLOUD_CRED_KEY);
-    if(activeSource.legacyDefaults&&Keychain.contains('NUFE.Local.v1.saved-login'))
+    if(activeSchoolId==='nufe'&&Keychain.contains('NUFE.Local.v1.saved-login'))
       Keychain.remove('NUFE.Local.v1.saved-login');
   }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
 }
@@ -357,7 +344,8 @@ async function bounded(p, milliseconds, code) {
 function safeURL(s) {
   // Deliberately strict: credentials, alternate ports, encoded hosts, HTTP rejected.
   const m = /^https:\/\/([a-z0-9.-]+)(\/[^\s\\#]*)?$/.exec(s);
-  assert(m&&activeSource.hosts.includes(m[1]), 'DOMAIN_BLOCKED');
+  const hosts=activeSchoolId==='usts'?['jwgl.usts.edu.cn']:['authserver.nufe.edu.cn','jwxt.nufe.edu.cn'];
+  assert(m&&hosts.includes(m[1]), 'DOMAIN_BLOCKED');
   return {host:m[1], path:(m[2] || '/').split('?')[0]};
 }
 function resolveURL(base, loc) {
@@ -408,7 +396,7 @@ function termEndpoint(template,sid){
 }
 async function prepareManualRefresh(state){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
-  const allowReuse=!state?.signedOut&&!state?.authPaused&&canOfferSignOut(state);
+  const allowReuse=!state?.signedOut&&canOfferSignOut(state);
   let response;
   try{
     response=await presentNativeRefreshForm(
@@ -418,6 +406,11 @@ async function prepareManualRefresh(state){
   if(!response)return null;
   const school=schoolById(response.schoolId);
   assert(school,'SCHOOL_UNSUPPORTED');
+  if(response.kind==='freeRooms'){
+    assert(school.id==='nufe','SCHOOL_UNSUPPORTED');
+    activateSelectedSchool(school.id);
+    return {kind:'freeRooms',schoolId:'nufe',username:response.username||null,password:response.password||null};
+  }
   assert(response.kind==='reuse'||response.kind==='credentials','SCHOOL_UNSUPPORTED');
   if(response.kind==='reuse')assert(school.id===loadSelectedSchool(),'SCHOOL_UNSUPPORTED');
   else assert(typeof response.username==='string'&&typeof response.password==='string'&&
@@ -570,7 +563,7 @@ function cookieDomain(raw) {
   return raw.trim().replace(/^"|"$/g,'').replace(/^\./,'').toLowerCase();
 }
 function schoolCookieDomains(){
-  return [activeSource.cookieDomain,...activeSource.hosts];
+  return activeSchoolId==='usts'?['usts.edu.cn','jwgl.usts.edu.cn']:['nufe.edu.cn','authserver.nufe.edu.cn','jwxt.nufe.edu.cn'];
 }
 function allowedCookieDomain(issuer,domain) {
   // Domain=scoped cookies may cover the NUFE parent domain or one of the
@@ -659,10 +652,10 @@ class HTTP {
       this.last=Date.now();
       const req=new Request(url);req.method=method;req.timeoutInterval=15;req.allowInsecureRequest=false;
       req.headers={Accept:opt.binary?'image/*':'application/json, text/html;q=0.9, */*;q=0.8',Cookie:this.jar.header(url)};
-      if(opt.referer){
+      if(activeSchoolId==='usts'&&opt.referer){
         safeURL(opt.referer);
         req.headers.Referer=opt.referer;
-        if(body)req.headers.Origin='https://'+safeURL(opt.referer).host;
+        if(body)req.headers.Origin=USTS_SITE;
       }
       if(opt.ajax)req.headers['X-Requested-With']='XMLHttpRequest';
       if(body){req.body=body;req.headers['Content-Type']=opt.json?'application/json':'application/x-www-form-urlencoded';}
@@ -675,7 +668,8 @@ class HTTP {
       if(res.statusCode>=300&&res.statusCode<400){
         const k=Object.keys(res.headers||{}).find(k=>k.toLowerCase()==='location');
         let target=redirect||(k&&res.headers[k]);assert(target,'REDIRECT');
-        if(activeSource.normalizeRedirect)target=activeSource.normalizeRedirect(target);
+        // This server emits absolute HTTP redirects for its own HTTPS pages.
+        if(activeSchoolId==='usts')target=target.replace(/^http:\/\/jwgl\.usts\.edu\.cn\//,'https://jwgl.usts.edu.cn/');
         const next=resolveURL(url,target);
         if([307,308].includes(res.statusCode)&&body&&safeURL(next).host!==safeURL(url).host)fail('DOMAIN_BLOCKED');
         if(res.statusCode===303||([301,302].includes(res.statusCode)&&method==='POST')){method='GET';body=null;}
@@ -686,7 +680,7 @@ class HTTP {
       return {url,text:value,response:res};
     }fail('REDIRECT');
   }
-  async json(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});if(activeSource.isLoginResponse(r))fail('AUTH_REQUIRED');try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
+  async json(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});if(safeURL(r.url).host==='authserver.nufe.edu.cn'||safeURL(r.url).path==='/student/login'||(activeSchoolId==='usts'&&ustsLoginPage(r)))fail('AUTH_REQUIRED');try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
   async authJSON(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
 }
 async function legacyInput(title,label,secure=false) {
@@ -706,13 +700,17 @@ async function input(title,label,secure=false,options={}) {
       return code;
     }catch(e){
       if(e?.code==='CANCELLED')throw e;
-      const recover=await confirm('无法打开输入窗口','可改用系统输入框。','继续');
+      const recover=await HostDialog.confirm({
+        title:'原生输入窗口不可用',
+        message:'无法打开原生输入窗口。是否改用系统输入框继续？',
+        cancelLabel:'取消',confirmLabel:'使用系统输入框'
+      });
       if(!recover)fail('CANCELLED');
     }
   }
   return await legacyInput(title,label,secure);
 }
-async function confirm(title,message,confirmLabel='确认') {const a=new Alert();a.title=title;a.message=message;a.addAction(confirmLabel);a.addCancelAction('取消');return await a.presentAlert()===0;}
+async function confirm(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('确认');a.addCancelAction('取消');return await a.presentAlert()===0;}
 async function notice(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('好');await a.presentAlert();}
 // Read known login-form inputs as inert text; no WebView, no embedded page scripts.
 // Values are decoded only after selection. Never log or persist form fields.
@@ -799,32 +797,12 @@ async function ustsExamRows(http,state){
   }
   return {rows,unpublished};
 }
-// Remove only events generated by the previous fixed-exam feature.
-async function removeFixedGraduateExams(calendar,budget){
-  const day=Date.parse('2026-12-19T00:00:00+08:00');
-  const marker=/^\[COURSESYNC_FIXED_GRADUATE_EXAM_2027(?:_199|_204)?\]$/;
-  const canRemove=ev=>marker.test(ev.notes||'')&&!isManualEvent(ev)&&canEditSingleEvent(ev);
-  budget();
-  const rows=(await calendarRows(day-2*DAY,day+3*DAY,calendar)).filter(canRemove);
-  for(const ev of rows){
-    budget();
-    await ev.remove();
-  }
-  if(rows.length){
-    budget();
-    assert(!(await calendarRows(day-2*DAY,day+3*DAY,calendar)).some(canRemove),'CALENDAR_VERIFY');
-  }
-}
-async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now()) {
-  const budget=typeof nowOrBudget==='function'?nowOrBudget:()=>store.check();
-  const now=typeof nowOrBudget==='number'?nowOrBudget:Date.now();
-  budget();
+async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   progress('读取考试日程');
   const end=now+366*DAY;
   const prefix=EXAM_MARKER+state.owner+'] ';
   const target=new Map();
-  const source=await activeSource.readExams(http,state);
-  budget();
+  const source=activeSchoolId==='usts'?await ustsExamRows(http,state):{rows:await fetchExamRows(http),unpublished:false};
   for(const row of source.rows){
     const time=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})\s*[~～–-]\s*(\d{2}:\d{2})$/.exec(row.time);
     assert(time,'EXAM_SCHEMA');
@@ -834,40 +812,10 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:row.title,start,stop,location:row.location});
-  }
-  // Recover previously managed exams from the old timetable calendar. Never touch
-  // unrelated events; the owner-specific marker or persisted ID is mandatory.
-  const oldCalendar=(await visibleCalendars()).find(c=>c.identifier===state.calendarId);
-  const oldIndex=Object.assign(Object.create(null),state.examIndex||{});
-  const legacy=[];
-  const legacyWindows=[[now,end]];
-  for(const key of Object.values(oldIndex)){
-    if(typeof key!=='string'||!key.startsWith(prefix))continue;
-    try{
-      const fields=JSON.parse(key.slice(prefix.length));
-      const date=fields[2];
-      if(Number.isFinite(date))legacyWindows.push([date-DAY,date+DAY]);
-    }catch(_){}
-  }
-  if(oldCalendar&&oldCalendar.identifier!==calendar.identifier){
-    const seen=new Set();
-    for(const [start,stop] of legacyWindows){
-      budget();
-      for(const ev of await calendarRows(start,stop,oldCalendar)){
-        const key=String(ev.notes||'').startsWith(prefix)?ev.notes:oldIndex[ev.identifier];
-        if(isManualEvent(ev)||typeof key!=='string'||!key.startsWith(prefix)||seen.has(occurrenceKey(ev)))continue;
-        seen.add(occurrenceKey(ev));legacy.push({ev,key});
-        // Keep historical exams and future exams withheld by the school.
-        if(!target.has(key)&&(source.unpublished||+ev.startDate<now)){
-          target.set(key,{title:String(ev.title||'').replace(/^📝 /u,''),
-            start:+ev.startDate,stop:+ev.endDate,location:ev.location||''});
-        }
-      }
-    }
+    target.set(key,{title:EXAM_ICON+row.title,start,stop,location:row.location});
   }
   progress('更新考试日程');
-  assert(calendar.identifier===state.examCalendarId&&calendar.identifier!==state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
+  assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
   // Scan the future for cancellations and only the historical windows
   // represented in the school response. Keep history when the school archives it.
   const windowSize=90*DAY;
@@ -875,11 +823,11 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
     .map(exam=>Math.floor(exam.start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   const index=Object.assign(Object.create(null),state.examIndex);
-  const keyOf=ev=>isManualEvent(ev)?null:String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
+  const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
   const read=async()=>{
     const owned=new Map();
     for(const [start,stop] of windows){
-      budget();
+      store.check();
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
         if(typeof key==='string'&&key.startsWith(prefix)&&(target.has(key)||(!source.unpublished&&+ev.endDate>now))){
@@ -887,19 +835,10 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
         }
       }
     }
-    budget();return [...owned.values()];
+    store.check();return [...owned.values()];
   };
   const rows=await read();
-  // Empty current responses are confirmed twice before cancelling previously
-  // published future exams; a transient empty source must never purge them.
-  if(source.rows.length&&state.examEmptyConfirm){state.examEmptyConfirm=0;store.write(state);}
-  if(!target.size&&!source.unpublished&&rows.some(ev=>+ev.endDate>now)){
-    state.examEmptyConfirm=(state.examEmptyConfirm||0)+1;
-    store.write(state);
-    if(state.examEmptyConfirm<2)return;
-  }
-  if(!rows.length&&!target.size&&!legacy.length)return;
-  budget();
+  if(!rows.length&&!target.size)return;
   const current=new Map();
   for(const ev of rows){
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
@@ -912,7 +851,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   for(const [key,exam] of target){
     const existing=current.get(key);
     if(existing&&matches(existing,exam))continue;
-    budget();
+    store.check();
     const ev=existing||new CalendarEvent();
     ev.calendar=calendar;ev.title=exam.title;ev.notes=key;ev.location=exam.location;
     ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(exam.start);ev.endDate=new Date(exam.stop);
@@ -924,7 +863,7 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
   for(const ev of written){
     const key=keyOf(ev),exam=target.get(key);
     if(exam&&matches(ev,exam)&&!kept.has(key)){kept.add(key);continue;}
-    budget();
+    store.check();
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
@@ -935,23 +874,11 @@ async function syncExams(http,state,store,calendar,progress,nowOrBudget=Date.now
     final.every(ev=>target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
   // Save the identifier mapping before replacing recoverable markers with readable notes.
   for(const ev of final)index[ev.identifier]=keyOf(ev);
-  state.examIndex=index;
-  store.write(state);
-  // Only remove an old managed event once its new counterpart was verified.
-  for(const {ev,key} of legacy){
-    const exam=target.get(key);
-    if(exam)assert(final.some(saved=>keyOf(saved)===key&&matches(saved,exam)),'CALENDAR_VERIFY');
-    budget();
-    assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
-      !ev.attendees?.length,'MANAGED_SERIES');
-    await ev.remove();
-    delete index[ev.identifier];
-    state.examIndex=index;store.write(state);
-  }
+  state.examIndex=index;store.write(state);
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
     if(ev.notes===expectedNotes)continue;
-    budget();
+    store.check();
     const oldId=ev.identifier,key=keyOf(ev);
     ev.notes=expectedNotes;
     await ev.save();
@@ -979,12 +906,13 @@ async function fieldsFrom(html,id) {
 // fake website domain, separate cookie store or duplicated credential bridge.
 async function fallbackCredentialForm({title='CourseSync 登录'}={}){
   const username=(await legacyInput(title,'学号')).trim();
-  const password=await legacyInput(title,'密码',true);
+  const password=await legacyInput(title,'密码（安全输入）',true);
   if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
   return {username,password};
 }
 async function credentialForm({title='CourseSync 登录'}={}){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  let code='NATIVE_FORM_UNAVAILABLE';
   if(typeof hostAPI('Navigation')?.present==='function'){
     try{
       const native=await presentNativeCredentialForm(title);
@@ -999,12 +927,17 @@ async function credentialForm({title='CourseSync 登录'}={}){
       }
       return native;
     }catch(e){
-      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL')throw e;
+      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL'||e?.code==='FREE_ROOMS')throw e;
+      if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
   // The only fallback is still a native iOS Dialog (two secure prompts).
   // Ask before showing them; never silently downgrade the combined form.
-  const consent=await confirm('无法打开登录窗口','可分两步输入学号和密码。','继续');
+  const consent=await HostDialog.confirm({
+    title:'原生登录窗口不可用',
+    message:'无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？',
+    cancelLabel:'取消登录',confirmLabel:'继续'
+  });
   if(!consent)fail('CANCELLED');
   return await fallbackCredentialForm({title});
 }
@@ -1029,14 +962,13 @@ async function humanSlider(http) {
     await bounded(w.inner.addScriptMessageHandler('nufeSlider',payload=>{
       // Local drag data is untrusted: reject malformed or oversized trajectories
       // instead of encrypting arbitrary WebKit messages for the school server.
-      if(submitted||(payload!=='cancel'&&!validSliderResult(payload)))return false;
+      if(submitted||!validSliderResult(payload))return false;
       submitted=payload;
       try{w.inner.dismiss();}catch(_){}
       return true;
     }),12000,'WEBVIEW_TIMEOUT');
-  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><button id="cancel" type="button" style="display:block;margin-top:16px;padding:10px 20px">取消</button><script>
+  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><script>
   const bg=document.getElementById('bg'),piece=document.getElementById('piece'),knob=document.getElementById('knob');
-  document.getElementById('cancel').onclick=()=>window.webkit.messageHandlers.nufeSlider.postMessage('cancel');
   bg.onload=piece.onload=()=>{if(!bg.naturalWidth||!piece.naturalWidth)return;piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
   bg.src=${JSON.stringify('data:'+imageType(j.bigImage)+';base64,'+j.bigImage)};piece.src=${JSON.stringify('data:'+imageType(j.smallImage)+';base64,'+j.smallImage)};
   let active=false,x=0,y=0,lastAt=0,last=null,tracks=[];window.result=null;
@@ -1045,7 +977,7 @@ async function humanSlider(http) {
   knob.onpointerup=e=>{if(!active)return;active=false;const dx=Math.max(0,Math.min(240,e.clientX-x));if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击提交验证。';document.getElementById('submit').disabled=false;};knob.onpointercancel=()=>{active=false;window.result=null;document.getElementById('submit').disabled=true;};document.getElementById('submit').onclick=async()=>{if(!window.result)return;const button=document.getElementById('submit');button.disabled=true;try{const ok=await window.webkit.messageHandlers.nufeSlider.postMessage(window.result);if(!ok){button.disabled=false;document.getElementById('status').textContent='滑动数据无效，请重新拖动。';}}catch(_){button.disabled=false;}};</script>`;
     await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
     await w.present();
-    if(!submitted||submitted==='cancel')fail('CANCELLED');
+    if(!submitted)fail('CANCELLED');
     const sign=await encryptPassword(JSON.stringify(submitted),key);
     const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});
     assert(answer.errorCode===1,'CAPTCHA');
@@ -1127,16 +1059,16 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     return r.text;
   }finally{password='';}
 }
-async function readNufeSession(http,interactive,onStage=()=>{},manualAuth=null) {
+async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
   onStage('尝试读取教务课表入口');
-  let r;try{r=await http.get(TABLE);try{pageInfo(r.text);return {page:r.text,credentials:null};}catch(_){}}catch(e){if(e.code!=='AUTH_REQUIRED')throw e;}
+  let r;try{r=await http.get(TABLE);try{pageInfo(r.text);return r.text;}catch(_){}}catch(e){if(e.code!=='AUTH_REQUIRED')throw e;}
   // Explicit SSO is needed: student/login does not redirect itself to CAS.
   onStage('学校单点登录跳转');
-  r=await http.get(SSO);try{pageInfo(r.text);return {page:r.text,credentials:null};}catch(_){}
-  if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return {page:r.text,credentials:null};}
+  r=await http.get(SSO);try{pageInfo(r.text);return r.text;}catch(_){}
+  if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return {page:r.text,credentials:null};
+    await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   // Reuse the verified on-device/Keychain credentials without showing the
   // school/account wizard again. Foreground still permits a native CAPTCHA/MFA
@@ -1148,8 +1080,8 @@ async function readNufeSession(http,interactive,onStage=()=>{},manualAuth=null) 
     await onStage('等待输入学校登录信息');
     account=await credentialForm({title:'CourseSync 登录'});
     shouldSave=true;
-  }else if(!shouldSave){
-    onStage('尝试自动登录');
+  }else{
+    onStage('Cookie 已失效，使用 Keychain 凭据自动登录');
   }
   let page;
   try{
@@ -1165,28 +1097,12 @@ async function readNufeSession(http,interactive,onStage=()=>{},manualAuth=null) 
     const fresh=await http.get(SSO);
     page=await passwordLogin(http,fresh,account.username,account.password,true,onStage);
   }
-  return {page,credentials:shouldSave?account:null};
-}
-// The classroom query uses the same verified login without starting a sync.
-async function coursePage(http,interactive,onStage=()=>{},manualAuth=null){
-  const {page,credentials}=await readNufeSession(http,interactive,onStage,manualAuth);
-  if(credentials){
-    verifySourceIdentity(pageInfo(page).person);
-    saveCredentials(credentials.username,credentials.password);
-  }
+  // Never persist credentials before the school has verified this login.
+  if(shouldSave)saveCredentials(account.username,account.password);
   if(manualAuth?.kind==='credentials')manualAuth.password='';
   return page;
 }
 
-function nufeLoginResponse(response){
-  const {host,path}=safeURL(response.url);
-  return host==='authserver.nufe.edu.cn'||path==='/student/login'||path==='/student/sso/login';
-}
-function normalizeUstsRedirect(target){
-  // The school sometimes sends its own absolute redirects with an HTTP scheme.
-  const legacyOrigin='http://jwgl.usts.edu.cn/';
-  return target.startsWith(legacyOrigin)?USTS_SITE+'/'+target.slice(legacyOrigin.length):target;
-}
 function ustsLoginPage(response){
   return safeURL(response.url).path===safeURL(USTS_LOGIN).path||
     (/<input\b[^>]*\bname=["']yhm["']/i.test(response.text)&&/\bcsrftoken\b/i.test(response.text));
@@ -1387,10 +1303,9 @@ class Store {
     this.dir=this.fm.joinPath(this.fm.libraryDirectory(),schoolKey('CourseSync-v2'));
     if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);
     this.token=null;this.generation=0;this.lastHeartbeat=0;
-    if(activeSource.legacyDefaults)this.migrateLegacyState();
+    if(activeSchoolId==='nufe')this.migrateLegacyState();
   }
   migrateLegacyState(){
-    if(Keychain.contains(RESET_GUARD_KEY))return;
     const states=()=>this.fm.listContents(this.dir)
       .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();
     if(states().length)return;
@@ -1423,7 +1338,7 @@ class Store {
     // The original files remain untouched to permit an explicit rollback.
   }
   path(n){return this.fm.joinPath(this.dir,n);}
-  read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
+  read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},minutes:10,failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
   write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);this.fm.writeString(this.path(name),text);assert(this.fm.readString(this.path(name))===text,'STATE_WRITE');const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
   acquire() {const p=this.path('run-lock.json');if(this.fm.fileExists(p)){try{const l=JSON.parse(this.fm.readString(p));if(Date.now()-l.at<20*60000)fail('BUSY');}catch(e){if(e.code==='BUSY')throw e;fail('LOCK_CORRUPT');}}
     if(this.fm.fileExists(p))this.fm.remove(p);
@@ -1548,10 +1463,6 @@ function validateState(s){
   assert(s&&s.version===1&&s.semesters&&typeof s.semesters==='object'&&!Array.isArray(s.semesters)&&s.anchors&&typeof s.anchors==='object'&&!Array.isArray(s.anchors),'STATE_CORRUPT');
   const allIds=new Set();
   assert(s.owner===null||typeof s.owner==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(s.owner),'STATE_CORRUPT');
-  if(s.historyAttemptAt!=null)assert(typeof s.historyAttemptAt==='object'&&!Array.isArray(s.historyAttemptAt)&&
-    Object.entries(s.historyAttemptAt).every(([sid,date])=>/^\d+$/.test(sid)&&Number.isFinite(Date.parse(date))),'STATE_CORRUPT');
-  if(s.examCalendarId!=null)assert(typeof s.examCalendarId==='string'&&s.examCalendarId.length>0&&
-    s.examCalendarId!==s.calendarId,'STATE_CORRUPT');
   if(s.examIndex!=null)assert(s.owner&&typeof s.examIndex==='object'&&!Array.isArray(s.examIndex)&&
     Object.entries(s.examIndex).every(([id,key])=>id&&typeof key==='string'&&key.startsWith(EXAM_MARKER+s.owner+'] ')),'STATE_CORRUPT');
   for(const [sid,t] of Object.entries(s.semesters)){
@@ -1622,7 +1533,6 @@ function storedEventIndex(state){
   return map;
 }
 function eventRecord(ev,owner,byNative=null) {
-  if(isManualEvent(ev))return null;
   const m=/^\[NUFE_LOCAL_V1 ([^ \]]+) ([^ \]]+)\]\n([^\n]+)/.exec(ev.notes||'');
   let meta=null;
   if(m){
@@ -1693,6 +1603,8 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
 
 function fingerprint(events){return JSON.stringify(events.map(({id,...e})=>e));}
 function deletionReady(previous,events,now){return previous&&previous.signature===fingerprint(events)&&now-previous.at>=5*60000;}
+async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='CourseSync';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
+
 // Session invalidation is known only after a school's request redirects to auth.
 // Deduplicate the alert for this expired session: each scheduled run must not nag.
 async function notifyAuthExpiredOnce(state,store) {
@@ -1700,17 +1612,24 @@ async function notifyAuthExpiredOnce(state,store) {
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
   const code=state.lastError;
   n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'CourseSync · 登录需要处理':'CourseSync · 登录已失效';
-  n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课程日历和考试日历均保留，请打开 Scripting 手动验证。':
-    code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课程日历和考试日历均保留，请在 Scripting 中更新凭据。':
-    code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课程日历和考试日历均保留，请在 Scripting 中检查凭据设置。':
+  n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表已保留，请打开 Scripting 手动验证。':
+    code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表已保留，请在 Scripting 中更新凭据。':
+    code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课表已保留，请在 Scripting 中检查凭据设置。':
     code==='ACCOUNT_CHANGED'?'自动登录使用的账号与原课表绑定账号不一致。程序已停止写入；请在 Scripting 中核对学号。':
-    code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课程日历和考试日历均保留，请打开 Scripting 前台手动同步。':
-    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课程日历和考试日历均保留，请打开 Scripting 手动登录。':
-    '自动登录未能完成。课程日历和考试日历均保留，请在 Scripting 中检查登录状态或完成认证。';
+    code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课表已保留，请打开 Scripting 前台手动同步。':
+    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课表已保留，请打开 Scripting 手动登录。':
+    '自动登录未能完成。课表已保留，请在 Scripting 中检查登录状态或完成认证。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
   state.authExpiryNotifiedAt=new Date().toISOString();state.authNoticeError=null;
   store.write(state);return true;
+}
+async function testAuthNotification() {
+  const n=new Notification();n.identifier='nufe-local-auth-test';
+  n.title='CourseSync · 通知测试';
+  n.body='这是一条测试通知。学校会话失效后，定时同步会提醒你手动重新登录。';
+  n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
+  await n.schedule();
 }
 // Reconcile OLD unmarked ICS imports with the course events that this installation
 // ACTUALLY created, in the SAME selected writable calendar. Never infer from a
@@ -1735,7 +1654,7 @@ function selectLegacyDuplicates(rows,owner,state){
   }
   for(const ev of rows){
     const key=legacyEventKey(ev);if(!key||!managed.has(key))continue;
-    if(isManualEvent(ev)||isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
+    if(isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
     if(Array.isArray(ev.attendees)&&ev.attendees.length)continue;
     const counterpart=managed.get(key).find(own=>legacyLocationCompatible(own.location,ev.location));
     if(counterpart)duplicates.push({ev,managed:counterpart,key});
@@ -1813,7 +1732,7 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   const rows=await dedicatedRows(calendar,state,progress);
   await verifyBaseline(rows,state); // All retained new lessons must exist before deleting anything.
   const byNative=storedEventIndex(state);
-  const isLegacy=e=>!isManualEvent(e)&&!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
+  const isLegacy=e=>!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
   const legacy=rows.filter(isLegacy);
   if(!legacy.length){state.lastLegacyCleanupRemaining=0;store.write(state);return 0;}
   const stamp=new Date().toISOString(),base='专用日历清理前-'+stamp.replace(/[:.]/g,'-');
@@ -1847,11 +1766,15 @@ async function cleanupLegacyDuplicates(calendar,state,store,progress=()=>{}){
   // Manual menu uses the same no-dialog backup -> verify -> cleanup pipeline.
   return await replaceDedicatedLegacy(calendar,state,store,progress);
 }
-async function clearPendingCourseSyncNotifications(){
-  // Scripting owns the notification IDs, and every account uses the same script.
-  // Cancel its pending notifications even when there is no saved account or calendar.
-  try{await HostNotification.removeAllPendingsOfCurrentScript();}
-  catch(_){console.error('[CourseSync] 无法清除已排定的通知，将在下次运行时重试。');}
+async function refreshReminders(state,store){
+  try{await reminders(state);state.reminderError=null;}catch(_){state.reminderError='NOTIFICATION_FAILED';}store.write(state);
+}
+async function reminders(state) {
+  const prefix='nufe-local-class-'+state.owner+'-',now=Date.now(),all=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
+  const desired=state.minutes>0?all.filter(e=>Date.parse(e.start)-state.minutes*60000>now+60000&&Date.parse(e.start)<now+7*DAY).slice(0,40):[];
+  const want=new Set(desired.map(e=>prefix+e.id));
+  const pending=await Notification.allPending();const pendingById=new Map(pending.map(n=>[n.identifier,n]));const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
+  for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pendingById.get(id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
 }
 // Minimal, private same-project cache for widget.tsx. In some Scripting
 // widget extensions the FileManager App Group path is unavailable even though
@@ -1900,49 +1823,45 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录会话已失效或需要验证，请解锁并在 Scripting 内重新登录。课程日历和考试日历均保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分凭据或本地配置尚未清除，后台自动登录已暂停，请解锁后再次点击「退出登录」。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校课表数据不完整或格式异常，已保留原课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，课程日历和考试日历均保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；课程日历和考试日历均保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 找不到可写入的课程日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课程日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整���结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
-  MANUAL_CALENDAR:['找不到所需的课程日历或考试日历。','请在 Apple 日历确认原日历可见，再打开 CourseSync 点击「立即刷新」。'],
-  MANUAL_FIELDS:['日程信息有误。','请填写标题，并确认结束时间晚于开始时间。'],
-  MANUAL_CHANGED:['日程已变更或已删除。','请重新打开「管理日程」查看。'],
-  MANUAL_VERIFY:['无法确认日历已更新。','请先在「管理日程」核对结果。'],
-  EXAM_SCHEMA:['无法读取学校公布的考试日程。','请在教务系统核对考试时间后再刷新。'],
+  EXAM_SCHEMA:['教务系统返回的考试列表或考试时间无法识别。','请在教务系统中核对考试信息，再试一次。'],
   SCHOOL_UNSUPPORTED:['学校不在当前支持名单中，已停止请求且未修改课表。','首次登录时请在学校下拉菜单中选择已支持的学校。'],
   ENDPOINT_CONFIG:['学校预设接口格式异常，已停止请求。','请更新 CourseSync 或联系维护者检查学校接口配置。'],
-  ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台点击「登录账号」重新选择学校。'],
-  ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后点击「登录账号」，重新选择学校重试。'],
+  ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
+  ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后重新点击「立即刷新」，选择学校重试。'],
   TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
   EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
   LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
-  LEGACY_INVITATION:['专用日历中存在带邀请信息的旧事件，删除可能通知其他人，已停止。','先在 Apple 日历核对这条事件，勿将会议邀请混入课程日历。'],
+  LEGACY_INVITATION:['专用日历中存在带邀请信息的旧事件，删除可能通知其他人，已停止。','先在 Apple 日历核对这条事件，勿将会议邀请混入专用课表日历。'],
   LEGACY_VERIFY:['部分旧内容仍然可见，或 iCloud 尚未反映删除，不能报告刷新成功。','稍后再运行；将重新抓取、备份、扫描，不重复创建已有课程。'],
 
   RETRY_LATER:['上次刷新失败，当前处于退避等待期，未重复请求学校。','稍后重试；可前台运行查看上次失败原因。'],
-  PARTIAL_SYNC:['部分学期未同步。','请稍后再次刷新。'],
-  NOTIFICATION_FAILED:['CourseSync 通知发送失败。','检查 Scripting 通知权限。'],
+  PARTIAL_SYNC:['部分学期读取或同步失败，不能报告整次刷新成功。','查看状态中的学期错误。'],
+  NOTIFICATION_FAILED:['课表写入已核验，但课程提醒提交失败。','检查 Scripting 通知权限。'],
 
-  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录弹出的错误代码并联系维护者处理；不要删除课程日历。'],
+  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请在运行状态中记录错误代码并联系维护者处理；不要删除课表日历。'],
   BACKUP_FAILED:['同步或核对前的本地备份无法写入或校验，已停止写入。','检查存储空间，保留现有状态。'],
   CALENDAR_TIMEOUT:['读取 Apple 日历超过 20 秒，未继续写入。','解锁设备，在前台检查日历权限和 iCloud 同步后重试。'],
-  CALENDAR_VERIFY:['无法确认日历已更新。','请等待 iCloud 同步后再刷新。'],
+  CALENDAR_VERIFY:['写后重新扫描尚未确认目标结果，事务已保留，不能报告成功。','等待 iCloud 更新后再运行；会按相同标记恢复，勿手动重复导入 ICS。'],
   MANAGED_SERIES:['本工具标记对应多个日期或已变成全天事件，可能是循环系列，已停止自动写入。','在 Apple 日历核对该系列，先做完整日历备份；本脚本不推断系列删除范围。'],
   MANAGED_INVITATION:['本工具标记事件已有邀请者，自动修改可能影响他人，已停止。','在 Apple 日历核对邀请信息和事件归属。'],
 
   COOKIE_DOMAIN:['学校响应包含与当前认证域名不匹配的 Cookie，安全校验拒绝接收；它可能是学校配置问题，也可能是旧脚本解析兼容问题。','更新脚本以安全跳过无效 Cookie，同时保留域名验证。不要关闭域名校验或分享 Cookie 内容。'],
   COOKIE_FORMAT:['学校响应包含格式异常的 Cookie，无法安全解析。','保留最近阶段记录供适配；不要上传含 Cookie 值的网络请求日志。'],
-  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请记录弹出的错误代码，不要反复提交密码。'],
-  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请记录弹出的错误代码供适配。'],
-  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录弹出的错误代码供适配。'],
-  LOGIN_FAILED:['学校未通过登录。','请核对学号、密码和验证码，再试一次。'],
-  AUTH_REQUIRED:['学校登录已失效。','请打开 CourseSync，点击「登录账号」。'],
-  AUTH_INTERACTIVE_REQUIRED:['学校要求完成登录验证。','请在 Scripting 中打开 CourseSync 并完成验证。'],
-  AUTO_LOGIN_REJECTED:['学校未通过自动登录。','请在 CourseSync 中重新登录。'],
-  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「登录账号」重新登录。'],
+  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留「运行状态」中的错误代码，不要反复提交密码。'],
+  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
+  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
+  LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
+  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','点击「立即刷新」通过原生界面重新登录，学校确认认证成功后才会自动保存账号密码。'],
+  AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
+  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再从主菜单点击「立即刷新」并手动重新登录；不要频繁尝试。'],
+  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「立即刷新」使用原生界面重新登录。'],
   CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台重试；部分凭据操作可能不可用。'],
-  LOGOUT_INCOMPLETE:['退出登录未完成，后台同步已暂停。','请解锁 iPhone 后再次点击「退出登录」。'],
-  WEBVIEW_TIMEOUT:['输入窗口未及时响应。','请重新打开 Scripting 后再试。'],
+  LOGOUT_INCOMPLETE:['退出时未能完全清除本机 Cookie 或同步的脚本凭据；已阻止后台继续登录。','解锁 iPhone 并检查 iCloud 钥匙串，再打开 CourseSync 重试「退出登录」。课表数据不会删除。'],
+  WEBVIEW_TIMEOUT:['Scripting 的本机输入界面超时。脚本将优先改用系统安全输入框；不能认定账号密码有误。','如果系统安全输入仍无法完成，请重新打开 Scripting 后再试。'],
   NETWORK_TIMEOUT:['一个学校网络请求等待超过 25 秒，没有得到完整响应。','检查 Wi-Fi、蜂窝网络或 VPN，稍后单次重试。'],
   NETWORK_CHAIN_TIMEOUT:['登录/数据请求涉及多次跳转，整组请求超过 75 秒。','检查当前网络是否能打开学校登录入口，并保留阶段日志。'],
   NETWORK_OFFLINE:['系统报告设备没有可用的网络连接。','检查设备联网后再试。'],
@@ -1953,17 +1872,17 @@ const ERROR_GUIDE={
   HTTP_429:['学校服务返回请求过于频繁（429）。','暂停手动刷新，等待学校解除限流后再尝试。'],
   TOO_LARGE:['学校返回的数据超过脚本安全处理上限，未继续解析或覆盖课表。','保留当前课表和错误代码，等待检查接口返回内容。'],
   CRYPTO:['学校密码加密所需参数无效，未提交登录密码。','检查认证页面是否发生变化，保留错误代码供适配。'],
-  CALENDAR_READONLY:['当前日历无法写入。','请在 Apple 日历检查该日历是否可编辑。'],
-  CALENDAR_NOT_ICLOUD:['无法确认新日历属于 iCloud。','请在 Apple 日历核对新日历所属的账户。'],
-  CALENDAR_NAME:['日历名称无效。','请输入 1～60 个字符，避免斜杠和换行。'],
+  CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','从主菜单「立即刷新」重新指定原日历；不要直接删除旧日历。'],
+  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程。','请在 Apple 日历确认新建日历的账户来源，必要时手工创建 iCloud 日历。由于 Scripting 不支持指定精确账户，请保留现有日历，避免重复创建。'],
+  CALENDAR_NAME:['日历名称为空、过长或包含不支持的字符。','请输入 1～60 字符的自定义日历名称。'],
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
-  CALENDAR_MISSING:['找不到对应的日历。','请确认原日历在 Apple 日历中可见，再打开 CourseSync 点击「立即刷新」。'],
-  CALENDAR_PERMISSION:['CourseSync 无法访问日历。','请在 iPhone 设置中将 Scripting 的日历权限设为「完全访问」。'],
-  CALENDAR_CREATE_FAILED:['无法创建 iCloud 日历。','请检查 iCloud 日历是否已开启，以及 Scripting 是否可以完全访问日历。'],
-  CALENDAR_NOT_VISIBLE:['找不到可写入的课程日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
-  BUSY:['已有同步任务在运行。','请等本次同步结束后再试。'],
+  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','从主菜单「立即刷新」重新指定原日历；不要删除旧日历。'],
+  CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
+  CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
+  CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
+  BUSY:['同步锁显示可能有另一项同步正在进行，也可能是上次异常退出留下的锁。','避免同时运行两个任务；异常退出留下的正常锁在 20 分钟后会自动过期。'],
   LOCK_LOST:['运行过程中同步锁失效，程序为防止重复写入主动停止。','检查是否存在多个并发任务；停止自动化后稍候重新同步。'],
   STATE_CORRUPT:['本地状态文件无法通过校验，不能安全恢复以前的同步进度。','不要清理状态目录或删除日历；先备份文件并检查。'],
   STATE_WRITE:['本地状态写入后校验失败，可能是存储空间或文件权限问题。','检查 iPhone 存储空间，保留旧状态文件，不要反复同步。'],
@@ -1976,8 +1895,8 @@ const ERROR_GUIDE={
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
   CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
-  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课程日历。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','请保留错误代码和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
+  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -1995,8 +1914,8 @@ function reasonFor(code){return (ERROR_GUIDE[code]||[ERRORS[code]||('出现未�
 function actionFor(code){return (ERROR_GUIDE[code]||[null,'检查失败阶段、网络与登录入口；保留诊断报告供修复。'])[1];}
 function briefTime(iso){if(!iso)return '无';try{return localDateTime(iso).replace(' ',' ');}catch(_){return '无';}}
 function errorMessage(error,state){
-  const code=diagnosticCode(error),stage=state?.lastStage;
-  return [reasonFor(code),actionFor(code),stage&&'失败步骤：'+stage,'错误代码：'+code].filter(Boolean).join('\n');
+  const code=diagnosticCode(error),stage=state&&state.lastStage||'尚未记录阶段';
+  return '阶段：'+stage+'\n错误代码：'+code+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
 function stampStage(state,store,stage){
   const at=new Date().toISOString();
@@ -2006,57 +1925,26 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// The app uses a progress sheet. Shortcut refreshes request a Live Activity
-// when Scripting and iOS allow it. UI errors must not fail synchronization.
-const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
+// Manual refresh shows coarse stages on the Lock Screen and Dynamic Island.
+// Detailed diagnostics stay in the app. Shortcuts never present progress UI.
 function createProgress(state,store,interactive){
   let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
-  let phase='connect',updates=Promise.resolve(),finishing;
-  const liveActivity=hostAPI('LiveActivity');
+  let phase='connect',updates=Promise.resolve();
   const activityCall=async work=>{
     try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
     catch(_){return false;}
   };
-  const rememberActivity=id=>{
-    if(!id)return;
-    try{HostStorage?.set?.(COURSE_REFRESH_ACTIVITY_ID,id);}catch(_){}
-  };
-  const endActivity=async(candidate,finalPhase)=>{
-    const ended=await activityCall(async()=>
-      (await candidate.end({phase:finalPhase},{dismissTimeInterval:0}))!==false);
-    if(ended&&candidate.activityId){
-      try{
-        if(HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID)===candidate.activityId)
-          HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
-      }catch(_){}
-    }
-    return ended;
-  };
-  const dismissPreviousActivity=async()=>{
-    const id=HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID);
-    if(typeof id!=='string'||!id||typeof liveActivity?.from!=='function')return true;
-    const previous=await liveActivity.from(id,COURSE_REFRESH_ACTIVITY_NAME);
-    if(previous){
-      const status=await previous.getActivityState();
-      if(status==='active'||status==='stale')return endActivity(previous,'finish');
-    }
-    if(HostStorage.get(COURSE_REFRESH_ACTIVITY_ID)===id)HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
-    return true;
-  };
-  const updatePhase=next=>{
+  const setPhase=next=>{
+    if(next===phase)return;
+    phase=next;
     if(!activity)return;
     updates=updates.then(()=>{
       if(!closed&&next===phase)return activityCall(()=>activity.update({phase:next}));
     });
   };
-  const setPhase=next=>{
-    if(next===phase)return;
-    phase=next;
-    updatePhase(next);
-  };
   const stage=message=>{
     stampStage(state,store,message);
-    if(closed||!started)return;
+    if(!interactive||closed||!started)return;
     const label=String(message||'');
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
@@ -2064,73 +1952,53 @@ function createProgress(state,store,interactive){
       return ui?.pause();
     }
     if(waitingForVerification){
-      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))return;
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
       waitingForVerification=false;
       setPhase('connect');
       ui?.resume();
     }
-    if(/^(读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))setPhase('sync');
-  };
-  stage.pause=()=>ui?.pause();
-  stage.resume=()=>{
-    waitingForVerification=false;
-    setPhase('connect');
-    ui?.resume();
+    if(/^(读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))setPhase('sync');
   };
   stage.start=async()=>{
-    if(started||closed)return;
+    if(!interactive||started||closed)return;
     started=true;
-    // Only the run holding the sync lock reaches this point. Recover our own
-    // previous activity if the app was interrupted before it could end it.
-    if(interactive){
-      try{
-        if(typeof hostAPI('Navigation')?.present==='function'){
-          ui=createNativeProgressView();
-          ui.show();
-          await new Promise(resolve=>Timer.schedule(100,false,resolve));
-        }
-      }catch(_){ui=null;}
-      if(typeof liveActivity?.from==='function')await activityCall(dismissPreviousActivity);
-      return;
-    }
-    if(!await activityCall(dismissPreviousActivity))return;
+    try{
+      if(typeof hostAPI('Navigation')?.present==='function'){
+        ui=createNativeProgressView();
+        ui.show();
+        await new Promise(resolve=>Timer.schedule(100,false,resolve));
+      }
+    }catch(_){ui=null;}
     if(closed||!CourseRefreshActivity||
-       !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
+       !await activityCall(()=>Scripting.LiveActivity.areActivitiesEnabled()))return;
+    let accepting=true;
     await activityCall(async()=>{
       const candidate=CourseRefreshActivity();
-      const initialPhase=phase;
-      if(!await candidate.start({phase:initialPhase},{staleDate:Date.now()+5*60000}))return;
-      if(closed){
-        // A native start can complete after the JavaScript timeout. Never
-        // attach that activity to a refresh that has already finished.
-        if(!await endActivity(candidate,'finish')){
-          try{
-            if(!HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID))rememberActivity(candidate.activityId);
-          }catch(_){}
-        }
+      if(!await candidate.start({phase},{staleDate:Date.now()+5*60000}))return;
+      if(closed||!accepting){
+        await candidate.end({phase:'finish'},{dismissTimeInterval:0});
         return;
       }
       activity=candidate;
-      rememberActivity(candidate.activityId);
-      if(phase!==initialPhase)updatePhase(phase);
     });
+    accepting=false;
   };
-  stage.finish=(success=false)=>{
-    if(finishing)return finishing;
+  stage.finish=async(success=false)=>{
+    if(closed)return;
     closed=true;
-    finishing=(async()=>{
-      try{ui?.finish();}catch(_){}
-      if(!activity)return;
+    try{ui?.finish();}catch(_){}
+    if(activity){
       await updates;
       const finalPhase=success?'complete':'finish';
       if(success){
-        const shown=await activityCall(async()=>
-          (await activity.update({phase:finalPhase}))!==false);
+        // Show completion while the activity is still active in Dynamic Island.
+        const shown=await activityCall(async()=>{
+          return (await activity.update({phase:finalPhase}))!==false;
+        });
         if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
       }
-      if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
-    })();
-    return finishing;
+      await activityCall(()=>activity.end({phase:finalPhase},{dismissTimeInterval:0}));
+    }
   };
   return stage;
 }
@@ -2187,39 +2055,19 @@ async function createDedicatedCalendar(title){
 async function offerDedicatedCalendar(state,store){
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
   const previous=!!state.calendarId;
-  if(previous&&!await confirm('找不到原课程日历',
-    '如果原日历恢复，新建课程日历可能导致课程重复显示。'))fail('CANCELLED');
-  const title=validCalendarName(await input('创建课程日历','日历名称'));
+  if(previous&&!await confirm('原日历不可见',
+    '未找到之前绑定的日历。如新建日历，旧日历恢复后可能出现重复课程。确定要新建一份独立的 iCloud 日历？'))fail('CANCELLED');
+  const title=validCalendarName(await input('创建 iCloud 日历','请输入自定义日历名称'));
   store.check(); // Do not create a calendar if a waiting task superseded this run.
   return await createDedicatedCalendar(title);
 }
-async function pickExamCalendar(state,store,beforePrompt){
-  const all=await visibleCalendars();
-  const found=all.find(c=>liveCalendar(c)&&c.identifier===state.examCalendarId);
-  if(found){
-    assert(found.identifier!==state.calendarId,'CALENDAR_REBIND_UNSAFE');
-    return found;
-  }
-  // Never create a duplicate if an already bound exam calendar is unavailable.
-  if(state.examCalendarId)fail('CALENDAR_MISSING');
-  if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  await beforePrompt?.();
-  const title=validCalendarName(await input('创建考试日历','日历名称'));
-  store.check();
-  const created=await createDedicatedCalendar(title);
-  assert(created.identifier!==state.calendarId,'CALENDAR_REBIND_UNSAFE');
-  state.examCalendarId=created.identifier;
-  store.write(state);
-  return created;
-}
-async function pickCalendar(state,store,beforePrompt){
+async function pickCalendar(state,store){
   let all=await visibleCalendars();
   let exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
   if(exact)return await alignBoundCalendarName(exact,state,store);
   // Background jobs never create calendars or silently change the binding.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
-  await beforePrompt?.();
   if(!all.length&&typeof HostScript.requestAccess==='function'){
     try{await HostScript.requestAccess(['calendar']);}catch(_){}
     all=await visibleCalendars();
@@ -2230,10 +2078,34 @@ async function pickCalendar(state,store,beforePrompt){
   let picked,created=false;
   if(!state.calendarId){
     // New installs never inherit an unrelated calendar, regardless of name.
-    picked=await offerDedicatedCalendar(state,store);created=true;
+    const nav=hostAPI('Navigation');
+    if(typeof nav?.present==='function'){
+      try{
+        const calItems=all.map(c=>({
+          identifier:c.identifier,
+          title:c.title,
+          color:c.color,
+          sourceTitle:c.source?.title,
+          allowsContentModifications:c.allowsContentModifications
+        }));
+        const res=await presentNativeCalendarManager({
+          calendars:calItems,
+          currentCalendarId:state.calendarId
+        });
+        if(res?.action==='create'){
+          picked=await createDedicatedCalendar(res.title);created=true;
+        }else if(res?.action==='select'){
+          picked=all.find(c=>c.identifier===res.calendarId);
+        }
+      }catch(_){}
+    }
+    if(!picked){
+      picked=await offerDedicatedCalendar(state,store);created=true;
+    }
   }else{
-    const dialog=new Alert();dialog.title='找不到原课程日历';
-    dialog.addAction('选择原课程日历');dialog.addAction('创建课程日历');dialog.addCancelAction('取消');
+    const dialog=new Alert();dialog.title='原日历不可见';
+    dialog.message='请选择原来的专用日历，或创建新的 iCloud 日历。更换目标可能让已同步课程重复；不得选择包含私人活动的日历。';
+    dialog.addAction('指定已有日历');dialog.addAction('创建新 iCloud 日历');dialog.addCancelAction('取消');
     const choice=await dialog.presentSheet();
     if(choice<0)fail('CANCELLED');
     if(choice===1){picked=await offerDedicatedCalendar(state,store);created=true;}
@@ -2241,8 +2113,8 @@ async function pickCalendar(state,store,beforePrompt){
       const selected=await Calendar.presentPicker(false);
       picked=Array.isArray(selected)?selected[0]:null;
       assert(picked&&liveCalendar(picked)&&all.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
-      if(!await confirm('确认课程日历',
-        '将使用「'+picked.title+'」同步课程。同步可能清理其中的旧日程，请确认该日历仅用于课表。'))fail('CANCELLED');
+      if(!await confirm('确认目标日历',
+        '已选择「'+picked.title+'」。此日历只能用于 CourseSync，不能混放私人活动；后续同步可能清理其中的旧内容。是否确认？'))fail('CANCELLED');
       store.check();
       // A different existing calendar must prove ownership before adoption.
       // Never infer ownership from name or course titles alone.
@@ -2279,7 +2151,7 @@ async function clearBrokenCookies(state,store){
 async function exportRecoveryBackups(state,store){
   const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName]
     .filter(n=>n&&/^[^/\\]+$/.test(n)&&store.fm.fileExists(store.path(n)));
-  if(!names.length){await notice('没有可用备份','未发现可导出的同步备份；请保留当前课程日历。');return;}
+  if(!names.length){await notice('没有可用备份','未发现可导出的同步备份；请保留当前课表日历。');return;}
   const files=[...new Set(names)].map(n=>({name:n,data:Data.fromFile(store.path(n))}));
   await hostAPI('DocumentPicker').exportFiles({files});
 }
@@ -2334,8 +2206,8 @@ function statusText(state){
     state.signedOut?'已退出登录':
     state.authPaused?'需要处理登录':
     state.runStatus==='failed'?'上次刷新失败':
-    state.lastExamError&&state.runStatus==='partial'?'考试日程未同步':
-    state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未同步':
+    state.lastExamError&&state.runStatus==='partial'?'考试日程未完成':
+    state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未完成':
     state.runStatus==='running'?'上次同步可能仍在运行':
     state.runStatus==='success'?'上次刷新成功':
     state.runStatus==='cancelled'?'上次操作已取消':'尚未完成首次同步';
@@ -2344,7 +2216,7 @@ function statusText(state){
   const last=state.lastCheck?briefTime(state.lastCheck):'尚无成功核验记录';
   const recent=state.runStatus==='failed'&&state.lastError?
     '\n最近问题：'+reasonFor(state.lastError):'';
-  const noticeWarning=state.resultNoticeError||state.authNoticeError?
+  const noticeWarning=state.resultNoticeError||state.authNoticeError||state.reminderError?
     '\n通知：有发送异常（不影响已完成的课表同步）':'';
   const termErrors=Array.isArray(state.termErrors)?state.termErrors:[];
   const termDetails=termErrors.slice(0,3).map(({sid,code})=>{
@@ -2353,8 +2225,8 @@ function statusText(state){
   }).join('')+(termErrors.length>3?'\n另有 '+(termErrors.length-3)+' 个学期未完成':'');
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
-    '\n课程日历：'+calendar+
-    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请点击「退出登录」重试':state.signedOut?'\n登录：已退出，下次启动重新进行首次配置':state.authPaused?'\n登录：需要手动处理':'')+
+    '\n课表日历：'+calendar+
+    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+termDetails+noticeWarning+
@@ -2364,20 +2236,18 @@ function statusText(state){
 // asking for course-table JSON, changing cookies, or submitting credentials.
 // The result refers only to this request, not a promise of future validity.
 async function probeSchoolSession(jar){
-  return activeSource.probe(jar);
-}
-async function probeUstsSession(jar){
-  try{
-    const response=await new HTTP(jar||new CookieJar()).get(USTS_HOME+'?jsdm=xs&echarts=1');
-    return {connection:{level:'正常',detail:'学校教务入口已响应'},
-      auth:ustsStudentMenu(response.text)?{level:'正常',detail:'当前会话可访问学生主菜单'}:
-        {level:'注意',detail:'当前会话未通过登录检查'}};
-  }catch(error){
-    return {connection:{level:'待确认',detail:'当前请求失败（'+diagnosticCode(error)+'）'},
-      auth:{level:'待确认',detail:'实时验证未完成'}};
+  if(activeSchoolId==='usts'){
+    try{
+      const r=await new HTTP(jar||new CookieJar()).get(USTS_HOME+'?jsdm=xs&echarts=1');
+      const valid=ustsStudentMenu(r.text);
+      return {connection:{level:'正常',detail:'苏州科技���学教务入口已响应'},
+        auth:valid?{level:'正常',detail:'当前会话可访问学生主菜单'}:
+          {level:'注意',detail:'当前会话未通过登录检查'}};
+    }catch(error){
+      return {connection:{level:'待确认',detail:'当前请求失败（'+diagnosticCode(error)+'）'},
+        auth:{level:'待确认',detail:'实时验证未完成'}};
+    }
   }
-}
-async function probeNufeSession(jar){
   const req=new Request(TABLE);
   req.method='GET';req.timeoutInterval=7;
   const cookie=jar?.header(TABLE)||'';
@@ -2448,14 +2318,14 @@ async function inspectEnvironment(state,store){
 
   try{
     const all=await bounded(visibleCalendars(),6500,'CALENDAR_TIMEOUT');
-    if(!state.calendarId)put('课程日历','注意','未绑定课程日历');
+    if(!state.calendarId)put('目标日历','注意','未绑定课表日历');
     else{
       const found=all.find(c=>c&&c.identifier===state.calendarId);
-      if(!found)put('课程日历','注意','原日历当前不可见；勿直接新建替换');
-      else if(!liveCalendar(found))put('课程日历','注意','原日历不可写入');
-      else put('课程日历','正常','绑定的日历可见且可编辑');
+      if(!found)put('目标日历','注意','原日历当前不可见；勿直接新建替换');
+      else if(!liveCalendar(found))put('目标日历','注意','原日历不可写入');
+      else put('目标日历','正常','绑定的日历可见且可编辑');
     }
-  }catch(_){put('课程日历','待确认','无法读取日历列表；检查完全访问权限');}
+  }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
 
   let jar=null;
   if(state.signedOut){
@@ -2551,24 +2421,24 @@ function explicitTeachingMonday(detail){
   }
   return null;
 }
-async function nufeTermAnchor(http,sid,name){
-  const known=VERIFIED_TERM_ANCHORS[normalizeTermName(name)];
-  if(known)return {anchor:known,source:'upstream-semesters.json'};
-  const detail=await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
-  const teachingMonday=explicitTeachingMonday(detail);
-  if(teachingMonday)return {anchor:teachingMonday,source:'school-teaching-week'};
-  return {anchor:detailMonday(detail),source:'school-semester-start'};
-}
-function ustsTermAnchor(_http,sid,_name,termDetail){
-  const known=USTS_TERM_MONDAYS[sid];
-  if(known)return {anchor:known,source:'school-published-calendar'};
-  return {anchor:explicitTeachingMonday(termDetail),source:'school-teaching-week'};
-}
 async function chooseAnchor(sid,name,http,state,store,{calendar,termDetail}={}) {
+  const usts=activeSchoolId==='usts';
   if(!calendar&&state.anchors[sid])return monday(state.anchors[sid]);
-  const result=calendar?.anchor?{anchor:calendar.anchor,source:'school-teaching-week'}:
-    await activeSource.termAnchor(http,sid,name,termDetail);
-  let {anchor,source}=result;
+  let anchor=calendar?.anchor,source='school-teaching-week';
+  if(!anchor){
+    anchor=usts?USTS_TERM_MONDAYS[sid]:VERIFIED_TERM_ANCHORS[normalizeTermName(name)];
+    source=usts?'school-published-calendar':'upstream-semesters.json';
+  }
+  if(!anchor){
+    const detail=usts?termDetail:await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
+    anchor=explicitTeachingMonday(detail);
+    source='school-teaching-week';
+    // NUFE's semester API uses its start date as the schedule baseline.
+    if(!anchor&&!usts){
+      anchor=detailMonday(detail);
+      source='school-semester-start';
+    }
+  }
   assert(anchor,'ANCHOR');
   anchor=monday(anchor);
   if(state.anchors[sid]!==anchor||state.anchorSources?.[sid]!==source){
@@ -2632,7 +2502,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
 function matchesOldCourse(ev,rec,state){
-  if(!ev||isManualEvent(ev)||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
+  if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
   const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   const before=norm(ev.title),after=norm(rec.title);
@@ -2653,15 +2523,10 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
     for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))rows.set(occurrenceKey(ev),ev);
   }
   const keep=new Set(Object.values(term.index||{}));
-  const isDuplicate=ev=>{
-    if(keep.has(ev.identifier)||ev.calendar?.identifier!==state.calendarId||ev.attendees?.length)return false;
-    // A marked event or a synchronization note may belong to another account's
-    // calendar index, including after its local state has been cleared.
-    const notes=String(ev.notes||'');
-    if(notes.startsWith('[NUFE_LOCAL_V1 ')||/(?:^|\n)同步[：:]\d{4}-\d{2}-\d{2} /.test(notes))return false;
-    return term.events.some(rec=>matchesOldCourse(ev,rec,state));
-  };
-  const candidates=[...rows.values()].filter(isDuplicate);
+  const candidates=[...rows.values()].filter(ev=>
+    !keep.has(ev.identifier)&&ev.calendar?.identifier===state.calendarId&&!ev.attendees?.length&&
+    term.events.some(rec=>matchesOldCourse(ev,rec,state))
+  );
   if(!candidates.length){term.legacyMatchedCleanAt=new Date().toISOString();store.write(state);return;}
   const stamp=new Date().toISOString(),base='重复旧课程清理前-'+stamp.replace(/[:.]/g,'-');
   writeVerified(store,base+'.ics',backupLegacyICS(candidates));
@@ -2686,7 +2551,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
   for(let at=low;at<high;at+=45*DAY){
     budget();for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))leftovers.set(occurrenceKey(ev),ev);
   }
-  assert(![...leftovers.values()].some(isDuplicate),'LEGACY_VERIFY');
+  assert(![...leftovers.values()].some(ev=>!keep.has(ev.identifier)&&term.events.some(rec=>matchesOldCourse(ev,rec,state))),'LEGACY_VERIFY');
   term.legacyMatchedCleanAt=new Date().toISOString();
   state.lastLegacyCleanupCount=(state.lastLegacyCleanupCount||0)+count;
   store.write(state);
@@ -2704,124 +2569,78 @@ async function finishTx(state,store,adapter,budget) {
   assert(backup.calendarId===adapter.calendar.identifier&&JSON.stringify(backup.before)===JSON.stringify(tx.before)&&JSON.stringify(backup.target)===JSON.stringify(tx.target),'BACKUP_FAILED');
   // The user authorized unattended replacement/cancellation of installation-owned courses.
   tx.deletionsConfirmed=true;
+  const obsolete=tx.before.filter(e=>{const n=tx.target.find(n=>n.id===e.id);return !n||!same(e,n);}).map(e=>'nufe-local-class-'+state.owner+'-'+e.id);
+  if(obsolete.length)await Notification.removePending(obsolete);
   const index=await applyTransaction(tx,adapter,budget);
   const oldTerm=state.semesters[tx.sid];
   const sourceChanges=tx.changes.added+tx.changes.removed+tx.changes.changed;
   state.semesters[tx.sid]={events:tx.target,index,anchor:tx.anchor,name:tx.name,lastSuccess:new Date().toISOString(),skipped:tx.skipped,
     notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
+  const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
+  if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
   state.tx=null;store.write(state);
   await polishTermNotes(adapter.calendar,state,store,tx.sid,budget);
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
+  await refreshReminders(state,store);
 }
-function selectTermIds(info,state,interactive,now=Date.now()){
+function selectTermIds(info,state,interactive){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   const history=available.filter(sid=>sid!==info.current).sort((a,b)=>a-b);
   if(!history.length)return [info.current];
-  // The first foreground run attempts a full import. Interrupted initialization
-  // subsequently picks missing baselines first until every term is covered.
+  // The initial manual sync imports all missing history. Subsequent runs
+  // share a persisted rotation, with at most one historical term per run.
   if(interactive&&!Object.values(state.semesters||{}).some(term=>term.lastSuccess))
     return [info.current,...history];
-  // A permanently unavailable history term must not monopolize the retry slot.
-  // Retry failed/missing terms daily, rotating to other missing terms meanwhile.
-  const pending=history.filter(sid=>{
-    if(state.semesters[sid]?.lastSuccess)return false;
-    const last=Date.parse(state.historyAttemptAt?.[sid]||'');
-    return !Number.isFinite(last)||now-last>=DAY;
-  });
-  if(pending.length)return [info.current,
-    pending.find(sid=>sid>state.lastHistoryTerm)??pending[0]];
-  // A recent archived term is checked weekly; older terms monthly. Each run
-  // checks at most one due term, with a persistent fairness cursor.
-  const due=history.filter(sid=>{
-    if(!state.semesters[sid]?.lastSuccess)return false;
-    const last=Date.parse(state.semesters[sid]?.lastSuccess||'');
-    const days=info.current-sid<=1?7:30;
-    return !Number.isFinite(last)||now-last>=days*DAY;
-  });
-  if(!due.length)return [info.current];
-  const next=due.find(sid=>sid>state.lastHistoryTerm)??due[0];
+  const next=history.find(sid=>sid>state.lastHistoryTerm)??history[0];
   return [info.current,next];
 }
-async function openNufeSource(http,{interactive,stage,manualAuth}){
-  const {page,credentials}=await readNufeSession(http,interactive,stage,manualAuth);
-  return {info:pageInfo(page),credentials};
-}
-async function openUstsSource(http,{interactive,stage,manualAuth,recoveryTerm}){
-  let login;
-  try{login=await ustsAuthenticate(http,interactive,stage,manualAuth);}
-  catch(error){
-    if(!interactive||error.code!=='AUTO_LOGIN_REJECTED')throw error;
-    await stage('等待输入学校登录信息');
-    const account=await credentialForm({title:'更新 CourseSync 登录信息'});
-    http.jar.cookies=[];
-    login=await ustsAuthenticate(http,true,stage,{kind:'credentials',...account});
-  }
-  const table=await http.get(USTS_TABLE,{referer:USTS_HOME});
-  if(ustsLoginPage(table))fail('AUTH_REQUIRED');
-  const info=ustsScheduleTerms(table.text);
-  info.semesters.sort((a,b)=>b.id-a.id);
-  const currentTerm=await ustsCourseData(http,info.current);
-  if(currentTerm.enrollment)info.semesters=info.semesters.filter(t=>
-    t.id===info.current||Math.floor(t.id/100)>=currentTerm.enrollment||t.id===recoveryTerm);
-  info.person=currentTerm.person;
-  return {info,currentTerm,home:login.home,credentials:login.account};
-}
-async function readNufeTerm(http,session,sid,name,state,store,stage){
-  const anchor=await chooseAnchor(sid,name,http,state,store);
-  stage('请求学期 '+sid+' 课表数据');
-  const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
-  return {anchor,normalized:expand(raw,sid,anchor)};
-}
-async function readUstsTerm(http,session,sid,name,state,store,stage){
-  stage('请求学期 '+sid+' 课表数据');
-  const {info,currentTerm,home}=session;
-  const term=sid===info.current?currentTerm:await ustsCourseData(http,sid);
-  assert(term.person===info.person,'ACCOUNT_CHANGED');
-  // An empty historical response can mean the school generated a selector
-  // option for a term with no actual enrollment data.
-  if(sid!==info.current&&!term.data.kbList.length&&!state.semesters[sid]&&state.tx?.sid!==String(sid))return null;
-  const calendar=ustsCalendar(home,sid);
-  const anchor=await chooseAnchor(sid,name,http,state,store,{calendar,termDetail:term.data.xsxx});
-  return {anchor,normalized:await ustsNormalize(http,term.data,sid,anchor,calendar?.dates)};
-}
-function verifySourceIdentity(person){
-  const key=schoolKey('CourseSync.Local.v1.person');
-  if(Keychain.contains(key))assert(Keychain.get(key)===person,'ACCOUNT_CHANGED');
-  return key;
-}
-function saveSourceSession(session,manualAuth){
-  const {info,credentials}=session;
-  const accountKey=verifySourceIdentity(info.person);
-  if(credentials)saveCredentials(credentials.username,credentials.password);
-  if(!Keychain.contains(accountKey))Keychain.set(accountKey,info.person);
-  session.credentials=null;
-  if(manualAuth?.kind==='credentials')manualAuth.password='';
-}
-async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null,onCurrentSynced=null) {
+async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
+  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   if(state.notice){state.notice=null;store.write(state);}
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
-  const manualCredentials=manualAuth?.kind==='credentials';
-  // Explicit credentials must be verified even if a previous session still works.
-  const jar=(state.signedOut||manualCredentials)?new CookieJar():readCookieJar();
+  const usts=activeSchoolId==='usts';
+  const jar=state.signedOut||(usts&&manualAuth?.kind==='credentials')?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
-  let identityVerified=false;
+  let identityVerified=!usts;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
   const http=new HTTP(jar,saveCookies,budget,stage);
-  const source=activeSource;
-  const session=await source.open(http,{interactive,stage,manualAuth,recoveryTerm:Number(interrupted?.sid)});
-  const {info}=session;
-  saveSourceSession(session,manualAuth);
-  identityVerified=true;
-  saveCookies(jar.cookies);
-  // A canceled calendar prompt should not require the user to log in again.
-  if(state.signedOut||state.authPaused){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;}
+  let info,ustsCurrent,ustsHome;
+  if(usts){
+    let login;
+    try{login=await ustsAuthenticate(http,interactive,stage,manualAuth);}
+    catch(error){
+      if(!interactive||error.code!=='AUTO_LOGIN_REJECTED')throw error;
+      await stage('等待输入学校登录信息');
+      const account=await credentialForm({title:'更新 CourseSync 登录信息'});
+      jar.cookies=[];
+      login=await ustsAuthenticate(http,true,stage,{kind:'credentials',...account});
+    }
+    const table=await http.get(USTS_TABLE,{referer:USTS_HOME});
+    if(ustsLoginPage(table))fail('AUTH_REQUIRED');
+    info=ustsScheduleTerms(table.text);
+    info.semesters.sort((a,b)=>b.id-a.id);
+    ustsCurrent=await ustsCourseData(http,info.current);
+    if(ustsCurrent.enrollment)info.semesters=info.semesters.filter(t=>
+      t.id===info.current||Math.floor(t.id/100)>=ustsCurrent.enrollment||t.id===Number(interrupted?.sid));
+    info.person=ustsCurrent.person;
+    ustsHome=login.home;
+    const key=schoolKey('CourseSync.Local.v1.person');
+    if(Keychain.contains(key))assert(Keychain.get(key)===info.person,'ACCOUNT_CHANGED');
+    if(login.account)saveCredentials(login.account.username,login.account.password);
+    identityVerified=true;
+    saveCookies(jar.cookies);
+  }else info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
+  // Only a verified school session ends the signed-out state.
+  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
+  const accountKey=schoolKey('CourseSync.Local.v1.person');
+  if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
   let sids=selectTermIds(info,state,interactive);
   if(interrupted){
@@ -2830,23 +2649,29 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Recover the pending write before opening another calendar transaction.
     if(sid!==info.current)sids=[sid,info.current];
   }
-  if(typeof calendar==='function')calendar=await calendar(budget);
-  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
+  const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
   state.termErrors=[];
   for(const sid of sids) {
-    // Reserve time for the current term and exam data before a historical fetch.
-    if(sid!==info.current&&Date.now()-begun>limit-(interactive?60000:35000)){
-      state.historyDeferredAt=new Date().toISOString();store.write(state);break;
-    }
     try {
     budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
-    const term=await source.readTerm(http,session,sid,name,state,store,stage);
-    if(!term){
-      state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:Date.now()};
-      state.lastHistoryTerm=sid;store.write(state);
-      continue;
+    let anchor,normalized;
+    if(usts){
+      stage('请求学期 '+sid+' 课表数据');
+      const term=sid===info.current?ustsCurrent:await ustsCourseData(http,sid);
+      assert(term.person===info.person,'ACCOUNT_CHANGED');
+      if(sid!==info.current&&!term.data.kbList.length&&!state.semesters[sid]&&interrupted?.sid!==String(sid)){
+        state.lastHistoryTerm=sid;store.write(state);
+        continue;
+      }
+      const dates=ustsCalendar(ustsHome,sid);
+      anchor=await chooseAnchor(sid,name,http,state,store,{calendar:dates,termDetail:term.data.xsxx});
+      normalized=await ustsNormalize(http,term.data,sid,anchor,dates?.dates);
+    }else{
+      anchor=await chooseAnchor(sid,name,http,state,store);
+      stage('请求学期 '+sid+' 课表数据');
+      const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
+      normalized=expand(raw,sid,anchor);
     }
-    const {anchor,normalized}=term;
     if(normalized.studentCode){const studentKey=schoolKey('CourseSync.Local.v1.student');if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
     let old=state.semesters[sid];
     if(interrupted&&interrupted.sid===String(sid)){const recovered=new Map([...interrupted.before,...interrupted.target].map(e=>[e.id,e]));old={...(old||{}),events:[...recovered.values()]};}
@@ -2857,24 +2682,30 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Ambiguous moved lessons are represented as remove+add; no relationship is invented.
     // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
     stage('写入学期 '+sid+' 的日历事件');
-    state.tx={id:uuid(),sid:String(sid),anchor,name,deletionsConfirmed:approved,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length,examples:[...p.changed.map(e=>e.title+' 已调整'),...p.added.map(e=>e.title+' 新增')].slice(0,3)}};
+    state.tx={id:uuid(),sid:String(sid),anchor,name,hadBaseline:!!state.semesters[sid],deletionsConfirmed:approved,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length,examples:[...p.changed.map(e=>e.title+' 已调整'),...p.added.map(e=>e.title+' 新增')].slice(0,3)}};
     store.write(state);await finishTx(state,store,adapter,budget);
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
       if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
       state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
     }
-    if(sid===info.current&&onCurrentSynced)await onCurrentSynced(http,budget);
     if(sid!==info.current){
-      if(state.semesters[sid]?.lastSuccess){
-        if(state.historyAttemptAt)delete state.historyAttemptAt[sid];
-      }else state.historyAttemptAt={...(state.historyAttemptAt||{}),[sid]:new Date().toISOString()};
       // Advance even on a recoverable historical error so one term cannot
       // prevent the remaining terms from being checked.
       state.lastHistoryTerm=sid;store.write(state);
     }
   }
+  // Re-scan all historical calendar windows only after an import or when
+  // initial legacy cleanup still needs to complete.
+  const allTermBaselinesReady=info.semesters.every(x=>state.semesters[String(x.id)]?.lastSuccess);
+  const legacyCleanupPending=['running','unverified'].includes(state.legacyReplacement?.status);
+  if(!usts&&REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length&&
+     (!state.lastCheck||importsNewTerm||legacyCleanupPending)){
+    stage('全部学期核验完成后清理专用日历旧内容');
+    await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
+  }
   state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.nextAttempt=0;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
+  await refreshReminders(state,store);
   return http;
 }
 // GET-only login-page preflight: does not ask for a password or modify the calendar.
@@ -2882,15 +2713,12 @@ async function loginPreflight(state,store,progress){
   progress('登录自检：访问学校认证入口');
   const jar=readCookieJar();
   const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),progress);
-  return activeSource.preflight(http,progress);
-}
-async function preflightUsts(http){
-  const r=await http.get(USTS_HOME+'?jsdm=xs&echarts=1');
-  if(ustsStudentMenu(r.text))return '当前会话可访问学校学生主菜单。';
-  assert(ustsLoginPage(r)&&inputs(r.text).some(v=>v.name==='csrftoken'&&v.value),'LOGIN_SCHEMA');
-  return '学校教务登录页可访问，已找到登录表单。';
-}
-async function preflightNufe(http,progress){
+  if(activeSchoolId==='usts'){
+    const r=await http.get(USTS_HOME+'?jsdm=xs&echarts=1');
+    if(ustsStudentMenu(r.text))return '当前会话可访问苏州科技大学学生主菜单。';
+    assert(ustsLoginPage(r)&&inputs(r.text).some(v=>v.name==='csrftoken'&&v.value),'LOGIN_SCHEMA');
+    return '苏州科技大学教务登录页可访问，已找到登录表单。';
+  }
   const r=await http.get(SSO);
   if(safeURL(r.url).host==='jwxt.nufe.edu.cn'){
     progress('登录自检：核对教务页面');
@@ -2907,80 +2735,37 @@ async function preflightNufe(http,progress){
 // Credentials are automatically stored only after the school verifies login.
 // Logging out deletes local session cookies and Scripting's saved credentials,
 // without touching the iOS Passwords website entry or Apple Calendar.
-// Logout resets all CourseSync configuration. The technical guard prevents
-// old NUFE files from silently re-importing data after a user reset.
-function resetStateSkeleton(){
-  return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},
-    failures:0,signedOut:true,authPaused:true,runStatus:'signed_out'};
-}
-function resetLocalFiles(store){
-  const fm=store.fm,base=fm.libraryDirectory();
-  const dirs=SCHOOL_WHITELIST.map(source=>fm.joinPath(base,schoolKey('CourseSync-v2',source)));
-  for(const dir of dirs){
-    if(dir===store.dir||!fm.fileExists(dir))continue;
-    const lock=fm.joinPath(dir,'run-lock.json');
-    if(fm.fileExists(lock)){
-      let owner;
-      try{owner=JSON.parse(fm.readString(lock));}catch(_){fail('LOCK_CORRUPT');}
-      if(Number.isFinite(owner.at)&&Date.now()-owner.at<20*60000)fail('BUSY');
-    }
-  }
-  for(const dir of dirs){
-    if(!fm.fileExists(dir))continue;
-    const own=dir===store.dir;
-    for(const name of fm.listContents(dir)){
-      if(own&&['run-lock.json','run-heartbeat.json','run-cancel.json'].includes(name))continue;
-      const path=fm.joinPath(dir,name);
-      fm.remove(path);
-      assert(!fm.fileExists(path),'LOGOUT_INCOMPLETE');
-    }
-  }
-}
-function resetProjectCredentials(){
-  const keys=[SCHOOL_CHOICE_KEY,SCHOOL_KEY,ENDPOINT_KEY,LEGACY_IMPORT_KEY,
-    ...LEGACY_DEVICE_KEYS.flatMap(([current,old])=>[current,old])];
-  for(const source of SCHOOL_WHITELIST){
-    for(const key of [KEY,CRED_KEY,'CourseSync.Local.v1.person',
-      'CourseSync.Local.v1.student','CourseSync.Local.v1.device'])keys.push(schoolKey(key,source));
-  }
-  for(const key of new Set(keys)){
-    if(key===RESET_GUARD_KEY)continue;
-    if(Keychain.contains(key))Keychain.remove(key);
-    assert(!Keychain.contains(key),'LOGOUT_INCOMPLETE');
-  }
-  for(const key of [...SCHOOL_WHITELIST.map(source=>schoolKey(CLOUD_CRED_KEY,source)),LEGACY_CLOUD_CRED_KEY]){
-    if(CloudKeychain.contains(key))CloudKeychain.remove(key);
-    assert(!CloudKeychain.contains(key),'LOGOUT_INCOMPLETE');
-  }
-}
 async function signOut(state,store){
+  // Saved credentials and the local authenticated session are separate.
   if(!await confirm('退出登录',
-    '将清除已保存的账号和设置。Apple 日历中的课程和考试会保留，重新导入同一日历可能产生重复日程。'))return false;
-  state.signedOut=true;state.authPaused=true;state.lastError='LOGOUT_INCOMPLETE';
-  state.runStatus='signed_out';store.write(state);
-  Keychain.set(RESET_GUARD_KEY,'1');
+    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
+
+  // Persist a fail-closed marker before touching the Keychain, so scheduled
+  // refreshes cannot silently sign back in even if deletion partially fails.
+  state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
+  state.nextAttempt=0;state.failures=0;state.lastError=null;
+  state.runStatus='signed_out';state.credentialCloudStatus=null;
+  store.write(state);
   try{
-    resetProjectCredentials();
-    resetLocalFiles(store);
-    const fresh=resetStateSkeleton();
-    for(const key of Object.keys(state))delete state[key];
-    Object.assign(state,fresh);
-    store.generation=0;
-    store.write(state);
-    // Replace the saved widget snapshot with a valid empty representation.
-    try{HostStorage?.set?.(WIDGET_CACHE_KEY,{version:1,lastCheck:new Date().toISOString(),events:[]});}catch(_){}
-    await clearPendingCourseSyncNotifications();
-  }catch(e){
-    state.signedOut=true;state.authPaused=true;state.lastError='LOGOUT_INCOMPLETE';
-    try{store.write(state);}catch(_){}
+    if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
+    if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
+    if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
+    if(activeSchoolId==='nufe'&&Keychain.contains('NUFE.Local.v1.cookies'))
+      Keychain.remove('NUFE.Local.v1.cookies');
+    removeSavedCredentials();
+    if(Keychain.contains(schoolKey(KEY))||hasSavedCredentials()||
+      (activeSchoolId==='nufe'&&(Keychain.contains('NUFE.Local.v1.cookies')||CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))))
+      fail('CREDENTIALS_UNAVAILABLE');
+  }catch(_){
+    // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已重置 CourseSync 设置。Apple 日历中的课程和考试已保留。');}catch(_){}
+  try{await notice('已退出登录','已清除本机会话和 CourseSync 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
   return true;
 }
 async function refreshFailure(code){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分学期未同步':'CourseSync · 刷新失败';
-  n.body=code==='PARTIAL_SYNC'?'请打开 CourseSync，点击「立即刷新」重试。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新失败';
+  n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 // Notification delivery is separate from the verified calendar result.
@@ -3010,7 +2795,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='上次同步还在运行。可以等待完成，或在上次任务安全停止后再刷新。';
+    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终��正在写入的日历操作。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
@@ -3043,18 +2828,10 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
 }
 function canOfferSignOut(state){
   if(state.lastError==='LOGOUT_INCOMPLETE')return true;
-  // Explicit logout is authoritative even if Keychain/iCloud still exposes
-  // credentials for a short time. Never interpret those as a live session.
-  if(state.signedOut)return false;
+  // No separate logout entry until a session or script credentials exist.
+  // After interrupted cleanup (or iCloud sync reappearance), keep retryable.
   try{return Keychain.contains(schoolKey(KEY))||hasSavedCredentials();}
-  catch(_){return false;}
-}
-function menuAuthState(state){
-  if(state.lastError==='LOGOUT_INCOMPLETE')return 'cleanup';
-  if(state.signedOut)return 'signed_out';
-  if(state.authPaused)return 'login';
-  if(!loadSelectedSchool(null,true)||!state.lastCheck||!canOfferSignOut(state))return 'login';
-  return 'ready';
+  catch(_){return !state.signedOut;}
 }
 function offlineAgenda(state,now=Date.now()) {
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
@@ -3070,7 +2847,7 @@ function offlineAgenda(state,now=Date.now()) {
     if(lines.length===20)break;
   }
   return (state.lastCheck?'上次同步：'+localDateTime(state.lastCheck)+'\n\n':'')+
-    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在 Apple 日历的考试日历中查看。';
+    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
@@ -3085,7 +2862,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
     const list=Array.isArray(data?.roomList)?data.roomList:[];
     return list.filter(r=>{
       const bName=r.building?.nameZh||r.buildingName;
-      return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
+      return Boolean(BUILDING_PRIORITY[bName]);
     }).sort((a,b)=>{
       const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
       const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
@@ -3103,14 +2880,14 @@ const AFTERNOON_FALLBACK=['5','6','7','8'];
 const EVENING_UNITS=['10','11','12'];
 
 function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
-  const formatRoom=r=>r?String(r.nameZh||r.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim():'无空闲教室';
+  const formatRoom=r=>r?`${r.nameZh||r.name}（${r.floor}楼）`:'无空闲教室';
   const isSame=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?a.id===b.id:(a.nameZh||a.name)===(b.nameZh||b.name));
   const inList=(list,target)=>list.some(r=>isSame(r,target));
 
   // 1. 全天同一教室 (上午 + 下午 + 晚上)
   const allDayRoom=mornRooms.find(r=>inList(aftRooms,r)&&inList(eveRooms,r));
   if(allDayRoom){
-    return [`• 全天：${formatRoom(allDayRoom)}`];
+    return [`• 全天（第1-12节 / 上午+下午+晚上）：${formatRoom(allDayRoom)}`];
   }
 
   // 2. 白天同一教室 (上午 + 下午)
@@ -3119,16 +2896,16 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
 
   if(mornAftRoom){
     return [
-      `• 白天：${formatRoom(mornAftRoom)}`,
-      `• 晚上：${formatRoom(eveRooms[0]||null)}`
+      `• 白天（第1-9节 / 上午+下午）：${formatRoom(mornAftRoom)}`,
+      `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
     ];
   }
 
   // 3. 下午至晚上同一教室 (下午 + 晚上)
   if(aftEveRoom){
     return [
-      `• 上午：${formatRoom(mornRooms[0]||null)}`,
-      `• 下午至晚上：${formatRoom(aftEveRoom)}`
+      `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
+      `• 下午至晚上（第5-12节 / 下午+晚上）：${formatRoom(aftEveRoom)}`
     ];
   }
 
@@ -3136,17 +2913,17 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const mornEveRoom=mornRooms.find(r=>inList(eveRooms,r));
   if(mornEveRoom){
     return [
-      `• 上午：${formatRoom(mornEveRoom)}`,
-      `• 下午：${formatRoom(aftRooms[0]||null)}`,
-      `• 晚上：${formatRoom(mornEveRoom)}`
+      `• 上午（第1-4节）：${formatRoom(mornEveRoom)}`,
+      `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
+      `• 晚上（第10-12节）：${formatRoom(mornEveRoom)}（同上午）`
     ];
   }
 
   // 5. 各时段独立教室
   return [
-    `• 上午：${formatRoom(mornRooms[0]||null)}`,
-    `• 下午：${formatRoom(aftRooms[0]||null)}`,
-    `• 晚上：${formatRoom(eveRooms[0]||null)}`
+    `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
+    `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
+    `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
   ];
 }
 
@@ -3165,165 +2942,44 @@ async function queryDayRooms(http,date){
 }
 
 async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAuth=null,now=Date.now(),progress=null){
-  const source=activeSource;
-  assert(source.readFreeRooms,'SCHOOL_UNSUPPORTED');
   stage('正在连接教务系统...');
   try{
-    const session=await source.open(http,{interactive,stage,manualAuth});
-    saveSourceSession(session,manualAuth);
+    await coursePage(http,interactive,stage,manualAuth?.username?manualAuth:null);
   }catch(e){
     if(progress)await progress.finish();
     if(['AUTH_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e.code)){
-      await notice('登录失败','请核对学号和密码，重新登录后再查询。');
+      await notice('登录失败','请先完成学校登录或核对账号密码后再查询空闲教室。');
       return '';
     }
     throw e;
   }
   stage('正在查询空闲教室...');
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
-  const todayLines=await source.readFreeRooms(http,today);
+  const tomorrow=localDateTime(new Date(now+86400000).toISOString()).slice(0,10);
+  const [todayLines,tmrwLines]=await Promise.all([
+    queryDayRooms(http,today),
+    queryDayRooms(http,tomorrow)
+  ]);
   const message=[
     `【今天 ${today}】`,
-    ...todayLines
+    ...todayLines,
+    '',
+    `【明天 ${tomorrow}】`,
+    ...tmrwLines
   ].join('\n');
   if(progress)await progress.finish();
-  await notice('空闲教室',message);
+  await notice('空闲教室查询',message);
   return message;
 }
 
-const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
-const MANUAL_SCHEDULE_URL=/^coursesync:\/\/manual\/(course|exam)\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const manualKind=ev=>MANUAL_SCHEDULE_URL.exec(ev?.url||'')?.[1];
-const isManualEvent=ev=>!!manualKind(ev)||String(ev?.notes||'').split('\n').includes(MANUAL_SCHEDULE_NOTE);
-const canEditSingleEvent=ev=>!ev.isDetached&&!ev.hasRecurrenceRules&&
-  !ev.recurrenceRules?.length&&!ev.hasAttendees&&!ev.attendees?.length;
-const scheduleName=kind=>kind==='course'?'课程':'考试';
-
-async function manualCalendars(state){
-  const calendars=await visibleCalendars();
-  return {
-    course:calendars.find(cal=>cal.identifier===state.calendarId&&liveCalendar(cal)),
-    exam:calendars.find(cal=>cal.identifier===state.examCalendarId&&
-      cal.identifier!==state.calendarId&&liveCalendar(cal))
-  };
-}
-
-function scheduleFields(result){
-  const title=typeof result.title==='string'?result.title.trim():'';
-  const location=typeof result.location==='string'?result.location.trim():'';
-  const start=Math.floor(result.start/60000)*60000,end=Math.floor(result.end/60000)*60000;
-  assert(title&&title.length<=120&&location.length<=200&&typeof result.start==='number'&&
-    typeof result.end==='number'&&Number.isFinite(+new Date(start))&&
-    Number.isFinite(+new Date(end))&&end>start&&new Date(start).getFullYear()>=1000&&
-    new Date(end).getFullYear()<=9999,'MANUAL_FIELDS');
-  return {title,location,start,end};
-}
-
-// Only hold the synchronization lock while changing the event, leaving forms
-// and confirmation dialogs free to stay open without blocking background sync.
-async function changeManualSchedule(store,kind,calendarId,result,original){
-  const fields=result.action==='save'?scheduleFields(result):null;
-  assert(fields||result.action==='delete'&&original,'MANUAL_FIELDS');
-  store.acquire();
-  try{
-    const state=store.read();
-    assert(!state.signedOut&&state.lastError!=='LOGOUT_INCOMPLETE','MANUAL_CALENDAR');
-    const calendar=(await manualCalendars(state))[kind];
-    assert(calendar?.identifier===calendarId,'MANUAL_CALENDAR');
-    let event;
-    if(original){
-      const rows=await calendarRows(+original.startDate,+original.endDate,calendar);
-      event=rows.find(ev=>ev.identifier===original.identifier&&ev.url===original.url&&
-        manualKind(ev)===kind&&canEditSingleEvent(ev));
-      assert(event&&snapshotSignature(event)===snapshotSignature(original),'MANUAL_CHANGED');
-    }else event=new CalendarEvent();
-    store.check();
-    if(!fields){
-      await event.remove();
-      const remaining=await calendarRows(+original.startDate,+original.endDate,calendar);
-      assert(!remaining.some(ev=>ev.identifier===original.identifier&&ev.url===original.url),'MANUAL_VERIFY');
-      return;
-    }
-    event.calendar=calendar;
-    event.title=fields.title;
-    event.location=fields.location;
-    const notes=String(event.notes||'').split('\n').filter(line=>line!==MANUAL_SCHEDULE_NOTE).join('\n');
-    event.notes=notes?MANUAL_SCHEDULE_NOTE+'\n'+notes:MANUAL_SCHEDULE_NOTE;
-    event.isAllDay=false;
-    event.startDate=new Date(fields.start);
-    event.endDate=new Date(fields.end);
-    if(!original)event.url='coursesync://manual/'+kind+'/'+uuid();
-    await event.save();
-    const saved=await calendarRows(fields.start,fields.end,calendar);
-    assert(saved.some(ev=>ev.identifier===event.identifier&&ev.url===event.url&&
-      ev.title===fields.title&&+ev.startDate===fields.start&&+ev.endDate===fields.end&&
-      (ev.location||'')===fields.location&&ev.notes===event.notes&&!ev.isAllDay),'MANUAL_VERIFY');
-  }finally{store.release();}
-}
-
-async function addManualSchedule(store){
-  const menu=new Alert();menu.title='添加日程';
-  menu.addAction('课程');menu.addAction('考试');menu.addCancelAction('取消');
-  const selection=await menu.presentSheet();
-  if(selection!==0&&selection!==1)return;
-  const kind=selection===0?'course':'exam';
-  const calendar=(await manualCalendars(store.read()))[kind];
-  assert(calendar,'MANUAL_CALENDAR');
-  const result=await presentScheduleEditor(kind);
-  if(result?.action==='save'){
-    await changeManualSchedule(store,kind,calendar.identifier,result);
-    await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
-  }
-}
-
-async function manageManualSchedules(store){
-  let year=new Date().getFullYear();
-  const format=(date,day)=>date.toLocaleString('zh-CN',{...(day?{month:'numeric',day:'numeric'}:{}),
-    hour:'2-digit',minute:'2-digit',hour12:false});
-  while(true){
-    const calendars=await manualCalendars(store.read());
-    const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
-    const groups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
-      calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
-        canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
-        +ev.endDate>+ev.startDate):[]));
-    const events=groups.flat().sort((a,b)=>+a.startDate-+b.startDate);
-    const selection=await presentScheduleList(year,events.map(ev=>{
-      const sameDay=ev.startDate.toDateString()===ev.endDate.toDateString();
-      return {id:ev.identifier,kind:manualKind(ev),title:ev.title,
-        time:format(ev.startDate,true)+'–'+format(ev.endDate,!sameDay),location:ev.location||''};
-    }));
-    if(!selection)return;
-    if(selection.action==='year'){
-      try{
-        const value=(await input('选择年份','年份')).trim();
-        if(!/^[1-9]\\d{3}$/.test(value)){await notice('年份无效','请输入四位年份，例如 2026。');continue;}
-        year=Number(value);
-      }catch(error){if(error.code!=='CANCELLED')throw error;}
-      continue;
-    }
-    const event=events.find(ev=>ev.identifier===selection.id);
-    if(selection.action!=='edit'||!event)return;
-    const kind=manualKind(event);
-    const result=await presentScheduleEditor(kind,{title:event.title,location:event.location||'',
-      start:+event.startDate,end:+event.endDate});
-    if(result?.action==='delete'&&!await confirm('删除日程','将从日历中删除「'+event.title+'」。'))continue;
-    if(result?.action==='save'||result?.action==='delete'){
-      await changeManualSchedule(store,kind,event.calendar.identifier,result,event);
-      if(result.action==='save')year=new Date(result.start).getFullYear();
-    }
-  }
-}
-
 async function run() {
-  await clearPendingCourseSyncNotifications();
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
+  migrateLegacyKeychainData();
   activateSelectedSchool(loadSelectedSchool());
-  if(activeSource.legacyDefaults)migrateLegacyKeychainData();
   let store=new Store();
   let firstSetup=false;
   // A configured calendar stays configured even after explicitly logging out.
-  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId&&initial.lastError!=='LOGOUT_INCOMPLETE';}catch(_){}}
+  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
@@ -3333,69 +2989,102 @@ async function run() {
       state=store.read();
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
-      const menu=new Alert();menu.title='CourseSync';
-      const status=menuAuthState(state);
-      const confirmedSchool=loadSelectedSchool(null,true);
-      const ready=status==='ready';
-      menu.message=status==='cleanup'?'请再次点击「退出登录」完成重置。':
-        status==='signed_out'?'已退出登录。请重新登录并设置日历。':
-        ready?'上次刷新：'+localDateTime(state.lastCheck):
-        state.authPaused?'需要重新验证，请登录账号。':
-        '登录后可同步课程与考试。';
-      const actions=[];
-      const add=(label,kind,destructive=false)=>{
-        if(destructive)menu.addDestructiveAction(label);else menu.addAction(label);
-        actions.push(kind);
-      };
-      if(status==='cleanup')add('退出登录','logout',true);
-      else if(ready)add('立即刷新','refresh');
-      else add('登录账号','login');
-      if(status!=='cleanup'&&status!=='signed_out'&&state.calendarId){
-        add('添加日程','addSchedule');
-        add('管理日程','manageSchedule');
+      const canFreeRooms=activeSchoolId==='nufe';
+      const canSignOut=canOfferSignOut(state);
+      const schoolName=schoolById(activeSchoolId)?.name||'高校';
+      const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
+
+      let selected=-1;
+      const nav=hostAPI('Navigation');
+      if(typeof nav?.present==='function'){
+        selected=await presentNativeDashboard({
+          state,schoolName,canFreeRooms,canSignOut,statusMessage
+        });
       }
-      if(ready){
-        if(confirmedSchool===activeSource.id&&activeSource.readFreeRooms)add('空闲教室','rooms');
-        add('退出登录','logout',true);
+      if(selected<0){
+        const menu=new Alert();menu.title='CourseSync';
+        menu.message=statusMessage;
+        menu.addAction('立即刷新');menu.addAction('运行状态');
+        if(canFreeRooms)menu.addAction('空闲教室');
+        if(canSignOut)menu.addDestructiveAction('退出登录');
+        menu.addCancelAction('关闭');
+        selected=await menu.presentSheet();
       }
-      menu.addCancelAction('取消');
-      const selected=await menu.presentSheet();if(selected<0)return;
-      const choice=actions[selected];
-      if(choice==='addSchedule'||choice==='manageSchedule'){
-        try{
-          if(choice==='addSchedule')await addManualSchedule(store);
-          else await manageManualSchedules(store);
-        }catch(error){
-          if(error.code!=='CANCELLED')await notice('日程操作未完成',errorMessage(error));
-        }
-        return;
-      }
-      if(choice==='rooms'){
-        let progress=null;
-        try{
-          if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
-            progress=createNativeProgressView('正在查询空闲教室');
-            progress.show();
-            await new Promise(resolve=>Timer.schedule(100,false,resolve));
+      if(selected===null||selected===undefined||selected<0)return;
+      if(typeof selected==='object'&&selected.changeSchool){
+        manualAuth=await prepareManualRefresh(state);
+        if(!manualAuth)return;
+        action=0;
+      }else if(typeof selected==='object'&&selected.manageCalendar){
+        const all=await visibleCalendars();
+        const calItems=all.map(c=>({
+          identifier:c.identifier,
+          title:c.title,
+          color:c.color,
+          sourceTitle:c.source?.title,
+          allowsContentModifications:c.allowsContentModifications
+        }));
+        const nav=hostAPI('Navigation');
+        if(typeof nav?.present==='function'){
+          const res=await presentNativeCalendarManager({
+            calendars:calItems,
+            currentCalendarId:state.calendarId
+          });
+          if(res?.action==='select'){
+            const target=all.find(c=>c.identifier===res.calendarId);
+            if(target&&liveCalendar(target)){
+              state.calendarId=target.identifier;
+              state.calendarTitle=target.title;
+              store.write(state);
+              await notice('日历绑定已更新','已将课表同步目标切换为「'+target.title+'」。');
+            }
+          }else if(res?.action==='create'){
+            try{
+              const created=await createDedicatedCalendar(res.title);
+              state.calendarId=created.identifier;
+              state.calendarTitle=created.title;
+              store.write(state);
+              await notice('已创建并绑定','新 iCloud 课表日历「'+created.title+'」创建成功并已设为同步目标。');
+            }catch(err){
+              await notice('创建日历失败','无法创建指定日历：'+diagnosticCode(err));
+            }
           }
-        }catch(_){progress=null;}
-        try{
-          const jar=readCookieJar();
-          const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-          await queryAndShowFreeRooms(http,interactive,()=>{},null,Date.now(),progress);
-        }finally{
-          if(progress)await progress.finish();
         }
         return;
+      }else{
+        if(selected===1){
+          const recovery=await showRunStatus(state,store);
+          if(!recovery)return;
+          if(recovery==='cookie')action=5;
+          else {await applyRecovery(recovery,state,store);return;}
+        }
+        if(canFreeRooms&&selected===2){
+          let progress=null;
+          try{
+            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
+              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
+              progress.show();
+              await new Promise(resolve=>Timer.schedule(100,false,resolve));
+            }
+          }catch(_){progress=null;}
+          try{
+            const jar=readCookieJar();
+            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
+            await queryAndShowFreeRooms(http,interactive,()=>{},null,Date.now(),progress);
+          }finally{
+            if(progress)await progress.finish();
+          }
+          return;
+        }
+        if(canSignOut&&selected===(canFreeRooms?3:2))action=13;
       }
-      if(choice==='logout')action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
       // Never record a second task as a failed synchronization.
       // The original task remains responsible for the calendar and state.
       if(interactive&&slot==='still-running')
-        await notice('上次同步仍在运行','请稍后再刷新。');
+        await notice('前次任务未退出','已经请求取消，但前次任务仍持有有效锁，尚不能安全接管。请稍后重试；不会强制删除日历或并发同步。');
       if(!interactive&&config.runsWithSiri)
         Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
       return;
@@ -3411,20 +3100,39 @@ async function run() {
       }catch(_){state.credentialCloudStatus='unavailable';}
       store.write(state);
     }
-    if('pendingChangeNotices' in state){
-      delete state.pendingChangeNotices;
-      store.write(state);
+    // Remove legacy class reminders.
+    if(state.notificationMode!=='result-only-v1.9'){
+      state.notificationMode='result-only-v1.9';state.minutes=0;store.write(state);
+      await refreshReminders(state,store);
     }
     if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(interactive&&action===0){
-      const hasCredentials=!state.signedOut&&!state.authPaused&&hasSavedCredentials();
+      const hasCredentials=!state.signedOut&&hasSavedCredentials();
       const selectedSchool=loadSelectedSchool(null,true);
       if(!selectedSchool){
-        const previousSchool=activeSource;
+        const previousSchool=activeSchoolId;
         manualAuth=await prepareManualRefresh(state);
         if(!manualAuth)return;
-        if(previousSchool!==activeSource){
+        if(manualAuth.kind==='freeRooms'){
+          let progress=null;
+          try{
+            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
+              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
+              progress.show();
+              await new Promise(resolve=>Timer.schedule(100,false,resolve));
+            }
+          }catch(_){progress=null;}
+          try{
+            const jar=readCookieJar();
+            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
+            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth,Date.now(),progress);
+          }finally{
+            if(progress)await progress.finish();
+          }
+          return;
+        }
+        if(previousSchool!==activeSchoolId){
           store.release();locked=false;state=null;
           store=new Store();
           if(await acquireSyncSlot(store,interactive)!=='acquired')fail('BUSY');
@@ -3437,15 +3145,27 @@ async function run() {
           manualAuth={kind:'credentials',...credentials};
         }catch(error){
           if(error.code==='CANCELLED')return;
+          if(error.code==='FREE_ROOMS'){
+            const jar=readCookieJar();
+            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
+            await queryAndShowFreeRooms(http,interactive,stage,{kind:'credentials',username:error.username,password:error.password});
+            return;
+          }
           if(error.code==='CHANGE_SCHOOL'){
             try{
               if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
               if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
             }catch(_){}
-            const prev=activeSource;
+            const prev=activeSchoolId;
             manualAuth=await prepareManualRefresh(state);
             if(!manualAuth)return;
-            if(prev!==activeSource){
+            if(manualAuth.kind==='freeRooms'){
+              const jar=readCookieJar();
+              const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
+              await queryAndShowFreeRooms(http,interactive,stage,manualAuth);
+              return;
+            }
+            if(prev!==activeSchoolId){
               store.release();locked=false;state=null;
               store=new Store();
               if(await acquireSyncSlot(store,interactive)!=='acquired')fail('BUSY');
@@ -3458,46 +3178,27 @@ async function run() {
     }
     if(!interactive){
       // Manual logout is intentional and must never cause background login or warning spam.
-      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中重新选择学校并完成首次配置。');return;}
+      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
       if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
       if(state.nextAttempt&&Date.now()<state.nextAttempt){if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
     __COURSESYNC_BOOT_PHASE='同步运行';
-    progress=createProgress(state,store,interactive);
+    progress=createProgress(state,store,interactive);progress('检查目标日历');
+    const calendar=await pickCalendar(state,store);
     await progress.start();
     progress('连接教务系统');
-    let examCalendar,examError=null;
-    const recordExamError=error=>{
-      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
-      examError=diagnosticCode(error);
-    };
-    const setupCalendars=async budget=>{
-      progress('检查课程日历');
-      budget();
-      const calendar=await pickCalendar(state,store,progress.pause);
-      if(interactive||state.examCalendarId){
-        try{
-          progress('检查考试日历');
-          examCalendar=await pickExamCalendar(state,store,progress.pause);
-        }catch(error){recordExamError(error);}
+    const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
+    let examError=null;
+    if(interactive){
+      try{await syncExams(http,state,store,calendar,progress);}
+      catch(error){
+        if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
+        examError=diagnosticCode(error);
       }
-      budget();
-      progress.resume();
-      return calendar;
-    };
-    const syncExamStage=async(http,budget)=>{
-      try{
-        if(examCalendar){
-          budget();
-          await removeFixedGraduateExams(examCalendar,budget);
-          await syncExams(http,state,store,examCalendar,progress,budget);
-        }
-      }catch(error){recordExamError(error);}
-      state.lastExamError=examError;store.write(state);
-    };
-    await synchronize(state,store,setupCalendars,interactive,progress,manualAuth,syncExamStage);
+      state.lastExamError=examError;
+    }
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
@@ -3511,11 +3212,11 @@ async function run() {
     store.write(state);
     if(progress)await progress.finish(state.runStatus==='success');
     if(state.termErrors?.length){
-      if(interactive)await notice('部分学期未同步','请稍后再次刷新。');
+      if(interactive)await notice('部分学期未同步','请在「运行状态」查看学期和原因。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
-    if(examError)await notice('考试日程未同步',reasonFor(examError)+'\n'+actionFor(examError)+'\n错误代码：'+examError);
-    if(config.runsWithSiri)Script.setShortcutOutput(examError?'考试日程未同步。':state.termErrors?.length?'部分学期未同步。':'刷新成功。');
+    if(examError)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
+    if(config.runsWithSiri)Script.setShortcutOutput(examError?'部分完成：考试日程未更新完成。':state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(code==='SYNC_SUPERSEDED'){
@@ -3547,688 +3248,10 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={removeFixedGraduateExams,addManualSchedule,manageManualSchedules,menuAuthState,canOfferSignOut,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
-/*
-GNU GPL-3.0-only license included for single-file redistribution.
-                    GNU GENERAL PUBLIC LICENSE
-                       Version 3, 29 June 2007
-
- Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
-
-                            Preamble
-
-  The GNU General Public License is a free, copyleft license for
-software and other kinds of works.
-
-  The licenses for most software and other practical works are designed
-to take away your freedom to share and change the works.  By contrast,
-the GNU General Public License is intended to guarantee your freedom to
-share and change all versions of a program--to make sure it remains free
-software for all its users.  We, the Free Software Foundation, use the
-GNU General Public License for most of our software; it applies also to
-any other work released this way by its authors.  You can apply it to
-your programs, too.
-
-  When we speak of free software, we are referring to freedom, not
-price.  Our General Public Licenses are designed to make sure that you
-have the freedom to distribute copies of free software (and charge for
-them if you wish), that you receive source code or can get it if you
-want it, that you can change the software or use pieces of it in new
-free programs, and that you know you can do these things.
-
-  To protect your rights, we need to prevent others from denying you
-these rights or asking you to surrender the rights.  Therefore, you have
-certain responsibilities if you distribute copies of the software, or if
-you modify it: responsibilities to respect the freedom of others.
-
-  For example, if you distribute copies of such a program, whether
-gratis or for a fee, you must pass on to the recipients the same
-freedoms that you received.  You must make sure that they, too, receive
-or can get the source code.  And you must show them these terms so they
-know their rights.
-
-  Developers that use the GNU GPL protect your rights with two steps:
-(1) assert copyright on the software, and (2) offer you this License
-giving you legal permission to copy, distribute and/or modify it.
-
-  For the developers' and authors' protection, the GPL clearly explains
-that there is no warranty for this free software.  For both users' and
-authors' sake, the GPL requires that modified versions be marked as
-changed, so that their problems will not be attributed erroneously to
-authors of previous versions.
-
-  Some devices are designed to deny users access to install or run
-modified versions of the software inside them, although the manufacturer
-can do so.  This is fundamentally incompatible with the aim of
-protecting users' freedom to change the software.  The systematic
-pattern of such abuse occurs in the area of products for individuals to
-use, which is precisely where it is most unacceptable.  Therefore, we
-have designed this version of the GPL to prohibit the practice for those
-products.  If such problems arise substantially in other domains, we
-stand ready to extend this provision to those domains in future versions
-of the GPL, as needed to protect the freedom of users.
-
-  Finally, every program is threatened constantly by software patents.
-States should not allow patents to restrict development and use of
-software on general-purpose computers, but in those that do, we wish to
-avoid the special danger that patents applied to a free program could
-make it effectively proprietary.  To prevent this, the GPL assures that
-patents cannot be used to render the program non-free.
-
-  The precise terms and conditions for copying, distribution and
-modification follow.
-
-                       TERMS AND CONDITIONS
-
-  0. Definitions.
-
-  "This License" refers to version 3 of the GNU General Public License.
-
-  "Copyright" also means copyright-like laws that apply to other kinds of
-works, such as semiconductor masks.
-
-  "The Program" refers to any copyrightable work licensed under this
-License.  Each licensee is addressed as "you".  "Licensees" and
-"recipients" may be individuals or organizations.
-
-  To "modify" a work means to copy from or adapt all or part of the work
-in a fashion requiring copyright permission, other than the making of an
-exact copy.  The resulting work is called a "modified version" of the
-earlier work or a work "based on" the earlier work.
-
-  A "covered work" means either the unmodified Program or a work based
-on the Program.
-
-  To "propagate" a work means to do anything with it that, without
-permission, would make you directly or secondarily liable for
-infringement under applicable copyright law, except executing it on a
-computer or modifying a private copy.  Propagation includes copying,
-distribution (with or without modification), making available to the
-public, and in some countries other activities as well.
-
-  To "convey" a work means any kind of propagation that enables other
-parties to make or receive copies.  Mere interaction with a user through
-a computer network, with no transfer of a copy, is not conveying.
-
-  An interactive user interface displays "Appropriate Legal Notices"
-to the extent that it includes a convenient and prominently visible
-feature that (1) displays an appropriate copyright notice, and (2)
-tells the user that there is no warranty for the work (except to the
-extent that warranties are provided), that licensees may convey the
-work under this License, and how to view a copy of this License.  If
-the interface presents a list of user commands or options, such as a
-menu, a prominent item in the list meets this criterion.
-
-  1. Source Code.
-
-  The "source code" for a work means the preferred form of the work
-for making modifications to it.  "Object code" means any non-source
-form of a work.
-
-  A "Standard Interface" means an interface that either is an official
-standard defined by a recognized standards body, or, in the case of
-interfaces specified for a particular programming language, one that
-is widely used among developers working in that language.
-
-  The "System Libraries" of an executable work include anything, other
-than the work as a whole, that (a) is included in the normal form of
-packaging a Major Component, but which is not part of that Major
-Component, and (b) serves only to enable use of the work with that
-Major Component, or to implement a Standard Interface for which an
-implementation is available to the public in source code form.  A
-"Major Component", in this context, means a major essential component
-(kernel, window system, and so on) of the specific operating system
-(if any) on which the executable work runs, or a compiler used to
-produce the work, or an object code interpreter used to run it.
-
-  The "Corresponding Source" for a work in object code form means all
-the source code needed to generate, install, and (for an executable
-work) run the object code and to modify the work, including scripts to
-control those activities.  However, it does not include the work's
-System Libraries, or general-purpose tools or generally available free
-programs which are used unmodified in performing those activities but
-which are not part of the work.  For example, Corresponding Source
-includes interface definition files associated with source files for
-the work, and the source code for shared libraries and dynamically
-linked subprograms that the work is specifically designed to require,
-such as by intimate data communication or control flow between those
-subprograms and other parts of the work.
-
-  The Corresponding Source need not include anything that users
-can regenerate automatically from other parts of the Corresponding
-Source.
-
-  The Corresponding Source for a work in source code form is that
-same work.
-
-  2. Basic Permissions.
-
-  All rights granted under this License are granted for the term of
-copyright on the Program, and are irrevocable provided the stated
-conditions are met.  This License explicitly affirms your unlimited
-permission to run the unmodified Program.  The output from running a
-covered work is covered by this License only if the output, given its
-content, constitutes a covered work.  This License acknowledges your
-rights of fair use or other equivalent, as provided by copyright law.
-
-  You may make, run and propagate covered works that you do not
-convey, without conditions so long as your license otherwise remains
-in force.  You may convey covered works to others for the sole purpose
-of having them make modifications exclusively for you, or provide you
-with facilities for running those works, provided that you comply with
-the terms of this License in conveying all material for which you do
-not control copyright.  Those thus making or running the covered works
-for you must do so exclusively on your behalf, under your direction
-and control, on terms that prohibit them from making any copies of
-your copyrighted material outside their relationship with you.
-
-  Conveying under any other circumstances is permitted solely under
-the conditions stated below.  Sublicensing is not allowed; section 10
-makes it unnecessary.
-
-  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
-
-  No covered work shall be deemed part of an effective technological
-measure under any applicable law fulfilling obligations under article
-11 of the WIPO copyright treaty adopted on 20 December 1996, or
-similar laws prohibiting or restricting circumvention of such
-measures.
-
-  When you convey a covered work, you waive any legal power to forbid
-circumvention of technological measures to the extent such circumvention
-is effected by exercising rights under this License with respect to
-the covered work, and you disclaim any intention to limit operation or
-modification of the work as a means of enforcing, against the work's
-users, your or third parties' legal rights to forbid circumvention of
-technological measures.
-
-  4. Conveying Verbatim Copies.
-
-  You may convey verbatim copies of the Program's source code as you
-receive it, in any medium, provided that you conspicuously and
-appropriately publish on each copy an appropriate copyright notice;
-keep intact all notices stating that this License and any
-non-permissive terms added in accord with section 7 apply to the code;
-keep intact all notices of the absence of any warranty; and give all
-recipients a copy of this License along with the Program.
-
-  You may charge any price or no price for each copy that you convey,
-and you may offer support or warranty protection for a fee.
-
-  5. Conveying Modified Source Versions.
-
-  You may convey a work based on the Program, or the modifications to
-produce it from the Program, in the form of source code under the
-terms of section 4, provided that you also meet all of these conditions:
-
-    a) The work must carry prominent notices stating that you modified
-    it, and giving a relevant date.
-
-    b) The work must carry prominent notices stating that it is
-    released under this License and any conditions added under section
-    7.  This requirement modifies the requirement in section 4 to
-    "keep intact all notices".
-
-    c) You must license the entire work, as a whole, under this
-    License to anyone who comes into possession of a copy.  This
-    License will therefore apply, along with any applicable section 7
-    additional terms, to the whole of the work, and all its parts,
-    regardless of how they are packaged.  This License gives no
-    permission to license the work in any other way, but it does not
-    invalidate such permission if you have separately received it.
-
-    d) If the work has interactive user interfaces, each must display
-    Appropriate Legal Notices; however, if the Program has interactive
-    interfaces that do not display Appropriate Legal Notices, your
-    work need not make them do so.
-
-  A compilation of a covered work with other separate and independent
-works, which are not by their nature extensions of the covered work,
-and which are not combined with it such as to form a larger program,
-in or on a volume of a storage or distribution medium, is called an
-"aggregate" if the compilation and its resulting copyright are not
-used to limit the access or legal rights of the compilation's users
-beyond what the individual works permit.  Inclusion of a covered work
-in an aggregate does not cause this License to apply to the other
-parts of the aggregate.
-
-  6. Conveying Non-Source Forms.
-
-  You may convey a covered work in object code form under the terms
-of sections 4 and 5, provided that you also convey the
-machine-readable Corresponding Source under the terms of this License,
-in one of these ways:
-
-    a) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by the
-    Corresponding Source fixed on a durable physical medium
-    customarily used for software interchange.
-
-    b) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by a
-    written offer, valid for at least three years and valid for as
-    long as you offer spare parts or customer support for that product
-    model, to give anyone who possesses the object code either (1) a
-    copy of the Corresponding Source for all the software in the
-    product that is covered by this License, on a durable physical
-    medium customarily used for software interchange, for a price no
-    more than your reasonable cost of physically performing this
-    conveying of source, or (2) access to copy the
-    Corresponding Source from a network server at no charge.
-
-    c) Convey individual copies of the object code with a copy of the
-    written offer to provide the Corresponding Source.  This
-    alternative is allowed only occasionally and noncommercially, and
-    only if you received the object code with such an offer, in accord
-    with subsection 6b.
-
-    d) Convey the object code by offering access from a designated
-    place (gratis or for a charge), and offer equivalent access to the
-    Corresponding Source in the same way through the same place at no
-    further charge.  You need not require recipients to copy the
-    Corresponding Source along with the object code.  If the place to
-    copy the object code is a network server, the Corresponding Source
-    may be on a different server (operated by you or a third party)
-    that supports equivalent copying facilities, provided you maintain
-    clear directions next to the object code saying where to find the
-    Corresponding Source.  Regardless of what server hosts the
-    Corresponding Source, you remain obligated to ensure that it is
-    available for as long as needed to satisfy these requirements.
-
-    e) Convey the object code using peer-to-peer transmission, provided
-    you inform other peers where the object code and Corresponding
-    Source of the work are being offered to the general public at no
-    charge under subsection 6d.
-
-  A separable portion of the object code, whose source code is excluded
-from the Corresponding Source as a System Library, need not be
-included in conveying the object code work.
-
-  A "User Product" is either (1) a "consumer product", which means any
-tangible personal property which is normally used for personal, family,
-or household purposes, or (2) anything designed or sold for incorporation
-into a dwelling.  In determining whether a product is a consumer product,
-doubtful cases shall be resolved in favor of coverage.  For a particular
-product received by a particular user, "normally used" refers to a
-typical or common use of that class of product, regardless of the status
-of the particular user or of the way in which the particular user
-actually uses, or expects or is expected to use, the product.  A product
-is a consumer product regardless of whether the product has substantial
-commercial, industrial or non-consumer uses, unless such uses represent
-the only significant mode of use of the product.
-
-  "Installation Information" for a User Product means any methods,
-procedures, authorization keys, or other information required to install
-and execute modified versions of a covered work in that User Product from
-a modified version of its Corresponding Source.  The information must
-suffice to ensure that the continued functioning of the modified object
-code is in no case prevented or interfered with solely because
-modification has been made.
-
-  If you convey an object code work under this section in, or with, or
-specifically for use in, a User Product, and the conveying occurs as
-part of a transaction in which the right of possession and use of the
-User Product is transferred to the recipient in perpetuity or for a
-fixed term (regardless of how the transaction is characterized), the
-Corresponding Source conveyed under this section must be accompanied
-by the Installation Information.  But this requirement does not apply
-if neither you nor any third party retains the ability to install
-modified object code on the User Product (for example, the work has
-been installed in ROM).
-
-  The requirement to provide Installation Information does not include a
-requirement to continue to provide support service, warranty, or updates
-for a work that has been modified or installed by the recipient, or for
-the User Product in which it has been modified or installed.  Access to a
-network may be denied when the modification itself materially and
-adversely affects the operation of the network or violates the rules and
-protocols for communication across the network.
-
-  Corresponding Source conveyed, and Installation Information provided,
-in accord with this section must be in a format that is publicly
-documented (and with an implementation available to the public in
-source code form), and must require no special password or key for
-unpacking, reading or copying.
-
-  7. Additional Terms.
-
-  "Additional permissions" are terms that supplement the terms of this
-License by making exceptions from one or more of its conditions.
-Additional permissions that are applicable to the entire Program shall
-be treated as though they were included in this License, to the extent
-that they are valid under applicable law.  If additional permissions
-apply only to part of the Program, that part may be used separately
-under those permissions, but the entire Program remains governed by
-this License without regard to the additional permissions.
-
-  When you convey a copy of a covered work, you may at your option
-remove any additional permissions from that copy, or from any part of
-it.  (Additional permissions may be written to require their own
-removal in certain cases when you modify the work.)  You may place
-additional permissions on material, added by you to a covered work,
-for which you have or can give appropriate copyright permission.
-
-  Notwithstanding any other provision of this License, for material you
-add to a covered work, you may (if authorized by the copyright holders of
-that material) supplement the terms of this License with terms:
-
-    a) Disclaiming warranty or limiting liability differently from the
-    terms of sections 15 and 16 of this License; or
-
-    b) Requiring preservation of specified reasonable legal notices or
-    author attributions in that material or in the Appropriate Legal
-    Notices displayed by works containing it; or
-
-    c) Prohibiting misrepresentation of the origin of that material, or
-    requiring that modified versions of such material be marked in
-    reasonable ways as different from the original version; or
-
-    d) Limiting the use for publicity purposes of names of licensors or
-    authors of the material; or
-
-    e) Declining to grant rights under trademark law for use of some
-    trade names, trademarks, or service marks; or
-
-    f) Requiring indemnification of licensors and authors of that
-    material by anyone who conveys the material (or modified versions of
-    it) with contractual assumptions of liability to the recipient, for
-    any liability that these contractual assumptions directly impose on
-    those licensors and authors.
-
-  All other non-permissive additional terms are considered "further
-restrictions" within the meaning of section 10.  If the Program as you
-received it, or any part of it, contains a notice stating that it is
-governed by this License along with a term that is a further
-restriction, you may remove that term.  If a license document contains
-a further restriction but permits relicensing or conveying under this
-License, you may add to a covered work material governed by the terms
-of that license document, provided that the further restriction does
-not survive such relicensing or conveying.
-
-  If you add terms to a covered work in accord with this section, you
-must place, in the relevant source files, a statement of the
-additional terms that apply to those files, or a notice indicating
-where to find the applicable terms.
-
-  Additional terms, permissive or non-permissive, may be stated in the
-form of a separately written license, or stated as exceptions;
-the above requirements apply either way.
-
-  8. Termination.
-
-  You may not propagate or modify a covered work except as expressly
-provided under this License.  Any attempt otherwise to propagate or
-modify it is void, and will automatically terminate your rights under
-this License (including any patent licenses granted under the third
-paragraph of section 11).
-
-  However, if you cease all violation of this License, then your
-license from a particular copyright holder is reinstated (a)
-provisionally, unless and until the copyright holder explicitly and
-finally terminates your license, and (b) permanently, if the copyright
-holder fails to notify you of the violation by some reasonable means
-prior to 60 days after the cessation.
-
-  Moreover, your license from a particular copyright holder is
-reinstated permanently if the copyright holder notifies you of the
-violation by some reasonable means, this is the first time you have
-received notice of violation of this License (for any work) from that
-copyright holder, and you cure the violation prior to 30 days after
-your receipt of the notice.
-
-  Termination of your rights under this section does not terminate the
-licenses of parties who have received copies or rights from you under
-this License.  If your rights have been terminated and not permanently
-reinstated, you do not qualify to receive new licenses for the same
-material under section 10.
-
-  9. Acceptance Not Required for Having Copies.
-
-  You are not required to accept this License in order to receive or
-run a copy of the Program.  Ancillary propagation of a covered work
-occurring solely as a consequence of using peer-to-peer transmission
-to receive a copy likewise does not require acceptance.  However,
-nothing other than this License grants you permission to propagate or
-modify any covered work.  These actions infringe copyright if you do
-not accept this License.  Therefore, by modifying or propagating a
-covered work, you indicate your acceptance of this License to do so.
-
-  10. Automatic Licensing of Downstream Recipients.
-
-  Each time you convey a covered work, the recipient automatically
-receives a license from the original licensors, to run, modify and
-propagate that work, subject to this License.  You are not responsible
-for enforcing compliance by third parties with this License.
-
-  An "entity transaction" is a transaction transferring control of an
-organization, or substantially all assets of one, or subdividing an
-organization, or merging organizations.  If propagation of a covered
-work results from an entity transaction, each party to that
-transaction who receives a copy of the work also receives whatever
-licenses to the work the party's predecessor in interest had or could
-give under the previous paragraph, plus a right to possession of the
-Corresponding Source of the work from the predecessor in interest, if
-the predecessor has it or can get it with reasonable efforts.
-
-  You may not impose any further restrictions on the exercise of the
-rights granted or affirmed under this License.  For example, you may
-not impose a license fee, royalty, or other charge for exercise of
-rights granted under this License, and you may not initiate litigation
-(including a cross-claim or counterclaim in a lawsuit) alleging that
-any patent claim is infringed by making, using, selling, offering for
-sale, or importing the Program or any portion of it.
-
-  11. Patents.
-
-  A "contributor" is a copyright holder who authorizes use under this
-License of the Program or a work on which the Program is based.  The
-work thus licensed is called the contributor's "contributor version".
-
-  A contributor's "essential patent claims" are all patent claims
-owned or controlled by the contributor, whether already acquired or
-hereafter acquired, that would be infringed by some manner, permitted
-by this License, of making, using, or selling its contributor version,
-but do not include claims that would be infringed only as a
-consequence of further modification of the contributor version.  For
-purposes of this definition, "control" includes the right to grant
-patent sublicenses in a manner consistent with the requirements of
-this License.
-
-  Each contributor grants you a non-exclusive, worldwide, royalty-free
-patent license under the contributor's essential patent claims, to
-make, use, sell, offer for sale, import and otherwise run, modify and
-propagate the contents of its contributor version.
-
-  In the following three paragraphs, a "patent license" is any express
-agreement or commitment, however denominated, not to enforce a patent
-(such as an express permission to practice a patent or covenant not to
-sue for patent infringement).  To "grant" such a patent license to a
-party means to make such an agreement or commitment not to enforce a
-patent against the party.
-
-  If you convey a covered work, knowingly relying on a patent license,
-and the Corresponding Source of the work is not available for anyone
-to copy, free of charge and under the terms of this License, through a
-publicly available network server or other readily accessible means,
-then you must either (1) cause the Corresponding Source to be so
-available, or (2) arrange to deprive yourself of the benefit of the
-patent license for this particular work, or (3) arrange, in a manner
-consistent with the requirements of this License, to extend the patent
-license to downstream recipients.  "Knowingly relying" means you have
-actual knowledge that, but for the patent license, your conveying the
-covered work in a country, or your recipient's use of the covered work
-in a country, would infringe one or more identifiable patents in that
-country that you have reason to believe are valid.
-
-  If, pursuant to or in connection with a single transaction or
-arrangement, you convey, or propagate by procuring conveyance of, a
-covered work, and grant a patent license to some of the parties
-receiving the covered work authorizing them to use, propagate, modify
-or convey a specific copy of the covered work, then the patent license
-you grant is automatically extended to all recipients of the covered
-work and works based on it.
-
-  A patent license is "discriminatory" if it does not include within
-the scope of its coverage, prohibits the exercise of, or is
-conditioned on the non-exercise of one or more of the rights that are
-specifically granted under this License.  You may not convey a covered
-work if you are a party to an arrangement with a third party that is
-in the business of distributing software, under which you make payment
-to the third party based on the extent of your activity of conveying
-the work, and under which the third party grants, to any of the
-parties who would receive the covered work from you, a discriminatory
-patent license (a) in connection with copies of the covered work
-conveyed by you (or copies made from those copies), or (b) primarily
-for and in connection with specific products or compilations that
-contain the covered work, unless you entered into that arrangement,
-or that patent license was granted, prior to 28 March 2007.
-
-  Nothing in this License shall be construed as excluding or limiting
-any implied license or other defenses to infringement that may
-otherwise be available to you under applicable patent law.
-
-  12. No Surrender of Others' Freedom.
-
-  If conditions are imposed on you (whether by court order, agreement or
-otherwise) that contradict the conditions of this License, they do not
-excuse you from the conditions of this License.  If you cannot convey a
-covered work so as to satisfy simultaneously your obligations under this
-License and any other pertinent obligations, then as a consequence you may
-not convey it at all.  For example, if you agree to terms that obligate you
-to collect a royalty for further conveying from those to whom you convey
-the Program, the only way you could satisfy both those terms and this
-License would be to refrain entirely from conveying the Program.
-
-  13. Use with the GNU Affero General Public License.
-
-  Notwithstanding any other provision of this License, you have
-permission to link or combine any covered work with a work licensed
-under version 3 of the GNU Affero General Public License into a single
-combined work, and to convey the resulting work.  The terms of this
-License will continue to apply to the part which is the covered work,
-but the special requirements of the GNU Affero General Public License,
-section 13, concerning interaction through a network will apply to the
-combination as such.
-
-  14. Revised Versions of this License.
-
-  The Free Software Foundation may publish revised and/or new versions of
-the GNU General Public License from time to time.  Such new versions will
-be similar in spirit to the present version, but may differ in detail to
-address new problems or concerns.
-
-  Each version is given a distinguishing version number.  If the
-Program specifies that a certain numbered version of the GNU General
-Public License "or any later version" applies to it, you have the
-option of following the terms and conditions either of that numbered
-version or of any later version published by the Free Software
-Foundation.  If the Program does not specify a version number of the
-GNU General Public License, you may choose any version ever published
-by the Free Software Foundation.
-
-  If the Program specifies that a proxy can decide which future
-versions of the GNU General Public License can be used, that proxy's
-public statement of acceptance of a version permanently authorizes you
-to choose that version for the Program.
-
-  Later license versions may give you additional or different
-permissions.  However, no additional obligations are imposed on any
-author or copyright holder as a result of your choosing to follow a
-later version.
-
-  15. Disclaimer of Warranty.
-
-  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
-APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
-HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
-OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
-IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
-ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
-
-  16. Limitation of Liability.
-
-  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
-WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
-THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
-GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
-USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
-DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
-PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
-EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGES.
-
-  17. Interpretation of Sections 15 and 16.
-
-  If the disclaimer of warranty and limitation of liability provided
-above cannot be given local legal effect according to their terms,
-reviewing courts shall apply local law that most closely approximates
-an absolute waiver of all civil liability in connection with the
-Program, unless a warranty or assumption of liability accompanies a
-copy of the Program in return for a fee.
-
-                     END OF TERMS AND CONDITIONS
-
-            How to Apply These Terms to Your New Programs
-
-  If you develop a new program, and you want it to be of the greatest
-possible use to the public, the best way to achieve this is to make it
-free software which everyone can redistribute and change under these terms.
-
-  To do so, attach the following notices to the program.  It is safest
-to attach them to the start of each source file to most effectively
-state the exclusion of warranty; and each file should have at least
-the "copyright" line and a pointer to where the full notice is found.
-
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-Also add information on how to contact you by electronic and paper mail.
-
-  If the program does terminal interaction, make it output a short
-notice like this when it starts in an interactive mode:
-
-    <program>  Copyright (C) <year>  <name of author>
-    This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions; type `show c' for details.
-
-The hypothetical commands `show w' and `show c' should show the appropriate
-parts of the General Public License.  Of course, your program's commands
-might be different; for a GUI interface, you would use an "about box".
-
-  You should also get your employer (if you work as a programmer) or school,
-if any, to sign a "copyright disclaimer" for the program, if necessary.
-For more information on this, and how to apply and follow the GNU GPL, see
-<https://www.gnu.org/licenses/>.
-
-  The GNU General Public License does not permit incorporating your program
-into proprietary programs.  If your program is a subroutine library, you
-may consider it more useful to permit linking proprietary applications with
-the library.  If this is what you want to do, use the GNU Lesser General
-Public License instead of this License.  But first, please read
-<https://www.gnu.org/licenses/why-not-lgpl.html>.
-
-
-*/
+// SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
 
   }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }

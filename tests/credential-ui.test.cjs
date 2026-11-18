@@ -166,3 +166,6 @@ test('native calendar manager unifies add and manage calendars with color differ
  assert.match(native,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
  assert.match(index,/presentNativeCalendarManager\(\{/);
 });
+
+
+
