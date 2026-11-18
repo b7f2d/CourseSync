@@ -105,29 +105,29 @@ function CalendarScheduleView({
   const rows: ScheduleRow[] = Array.isArray(initialRows) ? initialRows : [];
 
   const prevMonth = () => {
-    if (month === 1) {
-      const nextY = year - 1;
-      setYear(nextY);
-      setMonth(12);
-      setSelectedDay(1);
-      dismiss({ action: 'changeMonth', year: nextY, month: 12 });
-    } else {
-      setMonth(month - 1);
-      setSelectedDay(1);
+    let nextY = year;
+    let nextM = month - 1;
+    if (nextM < 1) {
+      nextY -= 1;
+      nextM = 12;
     }
+    setYear(nextY);
+    setMonth(nextM);
+    setSelectedDay(1);
+    dismiss({ action: 'changeMonth', year: nextY, month: nextM });
   };
 
   const nextMonth = () => {
-    if (month === 12) {
-      const nextY = year + 1;
-      setYear(nextY);
-      setMonth(1);
-      setSelectedDay(1);
-      dismiss({ action: 'changeMonth', year: nextY, month: 1 });
-    } else {
-      setMonth(month + 1);
-      setSelectedDay(1);
+    let nextY = year;
+    let nextM = month + 1;
+    if (nextM > 12) {
+      nextY += 1;
+      nextM = 1;
     }
+    setYear(nextY);
+    setMonth(nextM);
+    setSelectedDay(1);
+    dismiss({ action: 'changeMonth', year: nextY, month: nextM });
   };
 
   const getEventsForDay = (dayNum: number) => {
@@ -142,7 +142,9 @@ function CalendarScheduleView({
   const isCurrentMonth = now.getFullYear() === year && (now.getMonth() + 1) === month;
   const todayNum = isCurrentMonth ? now.getDate() : -1;
 
-  const firstDayWeekday = Math.max(0, new Date(year, month - 1, 1).getDay() || 0); // 0 is Sunday
+  // Monday-first calendar: 一 二 三 四 五 六 日
+  const firstDayDate = new Date(year, month - 1, 1, 12, 0, 0);
+  const firstDayWeekday = (firstDayDate.getDay() + 6) % 7; // 0 for Monday, ..., 6 for Sunday
   const weeks: (number | null)[][] = [];
   let currentWeek: (number | null)[] = [];
   for (let i = 0; i < firstDayWeekday; i++) {
@@ -162,9 +164,9 @@ function CalendarScheduleView({
     weeks.push(currentWeek);
   }
 
-  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
   const fullWeekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  const selectedWeekday = fullWeekdays[new Date(year, month - 1, safeSelectedDay).getDay() % 7] || '周一';
+  const selectedWeekday = fullWeekdays[new Date(year, month - 1, safeSelectedDay, 12, 0, 0).getDay() % 7] || '周一';
 
   const yearOptions: number[] = [];
   const baseYear = now.getFullYear();
@@ -221,9 +223,10 @@ function CalendarScheduleView({
               value={String(month)}
               onChanged={(val: string) => {
                 const m = Number(val);
-                if (Number.isFinite(m) && m !== month) {
+                if (Number.isFinite(m) && m >= 1 && m <= 12 && m !== month) {
                   setMonth(m);
                   setSelectedDay(1);
+                  dismiss({ action: 'changeMonth', year, month: m });
                 }
               }}
             >
@@ -235,96 +238,115 @@ function CalendarScheduleView({
         </Section>
 
         <Section header={<Text>月历视图</Text>}>
-          <HStack alignment="center" spacing={4} padding={{ bottom: 6 }}>
-            {weekdays.map((w, i) => (
-              <VStack key={w} frame={{ maxWidth: 'infinity' }} alignment="center">
-                <Text
-                  font="caption1"
-                  fontWeight="semibold"
-                  foregroundStyle={i === 0 || i === 6 ? 'secondaryLabel' : 'label'}
+          <VStack spacing={4} padding={{ top: 6, bottom: 6 }}>
+            <HStack alignment="center" spacing={0} padding={{ bottom: 8 }}>
+              {weekdays.map((w, i) => (
+                <VStack
+                  key={w}
+                  frame={{ minWidth: 0, maxWidth: 'infinity', height: 20 }}
+                  alignment="center"
                 >
-                  {w}
-                </Text>
-              </VStack>
-            ))}
-          </HStack>
+                  <Text
+                    font="caption1"
+                    fontWeight="bold"
+                    foregroundStyle={i >= 5 ? 'secondaryLabel' : 'label'}
+                  >
+                    {w}
+                  </Text>
+                </VStack>
+              ))}
+            </HStack>
 
-          {weeks.map((week, wIdx) => (
-            <HStack key={'week-' + wIdx} alignment="center" spacing={4} padding={{ top: 2, bottom: 2 }}>
-              {week.map((d, dIdx) => {
-                if (d === null) {
-                  return (
-                    <VStack key={'empty-' + dIdx} frame={{ maxWidth: 'infinity', height: 42 }} alignment="center">
-                      <Spacer />
-                    </VStack>
-                  );
-                }
-                const isSelected = d === safeSelectedDay;
-                const isToday = d === todayNum;
-                const dayEvs = getEventsForDay(d);
-                const hasCourse = dayEvs.some(e => e.kind === 'course');
-                const hasExam = dayEvs.some(e => e.kind === 'exam');
-
-                return (
-                  <VStack key={'day-' + d} frame={{ maxWidth: 'infinity', height: 42 }} alignment="center">
-                    <Button
-                      buttonStyle="plain"
-                      action={() => setSelectedDay(d)}
-                    >
+            {weeks.map((week, wIdx) => (
+              <HStack
+                key={'week-' + wIdx}
+                alignment="center"
+                spacing={0}
+                padding={{ top: 2, bottom: 2 }}
+              >
+                {week.map((d, dIdx) => {
+                  if (d === null) {
+                    return (
                       <VStack
+                        key={'empty-' + dIdx}
+                        frame={{ minWidth: 0, maxWidth: 'infinity', height: 42 }}
                         alignment="center"
-                        spacing={2}
-                        frame={{ width: 34, height: 38 }}
-                        modifiers={
-                          isSelected
-                            ? modifiers().background({
-                                style: { light: '#2563EB', dark: '#1D4ED8' },
-                                shape: { type: 'rect', cornerRadius: 8 }
-                              })
-                            : isToday
-                            ? modifiers().background({
-                                style: { light: '#EFF6FF', dark: '#1E293B' },
-                                shape: { type: 'rect', cornerRadius: 8 }
-                              })
-                            : modifiers()
-                        }
                       >
-                        <Text
-                          font="subheadline"
-                          fontWeight={isSelected || isToday ? 'bold' : 'regular'}
-                          foregroundStyle={
-                            isSelected ? '#FFFFFF' : isToday ? '#2563EB' : 'label'
+                        <VStack frame={{ width: 36, height: 38 }} />
+                      </VStack>
+                    );
+                  }
+                  const isSelected = d === safeSelectedDay;
+                  const isToday = d === todayNum;
+                  const dayEvs = getEventsForDay(d);
+                  const hasCourse = dayEvs.some(e => e.kind === 'course');
+                  const hasExam = dayEvs.some(e => e.kind === 'exam');
+
+                  return (
+                    <VStack
+                      key={'day-' + d}
+                      frame={{ minWidth: 0, maxWidth: 'infinity', height: 42 }}
+                      alignment="center"
+                    >
+                      <Button
+                        buttonStyle="plain"
+                        action={() => setSelectedDay(d)}
+                      >
+                        <VStack
+                          alignment="center"
+                          spacing={2}
+                          frame={{ width: 36, height: 38 }}
+                          modifiers={
+                            isSelected
+                              ? modifiers().background({
+                                  style: { light: '#2563EB', dark: '#1D4ED8' },
+                                  shape: { type: 'rect', cornerRadius: 8 }
+                                })
+                              : isToday
+                              ? modifiers().background({
+                                  style: { light: '#EFF6FF', dark: '#1E293B' },
+                                  shape: { type: 'rect', cornerRadius: 8 }
+                                })
+                              : modifiers()
                           }
                         >
-                          {d}
-                        </Text>
-                        <HStack spacing={2} alignment="center">
-                          {hasCourse ? (
-                            <VStack
-                              frame={{ width: 4, height: 4 }}
-                              modifiers={modifiers().background({
-                                style: isSelected ? '#FFFFFF' : '#3B82F6',
-                                shape: { type: 'circle' }
-                              })}
-                            />
-                          ) : null}
-                          {hasExam ? (
-                            <VStack
-                              frame={{ width: 4, height: 4 }}
-                              modifiers={modifiers().background({
-                                style: isSelected ? '#FFFFFF' : '#F97316',
-                                shape: { type: 'circle' }
-                              })}
-                            />
-                          ) : null}
-                        </HStack>
-                      </VStack>
-                    </Button>
-                  </VStack>
-                );
-              })}
-            </HStack>
-          ))}
+                          <Text
+                            font="subheadline"
+                            fontWeight={isSelected || isToday ? 'bold' : 'regular'}
+                            foregroundStyle={
+                              isSelected ? '#FFFFFF' : isToday ? '#2563EB' : 'label'
+                            }
+                          >
+                            {d}
+                          </Text>
+                          <HStack spacing={2} alignment="center">
+                            {hasCourse ? (
+                              <VStack
+                                frame={{ width: 4, height: 4 }}
+                                modifiers={modifiers().background({
+                                  style: isSelected ? '#FFFFFF' : '#3B82F6',
+                                  shape: { type: 'circle' }
+                                })}
+                              />
+                            ) : null}
+                            {hasExam ? (
+                              <VStack
+                                frame={{ width: 4, height: 4 }}
+                                modifiers={modifiers().background({
+                                  style: isSelected ? '#FFFFFF' : '#F97316',
+                                  shape: { type: 'circle' }
+                                })}
+                              />
+                            ) : null}
+                          </HStack>
+                        </VStack>
+                      </Button>
+                    </VStack>
+                  );
+                })}
+              </HStack>
+            ))}
+          </VStack>
         </Section>
 
         <Section
