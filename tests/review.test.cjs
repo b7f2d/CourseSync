@@ -1959,3 +1959,79 @@ test('manageManualSchedules presents calendar and handles add/edit',async()=>{
  a.equal(presented.year,new Date().getFullYear());
  a.ok(Array.isArray(presented.rows));
 });
+
+test('clicking synced course in manageManualSchedules shows notice and forbids editing',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.state.examCalendarId=e.other.identifier;
+ const start=Date.UTC(new Date().getFullYear(),5,1,2);
+ e.baseline([lesson({id:'sys-course-1',title:'高等数学',start:new Date(start).toISOString(),end:new Date(start+3600000).toISOString(),location:'教一101'})]);
+ e.store.write(e.state);e.store.release();
+
+ let editorOpened=false;
+ e.sandbox.__scheduleEditor=async()=>{
+   editorOpened=true;
+   return null;
+ };
+
+ let noticeTitle='',noticeMessage='';
+ e.sandbox.__sdk.Dialog.alert=async({title,message})=>{
+   noticeTitle=title;
+   noticeMessage=message;
+ };
+
+ let step=0;
+ e.sandbox.__calendarScheduleMock=async(opts)=>{
+   if(step++===0){
+     const syncedRow=opts.rows.find(r=>r.isManual===false);
+     a.ok(syncedRow);
+     a.equal(syncedRow.title,'高等数学');
+     return {action:'edit',id:syncedRow.id};
+   }
+   return null;
+ };
+
+ await e.m.manageManualSchedules(e.store);
+ a.equal(editorOpened,false);
+ a.equal(noticeTitle,'教务同步日程');
+ a.equal(noticeMessage,'教务系统导入的课表由系统自动同步，不可在此编辑或删除；如需调整请在教务系统处理或添加手动日程。');
+ const after=e.store.read();
+ a.equal(after.semesters['161'].events[0].title,'高等数学');
+});
+
+test('user can add manual course and manual exam via calendar view',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.state.examCalendarId=e.other.identifier;
+ e.store.write(e.state);e.store.release();
+
+ const startCourse=Date.UTC(new Date().getFullYear(),5,2,8,0);
+ const startExam=Date.UTC(new Date().getFullYear(),5,3,9,0);
+
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+
+ let step=0;
+ e.sandbox.__calendarScheduleMock=async(opts)=>{
+   if(step===0){
+     step++;
+     return {action:'add',kind:'course',start:startCourse,day:2};
+   }
+   if(step===1){
+     step++;
+     return {action:'add',kind:'exam',start:startExam,day:3};
+   }
+   return null;
+ };
+
+ e.sandbox.__scheduleEditor=async(kind,initial)=>{
+   if(kind==='course'){
+     return {action:'save',title:'自定义课程',location:'A101',start:startCourse,end:startCourse+3600000};
+   }
+   if(kind==='exam'){
+     return {action:'save',title:'自定义考试',location:'B202',start:startExam,end:startExam+7200000};
+   }
+   return null;
+ };
+
+ await e.m.manageManualSchedules(e.store);
+ a.ok(e.db.some(ev=>ev.title==='自定义课程'&&ev.calendar.identifier===e.calendar.identifier));
+ a.ok(e.db.some(ev=>ev.title==='自定义考试'&&ev.calendar.identifier===e.other.identifier));
+});

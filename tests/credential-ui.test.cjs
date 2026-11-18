@@ -165,6 +165,11 @@ test('native calendar schedule view presents a real calendar with year, month, 1
  assert.match(schedule,/1 至 \{totalDays\} 号/);
  assert.match(schedule,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
  assert.match(index,/presentNativeCalendarSchedule\(\{/);
+ assert.doesNotMatch(schedule,/font=\{\d+\}/);
+ assert.match(schedule,/Picker[\s\S]*?title="年份"/);
+ assert.match(schedule,/Picker[\s\S]*?title="月份"/);
+ assert.match(schedule,/\[教务同步\]/);
+ assert.match(schedule,/✎ 编辑 ›/);
 });
 
 

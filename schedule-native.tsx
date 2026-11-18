@@ -1,6 +1,6 @@
 import {
   Button, DatePicker, List, Navigation, NavigationStack, Section,
-  Text, TextField, VStack, HStack, Spacer, modifiers, useState,
+  Text, TextField, VStack, HStack, Spacer, Picker, modifiers, useState,
 } from 'scripting';
 
 export type ScheduleKind = 'course' | 'exam';
@@ -106,9 +106,11 @@ function CalendarScheduleView({
 
   const prevMonth = () => {
     if (month === 1) {
-      setYear(year - 1);
+      const nextY = year - 1;
+      setYear(nextY);
       setMonth(12);
       setSelectedDay(1);
+      dismiss({ action: 'changeMonth', year: nextY, month: 12 });
     } else {
       setMonth(month - 1);
       setSelectedDay(1);
@@ -117,9 +119,11 @@ function CalendarScheduleView({
 
   const nextMonth = () => {
     if (month === 12) {
-      setYear(year + 1);
+      const nextY = year + 1;
+      setYear(nextY);
       setMonth(1);
       setSelectedDay(1);
+      dismiss({ action: 'changeMonth', year: nextY, month: 1 });
     } else {
       setMonth(month + 1);
       setSelectedDay(1);
@@ -162,6 +166,17 @@ function CalendarScheduleView({
   const fullWeekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
   const selectedWeekday = fullWeekdays[new Date(year, month - 1, safeSelectedDay).getDay() % 7] || '周一';
 
+  const yearOptions: number[] = [];
+  const baseYear = now.getFullYear();
+  for (let y = baseYear - 3; y <= baseYear + 5; y++) {
+    yearOptions.push(y);
+  }
+  if (!yearOptions.includes(year)) {
+    yearOptions.push(year);
+    yearOptions.sort((a, b) => a - b);
+  }
+  const monthOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
   return (
     <NavigationStack>
       <List
@@ -171,20 +186,56 @@ function CalendarScheduleView({
           cancellationAction: <Button title="完成" action={() => dismiss(null)} />
         }}
       >
-        <Section>
-          <HStack alignment="center" spacing={8} padding={{ top: 4, bottom: 4 }}>
-            <Button title="◀" action={prevMonth} />
+        <Section header={<Text>选择年月</Text>}>
+          <HStack alignment="center" spacing={8} padding={{ top: 2, bottom: 2 }}>
+            <Button title="◀ 上个月" action={prevMonth} />
             <Spacer />
             <Text font="headline" fontWeight="bold">
               {year} 年 {month} 月
             </Text>
             <Spacer />
-            <Button title="▶" action={nextMonth} />
+            <Button title="下个月 ▶" action={nextMonth} />
+          </HStack>
+          <HStack alignment="center" spacing={12}>
+            <Picker
+              title="年份"
+              pickerStyle="menu"
+              value={String(year)}
+              onChanged={(val: string) => {
+                const y = Number(val);
+                if (Number.isFinite(y) && y !== year) {
+                  setYear(y);
+                  setSelectedDay(1);
+                  dismiss({ action: 'changeMonth', year: y, month });
+                }
+              }}
+            >
+              {yearOptions.map(y => (
+                <Text key={String(y)} tag={String(y)}>{y} 年</Text>
+              ))}
+            </Picker>
+            <Spacer />
+            <Picker
+              title="月份"
+              pickerStyle="menu"
+              value={String(month)}
+              onChanged={(val: string) => {
+                const m = Number(val);
+                if (Number.isFinite(m) && m !== month) {
+                  setMonth(m);
+                  setSelectedDay(1);
+                }
+              }}
+            >
+              {monthOptions.map(m => (
+                <Text key={String(m)} tag={String(m)}>{m} 月</Text>
+              ))}
+            </Picker>
           </HStack>
         </Section>
 
         <Section header={<Text>月历视图</Text>}>
-          <HStack alignment="center" spacing={0} padding={{ bottom: 6 }}>
+          <HStack alignment="center" spacing={4} padding={{ bottom: 6 }}>
             {weekdays.map((w, i) => (
               <VStack key={w} frame={{ maxWidth: 'infinity' }} alignment="center">
                 <Text
@@ -199,7 +250,7 @@ function CalendarScheduleView({
           </HStack>
 
           {weeks.map((week, wIdx) => (
-            <HStack key={'week-' + wIdx} alignment="center" spacing={0} padding={{ top: 3, bottom: 3 }}>
+            <HStack key={'week-' + wIdx} alignment="center" spacing={4} padding={{ top: 2, bottom: 2 }}>
               {week.map((d, dIdx) => {
                 if (d === null) {
                   return (
@@ -239,7 +290,7 @@ function CalendarScheduleView({
                         }
                       >
                         <Text
-                          font={15}
+                          font="subheadline"
                           fontWeight={isSelected || isToday ? 'bold' : 'regular'}
                           foregroundStyle={
                             isSelected ? '#FFFFFF' : isToday ? '#2563EB' : 'label'
@@ -278,13 +329,14 @@ function CalendarScheduleView({
 
         <Section
           header={<Text>{month} 月 {safeSelectedDay} 日 ({selectedWeekday}) 日程明细</Text>}
-          footer={<Text>点击日程卡片直接编辑或删除；点击下方按钮可为此日添加课程或考试日程。</Text>}
+          footer={<Text>教务日程为只读同步，手动日程可点击编辑或删除。</Text>}
         >
           {selectedDayEvents.length > 0 ? (
             selectedDayEvents.map(ev => {
+              const isManual = Boolean(ev.isManual);
               const isCourse = ev.kind === 'course';
-              const dotColor = isCourse ? '#3B82F6' : '#F97316';
-              const tagLabel = isCourse ? '课程' : '考试';
+              const dotColor = !isManual ? '#94A3B8' : isCourse ? '#3B82F6' : '#F97316';
+              const tagLabel = !isManual ? '[教务同步]' : (isCourse ? '[手动添加 · 课程]' : '[手动添加 · 考试]');
 
               return (
                 <Button
@@ -303,8 +355,11 @@ function CalendarScheduleView({
                     <VStack alignment="leading" spacing={2}>
                       <HStack spacing={6} alignment="center">
                         <Text font="headline">{ev.title}</Text>
-                        <Text font="caption2" foregroundStyle={dotColor}>
-                          [{tagLabel}]
+                        <Text
+                          font="caption2"
+                          foregroundStyle={!isManual ? 'secondaryLabel' : dotColor}
+                        >
+                          {tagLabel}
                         </Text>
                       </HStack>
                       <Text font="caption1" foregroundStyle="secondaryLabel">
@@ -312,9 +367,15 @@ function CalendarScheduleView({
                       </Text>
                     </VStack>
                     <Spacer />
-                    <Text font="subheadline" foregroundStyle="secondaryLabel">
-                      编辑 ›
-                    </Text>
+                    {isManual ? (
+                      <Text font="subheadline" foregroundStyle="secondaryLabel">
+                        ✎ 编辑 ›
+                      </Text>
+                    ) : (
+                      <Text font="caption1" foregroundStyle="secondaryLabel">
+                        [教务同步]
+                      </Text>
+                    )}
                   </HStack>
                 </Button>
               );
@@ -355,27 +416,44 @@ function CalendarScheduleView({
                 <Text font="caption1" fontWeight="bold" foregroundStyle="secondaryLabel">
                   {month}月{dayNum}日 {wd}
                 </Text>
-                {dayEvs.map(ev => (
-                  <Button
-                    key={'ev-' + ev.id}
-                    buttonStyle="plain"
-                    action={() => dismiss({ action: 'edit', id: ev.id })}
-                  >
-                    <HStack alignment="center" spacing={8}>
-                      <VStack
-                        frame={{ width: 8, height: 8 }}
-                        modifiers={modifiers().background({
-                          style: ev.kind === 'course' ? '#3B82F6' : '#F97316',
-                          shape: { type: 'circle' }
-                        })}
-                      />
-                      <Text font="subheadline" fontWeight="medium">{ev.title}</Text>
-                      <Text font="caption2" foregroundStyle="secondaryLabel">{ev.time}</Text>
-                      <Spacer />
-                      <Text font="caption1" foregroundStyle="secondaryLabel">编辑 ›</Text>
-                    </HStack>
-                  </Button>
-                ))}
+                {dayEvs.map(ev => {
+                  const isManual = Boolean(ev.isManual);
+                  const isCourse = ev.kind === 'course';
+                  const dotColor = !isManual ? '#94A3B8' : isCourse ? '#3B82F6' : '#F97316';
+                  const tagLabel = !isManual ? '[教务同步]' : (isCourse ? '[手动添加 · 课程]' : '[手动添加 · 考试]');
+
+                  return (
+                    <Button
+                      key={'ev-' + ev.id}
+                      buttonStyle="plain"
+                      action={() => dismiss({ action: 'edit', id: ev.id })}
+                    >
+                      <HStack alignment="center" spacing={8}>
+                        <VStack
+                          frame={{ width: 8, height: 8 }}
+                          modifiers={modifiers().background({
+                            style: dotColor,
+                            shape: { type: 'circle' }
+                          })}
+                        />
+                        <Text font="subheadline" fontWeight="medium">{ev.title}</Text>
+                        <Text
+                          font="caption2"
+                          foregroundStyle={!isManual ? 'secondaryLabel' : dotColor}
+                        >
+                          {tagLabel}
+                        </Text>
+                        <Text font="caption2" foregroundStyle="secondaryLabel">{ev.time}</Text>
+                        <Spacer />
+                        {isManual ? (
+                          <Text font="caption1" foregroundStyle="secondaryLabel">✎ 编辑 ›</Text>
+                        ) : (
+                          <Text font="caption1" foregroundStyle="secondaryLabel">只读</Text>
+                        )}
+                      </HStack>
+                    </Button>
+                  );
+                })}
               </VStack>
             );
           })}
@@ -415,6 +493,7 @@ export function presentNativeCalendarSchedule(options?: {
             time: (c.start && c.end && typeof c.start === 'string' && typeof c.end === 'string')
               ? (c.start.slice(11, 16) + ' - ' + c.end.slice(11, 16)) : '',
             location: c.location || '',
+            isManual: false,
           });
         }
       }
@@ -434,6 +513,7 @@ export function presentNativeCalendarSchedule(options?: {
             time: (e.start && e.end && typeof e.start === 'string' && typeof e.end === 'string')
               ? (e.start.slice(11, 16) + ' - ' + e.end.slice(11, 16)) : '',
             location: e.location || '',
+            isManual: false,
           });
         }
       }

@@ -57,7 +57,7 @@ function LoginView({ title }: { title: string }) {
           textContentType="password"
         />
       </Section>
-      <Section footer={<Text>可尝试使用 iOS「密码」中的已保存网站凭据。此页面不会访问外部网站，也不会自动保存密码。</Text>}>
+      <Section footer={<Text>支持 iOS「密码」自动填充，凭据仅保存在本地钥匙串。</Text>}>
         <Button
           title="确认"
           disabled={!valid}
@@ -201,8 +201,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
             <Text font="caption1" foregroundStyle="secondaryLabel">CourseSync 将针对学校教务系统定制同步管道</Text>
           </VStack>
         </Section>
-        <Section header={<Text>请选择你的学校</Text>}
-          footer={<Text>点开下拉菜单，选择南京财经大学或苏州科技大学。</Text>}>
+        <Section header={<Text>请选择你的学校</Text>}>
           <Picker title="学校" pickerStyle="menu"
             value={schoolId} onChanged={setSchoolId}>
             <Text key="unselected" tag="unselected">请选择</Text>
@@ -241,7 +240,7 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           <SecureField title="密码" prompt="请输入密码" value={password}
             onChanged={setPassword} textContentType="password"/>
         </Section>
-        <Section footer={<Text>仅在学校要求重新认证时提交登录信息，验证成功后才会保存；支持 iOS「密码」自动填充。</Text>}>
+        <Section footer={<Text>支持 iOS「密码」自动填充，验证通过后安全保存。</Text>}>
           <Button title="开始刷新" disabled={!validAccount}
             action={()=>{if(validAccount&&validSchool)dismiss({
               kind:'credentials',schoolId,username:account,password
@@ -474,7 +473,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
           cancellationAction: <Button title="完成" action={() => dismiss(null)} />
         }}
       >
-        <Section header={<Text>添加新日历</Text>} footer={<Text>将在你的 iCloud 账户下创建独立的课表日历，避免与日常私人活动混淆。</Text>}>
+        <Section header={<Text>添加新日历</Text>} footer={<Text>在 iCloud 创建独立课表日历，与私人日程隔离。</Text>}>
           <TextField
             title="日历名称"
             prompt="例如：南财课表、大学课表"
@@ -492,7 +491,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         </Section>
 
         {icloudCalendars.length > 0 ? (
-          <Section header={<Text>iCloud 日历</Text>} footer={<Text>点击「设为课表」可将 CourseSync 的同步目标切换至该日历。</Text>}>
+          <Section header={<Text>iCloud 日历</Text>} footer={<Text>点击「设为课表」切换同步目标。</Text>}>
             {icloudCalendars.map((c, idx) => renderCalendarRow(c, idx))}
           </Section>
         ) : null}

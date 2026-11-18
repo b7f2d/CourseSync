@@ -1,12 +1,10 @@
 // @ts-nocheck
-// Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
 import { presentNativeConfirmation, presentNativeDashboard } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity } from './live_activity';
 import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';
-// Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
@@ -21,10 +19,6 @@ async function __COURSESYNC_REPORT_STARTUP(error){
 async function __NUFE_START(){
   try{
     console.log('[CourseSync] 正在启动');
-// @ts-nocheck
-
-// CourseSync: foreground management and background shortcut synchronization.
-// Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
 const HostCalendar=hostAPI('Calendar')||{},HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog')||{};
@@ -133,20 +127,9 @@ class Notification{
 }
 const Data=hostAPI('Data'),Image={fromData:data=>hostAPI('UIImage').fromData(data)};
 const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
-// END SCRIPTING ADAPTER
 
 // SPDX-License-Identifier: GPL-3.0-only
-// CourseSync (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
-// upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
-// No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* CourseSync：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
- * 使用 Scripting「运行意图脚本」触发同步，无需通过 URL 唤起 App。
- * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
- * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
- * 系列删除可能影响范围外的同系列课程，但不会跨日历；RRULE/提醒无法完整备份。
- * 本地模拟测试不等于 iPhone 实测。iCloud 来源需用户在 Apple 日历确认。
- * 源码 GPL-3.0-only；来源说明及许可证信息见原有版权声明与仓库 LICENSE；上游仓库 https://github.com/LokmenoWer/nufe-kebiao
- */
+// CourseSync: native Scripting timetable sync engine.
 'use strict';
 // This deployment is explicitly authorized for a disposable, dedicated timetable calendar.
 const REPLACE_DEDICATED_LEGACY = true;
@@ -2739,7 +2722,7 @@ async function loginPreflight(state,store,progress){
 async function signOut(state,store){
   // Saved credentials and the local authenticated session are separate.
   if(!await confirm('退出登录',
-    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
+    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。现有课表与日历不会删除。'))return false;
 
   // Persist a fail-closed marker before touching the Keychain, so scheduled
   // refreshes cannot silently sign back in even if deletion partially fails.
@@ -2761,7 +2744,7 @@ async function signOut(state,store){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已清除本机会话和 CourseSync 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
+  try{await notice('已退出登录','已清除本机会话与凭据。已同步的课程和日历均已保留。');}catch(_){}
   return true;
 }
 async function refreshFailure(code){
@@ -3047,7 +3030,7 @@ async function manageManualSchedules(store){
   while(true){
     const state=store.read();
     const calendars=await manualCalendars(state);
-    const start=+new Date(year,month-1,1),end=+new Date(year,month,1);
+    const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
 
     // 1. Load manual calendar events
     const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
@@ -3136,6 +3119,10 @@ async function manageManualSchedules(store){
     if(selection.action==='edit'){
       const ev=allRows.find(r=>r.id===selection.id);
       if(!ev)continue;
+      if(!ev.isManual){
+        await notice('教务同步日程','教务系统导入的课表由系统自动同步，不可在此编辑或删除；如需调整请在教务系统处理或添加手动日程。');
+        continue;
+      }
       const original=manualEvents.find(e=>e.identifier===selection.id);
       if(original){
         const kind=manualKind(original);
@@ -3154,20 +3141,6 @@ async function manageManualSchedules(store){
           year=new Date(result.start).getFullYear();
           month=new Date(result.start).getMonth()+1;
           selectedDay=new Date(result.start).getDate();
-        }
-      }else{
-        // Synced course
-        const kind='course';
-        const calendar=calendars.course;
-        const result=await presentScheduleEditor(kind,{
-          title:ev.title,
-          location:ev.location,
-          start:ev.start,
-          end:ev.end,
-        });
-        if(result?.action==='save'&&calendar){
-          await changeManualSchedule(store,kind,calendar.identifier,result);
-          await notice('日程已保存','已作为自定义日程保存至「'+calendar.title+'」。');
         }
       }
     }
