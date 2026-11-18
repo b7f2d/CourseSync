@@ -11,7 +11,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { CourseRefreshActivity } from './live_activity';",
    'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();')
  .replace("import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';",
-   'const presentScheduleEditor=(...args)=>null;const presentNativeCalendarSchedule=(...args)=>null;const presentScheduleList=(...args)=>null;');
+   'const presentScheduleEditor=(...args)=>(globalThis.__scheduleEditor?globalThis.__scheduleEditor(...args):null);const presentNativeCalendarSchedule=(...args)=>(globalThis.__calendarScheduleMock?globalThis.__calendarScheduleMock(...args):null);const presentScheduleList=(...args)=>(globalThis.__scheduleList?globalThis.__scheduleList(...args):null);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -1846,50 +1846,51 @@ test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms
 
  // 1. 全天同一教室
  const allDayLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rAll,rEve]);
- a.equal(allDayLines.join('\n'),'• 全天（第1-12节 / 上午+下午+晚上）：博远楼JC101（1楼）');
+ a.equal(allDayLines.join('\n'),'• 全天：博远楼JC101');
 
  // 2. 白天同一教室 (上午 + 下午)
  const mornAftLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rEve]);
- a.equal(mornAftLines.join('\n'),'• 白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+ a.equal(mornAftLines.join('\n'),'• 白天：博远楼JC101\n• 晚上：博观楼JB105');
 
  // 3. 下午至晚上同一教室 (下午 + 晚上)
  const aftEveLines=e.m.resolveDayRooms([rAll],[rAft],[rAft,rEve]);
- a.equal(aftEveLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午至晚上（第5-12节 / 下午+晚上）：博远楼JC203（2楼）');
+ a.equal(aftEveLines.join('\n'),'• 上午：博远楼JC101\n• 下午至晚上：博远楼JC203');
 
  // 4. 三时段各不相同
  const sepLines=e.m.resolveDayRooms([rAll],[rAft],[rEve]);
- a.equal(sepLines.join('\n'),'• 上午（第1-4节）：博远楼JC101（1楼）\n• 下午（第5-9节）：博远楼JC203（2楼）\n• 晚上（第10-12节）：博观楼JB105（1楼）');
+ a.equal(sepLines.join('\n'),'• 上午：博远楼JC101\n• 下午：博远楼JC203\n• 晚上：博观楼JB105');
 });
 
-test('NUFE free classroom query supports morning, afternoon and evening with smart room merging without modifying calendar',async()=>{
+test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
  const e=await env();
  const dbCountBefore=e.db.length;
+ const requestedSegments=[];
  const http={
    get:async(url)=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
    json:async(url,{body})=>{
      const p=JSON.parse(body);
+     requestedSegments.push(p.dateTimeSegmentCmd);
      const units=p.dateTimeSegmentCmd.units;
-     const isTomorrow=p.dateTimeSegmentCmd.startDateTime.endsWith('17');
-     if(!isTomorrow){
        // 今天：上午、下午为同一个博远楼JC101，晚上为博远楼JC403 -> 合并为白天+晚上
        if(units.includes('1'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        if(units.includes('5'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
-     } else {
-       // 明天：全天为同一个博观楼JB101 -> 合并为全天
-       return {roomList:[{id:201,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1}]};
-     }
    }
  };
  let noticeTitle=null,noticeMsg=null;
  e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
- const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-16T00:00:00Z'));
+ const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-15T16:30:00Z'));
  a.match(msg,/【今天 2026-11-16】/);
- a.ok(msg.includes('白天（第1-9节 / 上午+下午）：博远楼JC101（1楼）'));
- a.ok(msg.includes('晚上（第10-12节）：博远楼JC403（4楼）'));
- a.match(msg,/【明天 2026-11-17】/);
- a.ok(msg.includes('全天（第1-12节 / 上午+下午+晚上）：博观楼JB101（1楼）'));
-  a.equal(noticeTitle,'空闲教室查询');
+ a.ok(msg.includes('白天：博远楼JC101'));
+ a.ok(msg.includes('晚上：博远楼JC403'));
+ a.doesNotMatch(msg,/明天|2026-11-17/);
+ a.equal(requestedSegments.length,3);
+ for(const segment of requestedSegments){
+   a.equal(segment.startDateTime,'2026-11-16');
+   a.equal(segment.endDateTime,'2026-11-16');
+ }
+ a.equal(noticeTitle,'空闲教室');
+ a.equal(noticeMsg,msg);
  a.equal(e.db.length,dbCountBefore);
 });
 
@@ -1935,8 +1936,26 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
  a.equal(progressShown,1);
  a.equal(progressClosed,1);
  a.equal(progressClosedWhenNotice,true);
- a.equal(noticeTitle,'空闲教室查询');
+ a.equal(noticeTitle,'空闲教室');
  a.ok(noticeMsg.includes('博远楼JC101'));
  a.ok(!noticeMsg.includes('说明：'));
  a.equal(e.db.length,dbCountBefore);
+});
+
+test('manageManualSchedules presents calendar and handles add/edit',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.state.examCalendarId=e.other.identifier;e.store.write(e.state);e.store.release();
+ const start=Date.UTC(new Date().getFullYear(),5,1,2);
+ const details={title:'示例',start:new Date(start).toISOString(),end:new Date(start+3600000).toISOString(),location:'教室'};
+ const own=e.add(details,{notes:'手动添加 · CourseSync'});
+ own.url='coursesync://manual/course/11111111-2222-3333-4444-555555555555';
+ let presented=null;
+ e.sandbox.__calendarScheduleMock=async(opts)=>{
+   presented=opts;
+   return null;
+ };
+ await e.m.manageManualSchedules(e.store);
+ a.ok(presented);
+ a.equal(presented.year,new Date().getFullYear());
+ a.ok(Array.isArray(presented.rows));
 });

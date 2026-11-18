@@ -2863,7 +2863,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
     const list=Array.isArray(data?.roomList)?data.roomList:[];
     return list.filter(r=>{
       const bName=r.building?.nameZh||r.buildingName;
-      return Boolean(BUILDING_PRIORITY[bName]);
+      return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
     }).sort((a,b)=>{
       const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
       const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
@@ -2881,14 +2881,14 @@ const AFTERNOON_FALLBACK=['5','6','7','8'];
 const EVENING_UNITS=['10','11','12'];
 
 function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
-  const formatRoom=r=>r?`${r.nameZh||r.name}（${r.floor}楼）`:'无空闲教室';
+  const formatRoom=r=>r?String(r.nameZh||r.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim():'无空闲教室';
   const isSame=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?a.id===b.id:(a.nameZh||a.name)===(b.nameZh||b.name));
   const inList=(list,target)=>list.some(r=>isSame(r,target));
 
   // 1. 全天同一教室 (上午 + 下午 + 晚上)
   const allDayRoom=mornRooms.find(r=>inList(aftRooms,r)&&inList(eveRooms,r));
   if(allDayRoom){
-    return [`• 全天（第1-12节 / 上午+下午+晚上）：${formatRoom(allDayRoom)}`];
+    return [`• 全天：${formatRoom(allDayRoom)}`];
   }
 
   // 2. 白天同一教室 (上午 + 下午)
@@ -2897,16 +2897,16 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
 
   if(mornAftRoom){
     return [
-      `• 白天（第1-9节 / 上午+下午）：${formatRoom(mornAftRoom)}`,
-      `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+      `• 白天：${formatRoom(mornAftRoom)}`,
+      `• 晚上：${formatRoom(eveRooms[0]||null)}`
     ];
   }
 
   // 3. 下午至晚上同一教室 (下午 + 晚上)
   if(aftEveRoom){
     return [
-      `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
-      `• 下午至晚上（第5-12节 / 下午+晚上）：${formatRoom(aftEveRoom)}`
+      `• 上午：${formatRoom(mornRooms[0]||null)}`,
+      `• 下午至晚上：${formatRoom(aftEveRoom)}`
     ];
   }
 
@@ -2914,17 +2914,17 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const mornEveRoom=mornRooms.find(r=>inList(eveRooms,r));
   if(mornEveRoom){
     return [
-      `• 上午（第1-4节）：${formatRoom(mornEveRoom)}`,
-      `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
-      `• 晚上（第10-12节）：${formatRoom(mornEveRoom)}（同上午）`
+      `• 上午：${formatRoom(mornEveRoom)}`,
+      `• 下午：${formatRoom(aftRooms[0]||null)}`,
+      `• 晚上：${formatRoom(mornEveRoom)}（同上午）`
     ];
   }
 
   // 5. 各时段独立教室
   return [
-    `• 上午（第1-4节）：${formatRoom(mornRooms[0]||null)}`,
-    `• 下午（第5-9节）：${formatRoom(aftRooms[0]||null)}`,
-    `• 晚上（第10-12节）：${formatRoom(eveRooms[0]||null)}`
+    `• 上午：${formatRoom(mornRooms[0]||null)}`,
+    `• 下午：${formatRoom(aftRooms[0]||null)}`,
+    `• 晚上：${formatRoom(eveRooms[0]||null)}`
   ];
 }
 
@@ -2949,28 +2949,229 @@ async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAu
   }catch(e){
     if(progress)await progress.finish();
     if(['AUTH_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e.code)){
-      await notice('登录失败','请先完成学校登录或核对账号密码后再查询空闲教室。');
+      await notice('登录失败','请核对学号和密码，重新登录后再查询。');
       return '';
     }
     throw e;
   }
   stage('正在查询空闲教室...');
   const today=localDateTime(new Date(now).toISOString()).slice(0,10);
-  const tomorrow=localDateTime(new Date(now+86400000).toISOString()).slice(0,10);
-  const [todayLines,tmrwLines]=await Promise.all([
-    queryDayRooms(http,today),
-    queryDayRooms(http,tomorrow)
-  ]);
+  const todayLines=await queryDayRooms(http,today);
   const message=[
     `【今天 ${today}】`,
-    ...todayLines,
-    '',
-    `【明天 ${tomorrow}】`,
-    ...tmrwLines
+    ...todayLines
   ].join('\n');
   if(progress)await progress.finish();
-  await notice('空闲教室查询',message);
+  await notice('空闲教室',message);
   return message;
+}
+
+const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
+const MANUAL_SCHEDULE_URL=/^coursesync:\/\/manual\/(course|exam)\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const manualKind=ev=>MANUAL_SCHEDULE_URL.exec(ev?.url||'')?.[1];
+const isManualEvent=ev=>!!manualKind(ev)||String(ev?.notes||'').split('\n').includes(MANUAL_SCHEDULE_NOTE);
+const canEditSingleEvent=ev=>!ev.isDetached&&!ev.hasRecurrenceRules&&
+  !ev.recurrenceRules?.length&&!ev.hasAttendees&&!ev.attendees?.length;
+const scheduleName=kind=>kind==='course'?'课程':'考试';
+
+async function manualCalendars(state){
+  const calendars=await visibleCalendars();
+  return {
+    course:calendars.find(cal=>cal.identifier===state.calendarId&&liveCalendar(cal)),
+    exam:calendars.find(cal=>cal.identifier===state.examCalendarId&&
+      cal.identifier!==state.calendarId&&liveCalendar(cal))
+  };
+}
+
+function scheduleFields(result){
+  const title=typeof result.title==='string'?result.title.trim():'';
+  const location=typeof result.location==='string'?result.location.trim():'';
+  const start=Math.floor(result.start/60000)*60000,end=Math.floor(result.end/60000)*60000;
+  assert(title&&title.length<=120&&location.length<=200&&typeof result.start==='number'&&
+    typeof result.end==='number'&&Number.isFinite(+new Date(start))&&
+    Number.isFinite(+new Date(end))&&end>start&&new Date(start).getFullYear()>=1000&&
+    new Date(end).getFullYear()<=9999,'MANUAL_FIELDS');
+  return {title,location,start,end};
+}
+
+// Only hold the synchronization lock while changing the event, leaving forms
+// and confirmation dialogs free to stay open without blocking background sync.
+async function changeManualSchedule(store,kind,calendarId,result,original){
+  const fields=result.action==='save'?scheduleFields(result):null;
+  assert(fields||result.action==='delete'&&original,'MANUAL_FIELDS');
+  store.acquire();
+  try{
+    const state=store.read();
+    assert(!state.signedOut&&state.lastError!=='LOGOUT_INCOMPLETE','MANUAL_CALENDAR');
+    const calendar=(await manualCalendars(state))[kind];
+    assert(calendar?.identifier===calendarId,'MANUAL_CALENDAR');
+    let event;
+    if(original){
+      const rows=await calendarRows(+original.startDate,+original.endDate,calendar);
+      event=rows.find(ev=>ev.identifier===original.identifier&&ev.url===original.url&&
+        manualKind(ev)===kind&&canEditSingleEvent(ev));
+      assert(event&&snapshotSignature(event)===snapshotSignature(original),'MANUAL_CHANGED');
+    }else event=new CalendarEvent();
+    store.check();
+    if(!fields){
+      await event.remove();
+      const remaining=await calendarRows(+original.startDate,+original.endDate,calendar);
+      assert(!remaining.some(ev=>ev.identifier===original.identifier&&ev.url===original.url),'MANUAL_VERIFY');
+      return;
+    }
+    event.calendar=calendar;
+    event.title=fields.title;
+    event.location=fields.location;
+    const notes=String(event.notes||'').split('\n').filter(line=>line!==MANUAL_SCHEDULE_NOTE).join('\n');
+    event.notes=notes?MANUAL_SCHEDULE_NOTE+'\n'+notes:MANUAL_SCHEDULE_NOTE;
+    event.isAllDay=false;
+    event.startDate=new Date(fields.start);
+    event.endDate=new Date(fields.end);
+    if(!original)event.url='coursesync://manual/'+kind+'/'+uuid();
+    await event.save();
+    const saved=await calendarRows(fields.start,fields.end,calendar);
+    assert(saved.some(ev=>ev.identifier===event.identifier&&ev.url===event.url&&
+      ev.title===fields.title&&+ev.startDate===fields.start&&+ev.endDate===fields.end&&
+      (ev.location||'')===fields.location&&ev.notes===event.notes&&!ev.isAllDay),'MANUAL_VERIFY');
+  }finally{store.release();}
+}
+
+async function manageManualSchedules(store){
+  let year=new Date().getFullYear();
+  let month=new Date().getMonth()+1;
+  let selectedDay=new Date().getDate();
+
+  const format=(date,day)=>date.toLocaleString('zh-CN',{...(day?{month:'numeric',day:'numeric'}:{}),
+    hour:'2-digit',minute:'2-digit',hour12:false});
+
+  while(true){
+    const state=store.read();
+    const calendars=await manualCalendars(state);
+    const start=+new Date(year,month-1,1),end=+new Date(year,month,1);
+
+    // 1. Load manual calendar events
+    const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
+      calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
+        canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
+        +ev.endDate>+ev.startDate):[]));
+    const manualEvents=manualGroups.flat();
+
+    const manualRows=manualEvents.map(ev=>{
+      const sameDay=ev.startDate.toDateString()===ev.endDate.toDateString();
+      return {
+        id:ev.identifier,
+        kind:manualKind(ev),
+        title:ev.title,
+        start:+ev.startDate,
+        end:+ev.endDate,
+        time:format(ev.startDate,true)+'–'+format(ev.endDate,!sameDay),
+        location:ev.location||'',
+        isManual:true,
+      };
+    });
+
+    // 2. Load synced courses from state.semesters
+    const syncedRows=[];
+    if(state.semesters){
+      for(const sem of Object.values(state.semesters)){
+        if(!sem?.events)continue;
+        for(const ev of sem.events){
+          const s=Date.parse(ev.start),e=Date.parse(ev.end);
+          if(s>=start&&s<end){
+            const sd=new Date(s),ed=new Date(e);
+            syncedRows.push({
+              id:'synced-'+(ev.id||s+'-'+ev.title),
+              kind:'course',
+              title:ev.title,
+              start:s,
+              end:e,
+              time:format(sd,false)+'–'+format(ed,false),
+              location:ev.location||'',
+              isManual:false,
+            });
+          }
+        }
+      }
+    }
+
+    const allRows=[...manualRows,...syncedRows].sort((a,b)=>a.start-b.start);
+
+    const selection=await presentNativeCalendarSchedule({
+      year,
+      month,
+      selectedDay,
+      rows:allRows,
+    });
+
+    if(!selection)return;
+
+    if(selection.action==='changeMonth'){
+      year=selection.year;
+      month=selection.month;
+      selectedDay=1;
+      continue;
+    }
+
+    if(selection.action==='add'){
+      const kind=selection.kind||'course';
+      const calendar=calendars[kind]||calendars.course;
+      if(!calendar){
+        await notice('未找到可用日历','请先在系统设置中配置或绑定课表日历。');
+        continue;
+      }
+      const initialStart=selection.start||+new Date(year,month-1,selection.day||1,8,0);
+      const result=await presentScheduleEditor(kind,{
+        title:'',
+        location:'',
+        start:initialStart,
+        end:initialStart+3600000,
+      });
+      if(result?.action==='save'){
+        await changeManualSchedule(store,kind,calendar.identifier,result);
+        await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
+      }
+      continue;
+    }
+
+    if(selection.action==='edit'){
+      const ev=allRows.find(r=>r.id===selection.id);
+      if(!ev)continue;
+      const original=manualEvents.find(e=>e.identifier===selection.id);
+      if(original){
+        const kind=manualKind(original);
+        const result=await presentScheduleEditor(kind,{
+          title:original.title,
+          location:original.location||'',
+          start:+original.startDate,
+          end:+original.endDate,
+        });
+        if(result?.action==='delete'){
+          if(await confirm('删除日程','将从日历中删除「'+original.title+'」。')){
+            await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
+          }
+        }else if(result?.action==='save'){
+          await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
+          year=new Date(result.start).getFullYear();
+          month=new Date(result.start).getMonth()+1;
+          selectedDay=new Date(result.start).getDate();
+        }
+      }else{
+        // Synced course
+        const kind='course';
+        const calendar=calendars.course;
+        const result=await presentScheduleEditor(kind,{
+          title:ev.title,
+          location:ev.location,
+          start:ev.start,
+          end:ev.end,
+        });
+        if(result?.action==='save'&&calendar){
+          await changeManualSchedule(store,kind,calendar.identifier,result);
+          await notice('日程已保存','已作为自定义日程保存至「'+calendar.title+'」。');
+        }
+      }
+    }
+  }
 }
 
 async function run() {
@@ -3015,27 +3216,7 @@ async function run() {
       if(typeof selected==='object'&&selected.schedule){
         const nav=hostAPI('Navigation');
         if(typeof nav?.present==='function'){
-          const res=await presentNativeCalendarSchedule({
-            courses:state.courses||[],
-            exams:state.exams||[]
-          });
-          if(res?.action==='saveCourse'||res?.action==='saveExam'){
-            if(res.action==='saveCourse'){
-              const courses=state.courses||[];
-              const idx=courses.findIndex(c=>c.id===res.course?.id);
-              if(idx>=0)courses[idx]=res.course;
-              else if(res.course)courses.push(res.course);
-              state.courses=courses;
-            }else{
-              const exams=state.exams||[];
-              const idx=exams.findIndex(e=>e.id===res.exam?.id);
-              if(idx>=0)exams[idx]=res.exam;
-              else if(res.exam)exams.push(res.exam);
-              state.exams=exams;
-            }
-            store.write(state);
-            await notice('日程已保存','日程信息已成功记录到本地状态。');
-          }
+          await manageManualSchedules(store);
         }
         return;
       }else{
@@ -3235,7 +3416,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms,manageManualSchedules,changeManualSchedule,manualCalendars,scheduleFields};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.

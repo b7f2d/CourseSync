@@ -13,6 +13,8 @@ export type ScheduleRow = {
   end: number;
   time: string;
   location: string;
+  sid?: string;
+  isManual?: boolean;
 };
 
 export type CalendarScheduleResult =
@@ -25,12 +27,19 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
   const dismiss = Navigation.useDismiss();
   const startDefault = Math.ceil(Date.now() / 900000) * 900000;
   const [title, setTitle] = useState(initial?.title ?? '');
-  const [start, setStart] = useState(initial?.start ?? startDefault);
-  const [end, setEnd] = useState(initial?.end ?? (initial?.start ? initial.start + 3600000 : startDefault + 3600000));
+  const [start, setStart] = useState<number>(initial?.start ?? startDefault);
+  const [end, setEnd] = useState<number>(initial?.end ?? (initial?.start ? initial.start + 3600000 : startDefault + 3600000));
   const [location, setLocation] = useState(initial?.location ?? '');
   const typeName = kind === 'course' ? '课程' : '考试';
   const valid = Boolean(title.trim()) && title.trim().length <= 120 &&
     location.trim().length <= 200 && end > start;
+
+  const toMs = (val: any): number => {
+    if (val instanceof Date) return val.getTime();
+    if (typeof val === 'number' && Number.isFinite(val)) return val;
+    const parsed = Date.parse(val);
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  };
 
   return <NavigationStack>
     <List navigationTitle={(initial ? '编辑' : '添加') + typeName}
@@ -38,9 +47,14 @@ function ScheduleEditor({kind, initial}: {kind: ScheduleKind; initial?: Schedule
       <Section header={<Text>必填信息</Text>}
         footer={end <= start ? <Text>结束时间须晚于开始时间。</Text> : undefined}>
         <TextField title="标题" prompt={"请输入" + typeName + "名称"} value={title} onChanged={setTitle}/>
-        <DatePicker title="开始时间" value={start} datePickerStyle="compact"
-          onChanged={next => {setEnd(end + next - start); setStart(next);}}/>
-        <DatePicker title="结束时间" value={end} datePickerStyle="compact" onChanged={setEnd}/>
+        <DatePicker title="开始时间" value={new Date(start)} datePickerStyle="compact"
+          onChanged={(next: any) => {
+            const nextMs = toMs(next);
+            setEnd(end + nextMs - start);
+            setStart(nextMs);
+          }}/>
+        <DatePicker title="结束时间" value={new Date(end)} datePickerStyle="compact"
+          onChanged={(next: any) => setEnd(toMs(next))}/>
       </Section>
       <Section header={<Text>地点（选填）</Text>}>
         <TextField title="地点" prompt="例如：博远楼 201" value={location} onChanged={setLocation}/>
@@ -68,20 +82,27 @@ function CalendarScheduleView({
   year: initialYear,
   month: initialMonth,
   selectedDay: initialSelectedDay,
-  rows,
+  rows: initialRows,
 }: {
-  year: number;
-  month: number;
-  selectedDay: number;
-  rows: ScheduleRow[];
+  year?: number;
+  month?: number;
+  selectedDay?: number;
+  rows?: ScheduleRow[];
 }) {
   const dismiss = Navigation.useDismiss();
-  const [year, setYear] = useState(initialYear);
-  const [month, setMonth] = useState(initialMonth); // 1-12
-  const [selectedDay, setSelectedDay] = useState(initialSelectedDay || 1);
+  const now = new Date();
+  const currentY = (Number.isFinite(initialYear) && (initialYear as number) >= 2000) ? (initialYear as number) : now.getFullYear();
+  const currentM = (Number.isFinite(initialMonth) && (initialMonth as number) >= 1 && (initialMonth as number) <= 12) ? (initialMonth as number) : (now.getMonth() + 1);
 
-  const totalDays = new Date(year, month, 0).getDate();
-  const safeSelectedDay = Math.min(selectedDay, totalDays);
+  const [year, setYear] = useState<number>(currentY);
+  const [month, setMonth] = useState<number>(currentM); // 1-12
+
+  const totalDays = new Date(year, month, 0).getDate() || 30;
+  const initialD = (Number.isFinite(initialSelectedDay) && (initialSelectedDay as number) >= 1) ? (initialSelectedDay as number) : now.getDate();
+  const [selectedDay, setSelectedDay] = useState<number>(Math.min(initialD, totalDays));
+
+  const safeSelectedDay = Math.min(Math.max(selectedDay, 1), totalDays);
+  const rows: ScheduleRow[] = Array.isArray(initialRows) ? initialRows : [];
 
   const prevMonth = () => {
     if (month === 1) {
@@ -107,17 +128,17 @@ function CalendarScheduleView({
 
   const getEventsForDay = (dayNum: number) => {
     return rows.filter(r => {
+      if (!r || !Number.isFinite(r.start)) return false;
       const d = new Date(r.start);
       return d.getFullYear() === year && (d.getMonth() + 1) === month && d.getDate() === dayNum;
     });
   };
 
   const selectedDayEvents = getEventsForDay(safeSelectedDay);
-  const now = new Date();
   const isCurrentMonth = now.getFullYear() === year && (now.getMonth() + 1) === month;
   const todayNum = isCurrentMonth ? now.getDate() : -1;
 
-  const firstDayWeekday = new Date(year, month - 1, 1).getDay(); // 0 is Sunday
+  const firstDayWeekday = Math.max(0, new Date(year, month - 1, 1).getDay() || 0); // 0 is Sunday
   const weeks: (number | null)[][] = [];
   let currentWeek: (number | null)[] = [];
   for (let i = 0; i < firstDayWeekday; i++) {
@@ -139,7 +160,7 @@ function CalendarScheduleView({
 
   const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
   const fullWeekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  const selectedWeekday = fullWeekdays[new Date(year, month - 1, safeSelectedDay).getDay()];
+  const selectedWeekday = fullWeekdays[new Date(year, month - 1, safeSelectedDay).getDay() % 7] || '周一';
 
   return (
     <NavigationStack>
@@ -196,6 +217,7 @@ function CalendarScheduleView({
                 return (
                   <VStack key={'day-' + d} frame={{ maxWidth: 'infinity', height: 42 }} alignment="center">
                     <Button
+                      buttonStyle="plain"
                       action={() => setSelectedDay(d)}
                     >
                       <VStack
@@ -267,6 +289,7 @@ function CalendarScheduleView({
               return (
                 <Button
                   key={ev.id}
+                  buttonStyle="plain"
                   action={() => dismiss({ action: 'edit', id: ev.id })}
                 >
                   <HStack alignment="center" spacing={10} padding={{ top: 4, bottom: 4 }}>
@@ -298,7 +321,7 @@ function CalendarScheduleView({
             })
           ) : (
             <Text font="subheadline" foregroundStyle="secondaryLabel">
-              该日暂无手动安排的课程或考试。
+              该日暂无安排的课程或考试。
             </Text>
           )}
 
@@ -324,7 +347,7 @@ function CalendarScheduleView({
         <Section header={<Text>{month} 月全部日程列表（1 至 {totalDays} 号）</Text>}>
           {Array.from({ length: totalDays }, (_, idx) => idx + 1).map(dayNum => {
             const dayEvs = getEventsForDay(dayNum);
-            const wd = fullWeekdays[new Date(year, month - 1, dayNum).getDay()];
+            const wd = fullWeekdays[new Date(year, month - 1, dayNum).getDay() % 7] || '周一';
             if (dayEvs.length === 0) return null;
 
             return (
@@ -335,6 +358,7 @@ function CalendarScheduleView({
                 {dayEvs.map(ev => (
                   <Button
                     key={'ev-' + ev.id}
+                    buttonStyle="plain"
                     action={() => dismiss({ action: 'edit', id: ev.id })}
                   >
                     <HStack alignment="center" spacing={8}>
@@ -361,14 +385,63 @@ function CalendarScheduleView({
   );
 }
 
-export function presentNativeCalendarSchedule(options: {
-  year: number;
-  month: number;
-  selectedDay: number;
-  rows: ScheduleRow[];
+export function presentNativeCalendarSchedule(options?: {
+  year?: number;
+  month?: number;
+  selectedDay?: number;
+  rows?: ScheduleRow[];
+  courses?: any[];
+  exams?: any[];
 }) {
+  const now = new Date();
+  const year = Number.isFinite(options?.year) ? (options?.year as number) : now.getFullYear();
+  const month = Number.isFinite(options?.month) ? (options?.month as number) : (now.getMonth() + 1);
+  const selectedDay = Number.isFinite(options?.selectedDay) ? (options?.selectedDay as number) : now.getDate();
+
+  let rows: ScheduleRow[] = Array.isArray(options?.rows) ? [...options.rows] : [];
+  if (!rows.length) {
+    if (Array.isArray(options?.courses)) {
+      for (const c of options.courses) {
+        if (!c) continue;
+        const start = typeof c.start === 'string' ? Date.parse(c.start) : Number(c.start);
+        const end = typeof c.end === 'string' ? Date.parse(c.end) : Number(c.end);
+        if (Number.isFinite(start)) {
+          rows.push({
+            id: c.id || ('course-' + Math.random().toString(36).slice(2)),
+            kind: 'course',
+            title: c.title || '未命名课程',
+            start,
+            end: Number.isFinite(end) ? end : start + 3600000,
+            time: (c.start && c.end && typeof c.start === 'string' && typeof c.end === 'string')
+              ? (c.start.slice(11, 16) + ' - ' + c.end.slice(11, 16)) : '',
+            location: c.location || '',
+          });
+        }
+      }
+    }
+    if (Array.isArray(options?.exams)) {
+      for (const e of options.exams) {
+        if (!e) continue;
+        const start = typeof e.start === 'string' ? Date.parse(e.start) : Number(e.start);
+        const end = typeof e.end === 'string' ? Date.parse(e.end) : Number(e.end);
+        if (Number.isFinite(start)) {
+          rows.push({
+            id: e.id || ('exam-' + Math.random().toString(36).slice(2)),
+            kind: 'exam',
+            title: e.title || '未命名考试',
+            start,
+            end: Number.isFinite(end) ? end : start + 7200000,
+            time: (e.start && e.end && typeof e.start === 'string' && typeof e.end === 'string')
+              ? (e.start.slice(11, 16) + ' - ' + e.end.slice(11, 16)) : '',
+            location: e.location || '',
+          });
+        }
+      }
+    }
+  }
+
   return Navigation.present({
-    element: <CalendarScheduleView {...options} />,
+    element: <CalendarScheduleView year={year} month={month} selectedDay={selectedDay} rows={rows} />,
     modalPresentationStyle: 'pageSheet',
   });
 }
