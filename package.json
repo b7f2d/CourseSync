@@ -4,8 +4,7 @@
   "description": "基于 Scripting 的 iOS 本地课表同步工具，支持 Apple 日历、小组件与快捷指令自动同步。",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/*.test.cjs",
-    "package": "node scripts/package.cjs"
+    "test": "node --test tests/*.test.cjs"
   },
   "keywords": [
     "scripting",

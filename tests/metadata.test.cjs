@@ -13,15 +13,12 @@ test('Scripting metadata keeps the intended display identity',()=>{
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
-  // CourseSync is the actual Scripting script identity and stable archive name.
-  assert.equal(data.name,'CourseSync');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
   assert.equal(data.icon,'calendar');
 });
 
 test('script identity is independent of the selected school',()=>{
   assert.doesNotMatch(read('script.json'),/南京财经大学|苏州科技大学|南财/);
-  assert.match(read('docs/release-notes.md'),/首次登录可选择南京财经大学或苏州科技大学/);
 });
 
 test('README distinguishes public CourseSync name from legacy installation identity',()=>{
@@ -47,12 +44,10 @@ test('README remains text-only without image markup or references',()=>{
   assert.match(readme,/沿用首次选定的学校/);
 });
 
-test('release and README describe the same stable installation path',()=>{
+test('README and engineering docs point to the main branch for remote import',()=>{
   const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
-  assert.match(read('docs/release-notes.md'),/CourseSync\.zip/);
-  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx live_activity\.tsx schedule-native\.tsx script\.json/);
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
@@ -66,17 +61,12 @@ test('error guidance does not direct users to removed menu actions',()=>{
   assert.match(guide,/主菜单「立即刷新」/);
 });
 
-test('only the Release archive is distributed',()=>{
-  assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
-    'stale root ZIP should not be tracked or distributed');
-  assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
-  const workflow=read('.github/workflows/release.yml');
-  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
-  assert.doesNotMatch(workflow,/build\.py|unsigned\.ipa/);
-  assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
-  assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
-  assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
-  assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
+test('CI validates the remote script without packaging or publishing',()=>{
+  assert.equal(fs.existsSync(path.join(root,'.github/workflows/release.yml')),false);
+  assert.equal(fs.existsSync(path.join(root,'scripts/package.sh')),false);
+  assert.equal(fs.existsSync(path.join(root,'scripts/package.cjs')),false);
+  assert.equal(Object.hasOwn(JSON.parse(read('package.json')).scripts,'package'),false);
+  assert.match(read('.github/workflows/validate.yml'),/node --test tests\/\*\.test\.cjs/);
 });
 
 test('widget distribution includes the native entry and safe cache model',()=>{
@@ -85,6 +75,5 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.match(entry,/buildWidgetModel\(/);
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
-  assert.match(read('scripts/package.sh'),/"9"/);
   assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm \} from '\.\/login-native'/);
 });
