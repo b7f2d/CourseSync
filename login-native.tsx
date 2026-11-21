@@ -254,12 +254,11 @@ export type DashboardOptions = {
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
 
-function DashboardAction({title, systemImage, action, role, iconOffsetX = 0}: {
+function DashboardAction({title, systemImage, action, role}: {
   title: string;
   systemImage: string;
   action: () => void;
   role?: 'destructive';
-  iconOffsetX?: number;
 }) {
   return <Button
     action={action}
@@ -271,7 +270,6 @@ function DashboardAction({title, systemImage, action, role, iconOffsetX = 0}: {
         systemName={systemImage}
         font="body"
         frame={{width:24,alignment:'center'}}
-        offset={{x:iconOffsetX,y:0}}
       />
       <Text>{title}</Text>
       <Spacer />
@@ -382,25 +380,23 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
         </Section>
 
         <Section>
-          {/* Align the visible edges of symbols with different intrinsic widths. */}
+          {/* The native circle variants give all three symbols the same visible outline. */}
           <DashboardAction
             title="立即刷新"
-            systemImage="arrow.clockwise"
-            iconOffsetX={-2}
+            systemImage="arrow.clockwise.circle"
             action={() => dismiss(0)}
           />
           {loadFreeRooms ? (
             <DashboardAction
               title="查询空闲教室"
-              systemImage="building.columns"
-              iconOffsetX={-1 / 3}
+              systemImage="magnifyingglass.circle"
               action={openFreeRooms}
             />
           ) : null}
           {canSignOut ? (
             <DashboardAction
               title="退出当前登录"
-              systemImage="rectangle.portrait.and.arrow.right"
+              systemImage="arrow.right.circle"
               role="destructive"
               action={() => dismiss(1)}
             />
