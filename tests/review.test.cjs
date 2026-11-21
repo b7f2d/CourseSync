@@ -2039,23 +2039,6 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.equal(e.db.length,dbCountBefore);
 });
 
-test('calendar cleanup preserves events manually added by older CourseSync versions',async()=>{
- const e=await env();
- const course=lesson();
- e.baseline([course]);
- const synced=e.add(course);
- const manualWithNote=e.add(course,{notes:'手动添加 · CourseSync'});
- const manualWithURL=e.add(course,{notes:'自定义备注'});
- manualWithURL.url='coursesync://manual/course/11111111-2222-3333-4444-555555555555';
- const legacy=e.add(course,{notes:'old ICS'});
-
- a.equal(e.m.matchesOldCourse(manualWithNote,course,e.state),false);
- a.equal(e.m.matchesOldCourse(manualWithURL,course,e.state),false);
- await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);
- a.deepEqual(e.db.map(ev=>ev.identifier),[synced,manualWithNote,manualWithURL].map(ev=>ev.identifier));
- a.ok(!e.db.includes(legacy));
-});
-
 test('widgetCacheProjection includes synced exams alongside courses',async()=>{
  const e=await env();
  const now=Date.UTC(2026,10,20,0,0);

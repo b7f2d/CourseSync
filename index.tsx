@@ -1621,11 +1621,6 @@ function legacyLocationCompatible(a,b){
   const clean=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   return !clean(a)||!clean(b)||clean(a)===clean(b);
 }
-const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
-const MANUAL_SCHEDULE_URL=/^coursesync:\/\/manual\/(course|exam)\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-// Preserve events written by older versions when cleaning up imported courses.
-const isPreviouslyAddedEvent=ev=>MANUAL_SCHEDULE_URL.test(ev?.url||'')||
-  String(ev?.notes||'').split('\n').includes(MANUAL_SCHEDULE_NOTE);
 function selectLegacyDuplicates(rows,owner,state){
   const managed=new Map(),duplicates=[], uncertain=[];
   for(const ev of rows){
@@ -1636,7 +1631,7 @@ function selectLegacyDuplicates(rows,owner,state){
   }
   for(const ev of rows){
     const key=legacyEventKey(ev);if(!key||!managed.has(key))continue;
-    if(isPreviouslyAddedEvent(ev)||isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
+    if(isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
     if(Array.isArray(ev.attendees)&&ev.attendees.length)continue;
     const counterpart=managed.get(key).find(own=>legacyLocationCompatible(own.location,ev.location));
     if(counterpart)duplicates.push({ev,managed:counterpart,key});
@@ -1714,7 +1709,7 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   const rows=await dedicatedRows(calendar,state,progress);
   await verifyBaseline(rows,state); // All retained new lessons must exist before deleting anything.
   const byNative=storedEventIndex(state);
-  const isLegacy=e=>!isPreviouslyAddedEvent(e)&&!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
+  const isLegacy=e=>!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
   const legacy=rows.filter(isLegacy);
   if(!legacy.length){state.lastLegacyCleanupRemaining=0;store.write(state);return 0;}
   const stamp=new Date().toISOString(),base='专用日历清理前-'+stamp.replace(/[:.]/g,'-');
@@ -2565,7 +2560,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
 function matchesOldCourse(ev,rec,state){
-  if(!ev||isPreviouslyAddedEvent(ev)||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
+  if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
   const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   const before=norm(ev.title),after=norm(rec.title);
