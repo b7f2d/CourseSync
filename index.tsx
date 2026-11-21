@@ -1,10 +1,10 @@
 // @ts-nocheck
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
-import { presentNativeConfirmation, presentNativeDashboard } from './login-native';
+import { presentNativeDashboard } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
-import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';
+import { presentScheduleEditor, presentNativeCalendarSchedule } from './schedule-native';
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
@@ -388,11 +388,6 @@ async function prepareManualRefresh(state){
   if(!response)return null;
   const school=schoolById(response.schoolId);
   assert(school,'SCHOOL_UNSUPPORTED');
-  if(response.kind==='freeRooms'){
-    assert(school.id==='nufe','SCHOOL_UNSUPPORTED');
-    activateSelectedSchool(school.id);
-    return {kind:'freeRooms',schoolId:'nufe',username:response.username||null,password:response.password||null};
-  }
   assert(response.kind==='reuse'||response.kind==='credentials','SCHOOL_UNSUPPORTED');
   if(response.kind==='reuse')assert(school.id===loadSelectedSchool(),'SCHOOL_UNSUPPORTED');
   else assert(typeof response.username==='string'&&typeof response.password==='string'&&
@@ -819,7 +814,10 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
     store.check();return [...owned.values()];
   };
   const rows=await read();
-  if(!rows.length&&!target.size)return;
+  if(!rows.length&&!target.size){
+    if(state.exams?.length){state.exams=[];store.write(state);}
+    return;
+  }
   const current=new Map();
   for(const ev of rows){
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
@@ -855,7 +853,15 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
     final.every(ev=>target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
   // Save the identifier mapping before replacing recoverable markers with readable notes.
   for(const ev of final)index[ev.identifier]=keyOf(ev);
-  state.examIndex=index;store.write(state);
+  state.examIndex=index;
+  state.exams=[...target.values()].map((exam,idx)=>({
+    id:'exam-'+exam.start+'-'+idx,
+    title:exam.title,
+    start:new Date(exam.start).toISOString(),
+    end:new Date(exam.stop).toISOString(),
+    location:exam.location||''
+  }));
+  store.write(state);
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
     if(ev.notes===expectedNotes)continue;
@@ -897,16 +903,9 @@ async function credentialForm({title='CourseSync 登录'}={}){
       const native=await presentNativeCredentialForm(title);
       if(!native)fail('CANCELLED');
       if(native.changeSchool)fail('CHANGE_SCHOOL');
-      if(native.kind==='freeRooms'){
-        const err=new Error('FREE_ROOMS');
-        err.code='FREE_ROOMS';
-        err.username=native.username||'';
-        err.password=native.password||'';
-        throw err;
-      }
       return native;
     }catch(e){
-      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL'||e?.code==='FREE_ROOMS')throw e;
+      if(e?.code==='CANCELLED'||e?.code==='CHANGE_SCHOOL')throw e;
       if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
@@ -1781,6 +1780,22 @@ function widgetCacheProjection(state,now=Date.now()){
         start:e.start,end:e.end
       });
       if(courses.length>400)return null; // Never silently truncate classes.
+    }
+  }
+  if(Array.isArray(state.exams)){
+    for(const e of state.exams){
+      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
+      const start=Date.parse(e.start),end=Date.parse(e.end);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
+         end<earliest||start>latest)continue;
+      courses.push({
+        id:String(e.id||'').slice(0,100),
+        title:e.title.slice(0,90),
+        location:String(e.location||'').slice(0,65),
+        teacher:'',
+        start:e.start,end:e.end
+      });
+      if(courses.length>400)return null;
     }
   }
   return {version:1,lastCheck:state.lastCheck,events:courses};
@@ -3138,11 +3153,15 @@ async function manageManualSchedules(store){
         end:initialStart+3600000,
       });
       if(result?.action==='save'){
-        await changeManualSchedule(store,kind,calendar.identifier,result);
-        year=new Date(result.start).getFullYear();
-        month=new Date(result.start).getMonth()+1;
-        selectedDay=new Date(result.start).getDate();
-        await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
+        try{
+          await changeManualSchedule(store,kind,calendar.identifier,result);
+          year=new Date(result.start).getFullYear();
+          month=new Date(result.start).getMonth()+1;
+          selectedDay=new Date(result.start).getDate();
+          await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
+        }catch(error){
+          await notice('添加失败',errorMessage(error,store.read()));
+        }
       }
       continue;
     }
@@ -3170,13 +3189,21 @@ async function manageManualSchedules(store){
         });
         if(result?.action==='delete'){
           if(await confirm('删除日程','将从日历中删除「'+original.title+'」。')){
-            await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
+            try{
+              await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
+            }catch(error){
+              await notice('删除失败',errorMessage(error,store.read()));
+            }
           }
         }else if(result?.action==='save'){
-          await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
-          year=new Date(result.start).getFullYear();
-          month=new Date(result.start).getMonth()+1;
-          selectedDay=new Date(result.start).getDate();
+          try{
+            await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
+            year=new Date(result.start).getFullYear();
+            month=new Date(result.start).getMonth()+1;
+            selectedDay=new Date(result.start).getDate();
+          }catch(error){
+            await notice('保存失败',errorMessage(error,store.read()));
+          }
         }
       }
     }
@@ -3200,8 +3227,8 @@ async function run() {
       state=store.read();
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
-      const canFreeRooms=activeSchoolId==='nufe';
       const canSignOut=canOfferSignOut(state);
+      const canFreeRooms=activeSchoolId==='nufe'&&!state.signedOut&&canSignOut;
       const schoolName=schoolById(activeSchoolId)?.name||'高校';
       const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课程和考试保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课程和考试保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课程和考试日历。';
 
@@ -3242,15 +3269,30 @@ async function run() {
           let progress=null;
           try{
             if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
-              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
+              progress=createNativeProgressView('正在查询空闲教室');
               progress.show();
               await new Promise(resolve=>Timer.schedule(100,false,resolve));
             }
           }catch(_){progress=null;}
+          let waiting=false;
+          const freeRoomStage=msg=>{
+            if(!progress)return;
+            const label=String(msg||'');
+            if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
+              waiting=true;
+              return progress.pause?.();
+            }
+            if(waiting&&/认证完成后读取课表页面|正在查询空闲教室/.test(label)){
+              waiting=false;
+              progress.resume?.();
+            }
+            if(/正在连接教务系统/.test(label))progress.update?.(0.35);
+            else if(/正在查询空闲教室/.test(label))progress.update?.(0.75);
+          };
           try{
             const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-            await queryAndShowFreeRooms(http,interactive,()=>{},null,Date.now(),progress);
+            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{},freeRoomStage);
+            await queryAndShowFreeRooms(http,interactive,freeRoomStage,null,Date.now(),progress);
           }finally{
             if(progress)await progress.finish();
           }
@@ -3294,24 +3336,6 @@ async function run() {
         const previousSchool=activeSchoolId;
         manualAuth=await prepareManualRefresh(state);
         if(!manualAuth)return;
-        if(manualAuth.kind==='freeRooms'){
-          let progress=null;
-          try{
-            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
-              progress=createNativeProgressView('正在查询空闲教室','查询完成后自动展示');
-              progress.show();
-              await new Promise(resolve=>Timer.schedule(100,false,resolve));
-            }
-          }catch(_){progress=null;}
-          try{
-            const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{});
-            await queryAndShowFreeRooms(http,interactive,()=>{},manualAuth,Date.now(),progress);
-          }finally{
-            if(progress)await progress.finish();
-          }
-          return;
-        }
         if(previousSchool!==activeSchoolId){
           store.release();locked=false;state=null;
           store=new Store();
@@ -3325,12 +3349,6 @@ async function run() {
           manualAuth={kind:'credentials',...credentials};
         }catch(error){
           if(error.code==='CANCELLED')return;
-          if(error.code==='FREE_ROOMS'){
-            const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
-            await queryAndShowFreeRooms(http,interactive,stage,{kind:'credentials',username:error.username,password:error.password});
-            return;
-          }
           if(error.code==='CHANGE_SCHOOL'){
             try{
               if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
@@ -3339,12 +3357,6 @@ async function run() {
             const prev=activeSchoolId;
             manualAuth=await prepareManualRefresh(state);
             if(!manualAuth)return;
-            if(manualAuth.kind==='freeRooms'){
-              const jar=readCookieJar();
-              const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>store.check(),stage);
-              await queryAndShowFreeRooms(http,interactive,stage,manualAuth);
-              return;
-            }
             if(prev!==activeSchoolId){
               store.release();locked=false;state=null;
               store=new Store();

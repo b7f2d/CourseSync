@@ -72,14 +72,6 @@ function LoginView({ title }: { title: string }) {
             dismiss({ changeSchool: true });
           }}
         />
-        {title.includes('南京财经大学') ? (
-          <Button
-            title="查询空闲教室"
-            action={() => {
-              dismiss({ kind: 'freeRooms', username: account, password });
-            }}
-          />
-        ) : null}
       </Section>
     </List>
   </NavigationStack>;
@@ -92,7 +84,6 @@ export async function presentNativeCredentialForm(title = 'CourseSync 登录') {
   });
   if (!result || typeof result !== 'object') return null;
   if (result.changeSchool === true) return { changeSchool: true };
-  if (result.kind === 'freeRooms') return { kind: 'freeRooms', username: result.username || '', password: result.password || '' };
   const username = typeof result.username === 'string' ? result.username.trim() : '';
   const password = typeof result.password === 'string' ? result.password : '';
   if (!username || username.length > 100 || !password || password.length > 512) return null;
@@ -165,8 +156,7 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
 export type NativeSchoolChoice = {id:string;name:string};
 type RefreshFormOutcome=
   | {kind:'credentials';schoolId:string;username:string;password:string}
-  | {kind:'reuse';schoolId:string}
-  | {kind:'freeRooms';schoolId:string;username?:string;password?:string};
+  | {kind:'reuse';schoolId:string};
 
 function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
   schools:NativeSchoolChoice[];initialSchoolId:string;allowReuse:boolean;
@@ -211,8 +201,6 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
         <Section>
           <Button title="下一步：账号密码" disabled={!validSchool}
             action={()=>{if(validSchool)setStep('account');}}/>
-          {validSchool&&schoolId==='nufe'?<Button title="查询空闲教室"
-            action={()=>{dismiss({kind:'freeRooms',schoolId});}}/>:null}
         </Section>
       </List>:
       <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
@@ -248,8 +236,6 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           {allowReuse&&schoolId===initialSchoolId?<Button title="使用现有登录信息继续"
             disabled={!validSchool}
             action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
-          {validSchool&&schoolId==='nufe'?<Button title="查询空闲教室"
-            action={()=>{dismiss({kind:'freeRooms',schoolId,username:account,password});}}/>:null}
         </Section>
       </List>}
   </NavigationStack>;
@@ -262,9 +248,8 @@ export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
       allowReuse={allowReuse}/>,
     modalPresentationStyle:'pageSheet'
   });
-  if(!result||!['credentials','reuse','freeRooms'].includes(result.kind))return null;
+  if(!result||!['credentials','reuse'].includes(result.kind))return null;
   if(!schools.some(s=>s.id===result.schoolId))return null;
-  if(result.kind==='freeRooms')return {kind:'freeRooms',schoolId:result.schoolId,username:result.username||'',password:result.password||''};
   if(result.kind==='reuse')return allowReuse&&result.schoolId===initialSchoolId?{kind:'reuse',schoolId:result.schoolId}:null;
   const username=typeof result.username==='string'?result.username.trim():'';
   const password=typeof result.password==='string'?result.password:'';
@@ -540,23 +525,5 @@ export async function presentNativeCalendarManager(options: CalendarManageOption
   });
   if (!result || typeof result !== 'object') return null;
   return result as CalendarManageResult;
-}
-
-export async function presentNativeConfirmation(options: {title: string; message?: string; cancelLabel?: string; confirmLabel?: string}) {
-  const result = await Navigation.present({
-    element: (
-      <NavigationStack>
-        <List navigationTitle={options.title} navigationBarTitleDisplayMode="inline">
-          {options.message ? <Section><Text>{options.message}</Text></Section> : null}
-          <Section>
-            <Button title={options.confirmLabel || '确定'} action={() => Navigation.dismiss(true)} />
-            <Button title={options.cancelLabel || '取消'} role="cancel" action={() => Navigation.dismiss(false)} />
-          </Section>
-        </List>
-      </NavigationStack>
-    ),
-    modalPresentationStyle: 'pageSheet'
-  });
-  return !!result;
 }
 

@@ -567,14 +567,3 @@ export function presentNativeCalendarSchedule(options?: {
     modalPresentationStyle: 'pageSheet',
   });
 }
-
-export function presentScheduleList(year: number, rows: ScheduleRow[]) {
-  const currentMonth = new Date().getMonth() + 1;
-  const currentDay = new Date().getDate();
-  return presentNativeCalendarSchedule({
-    year,
-    month: currentMonth,
-    selectedDay: currentDay,
-    rows,
-  });
-}

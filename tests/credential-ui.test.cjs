@@ -133,14 +133,15 @@ test('native secure input preserves exact secret without trimming and supports u
  assert.match(native,/isSecure\?512:120/);
 });
 
-test('NUFE provides free classroom query button in whitelist selection and credential views without calendar sync',()=>{
+test('NUFE provides free classroom query button in dashboard only, not in unauthenticated login/setup views',()=>{
  assert.match(native,/title="查询空闲教室"/);
- assert.match(native,/kind:'freeRooms'/);
+ const loginSection=native.slice(0,native.indexOf('function DashboardView('));
+ assert.doesNotMatch(loginSection,/查询空闲教室|freeRooms/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryAndShowFreeRooms/);
- assert.match(index,/manualAuth\.kind==='freeRooms'/);
+ assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
 test('native dashboard presents an app-like interface with rich background and card styling',()=>{

@@ -4,14 +4,14 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
    'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
- .replace("import { presentNativeConfirmation, presentNativeDashboard } from './login-native';",
-   'const presentNativeConfirmation=(...args)=>true;const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);')
+ .replace("import { presentNativeDashboard } from './login-native';",
+   'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
    'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";')
- .replace("import { presentScheduleEditor, presentNativeCalendarSchedule, presentScheduleList } from './schedule-native';",
-   'const presentScheduleEditor=(...args)=>(globalThis.__scheduleEditor?globalThis.__scheduleEditor(...args):null);const presentNativeCalendarSchedule=(...args)=>(globalThis.__calendarScheduleMock?globalThis.__calendarScheduleMock(...args):null);const presentScheduleList=(...args)=>(globalThis.__scheduleList?globalThis.__scheduleList(...args):null);');
+ .replace("import { presentScheduleEditor, presentNativeCalendarSchedule } from './schedule-native';",
+   'const presentScheduleEditor=(...args)=>(globalThis.__scheduleEditor?globalThis.__scheduleEditor(...args):null);const presentNativeCalendarSchedule=(...args)=>(globalThis.__calendarScheduleMock?globalThis.__calendarScheduleMock(...args):null);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -1228,7 +1228,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1277,7 +1277,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -2091,4 +2091,18 @@ test('user can add manual course and manual exam via calendar view',async()=>{
  await e.m.manageManualSchedules(e.store);
  a.ok(e.db.some(ev=>ev.title==='自定义课程'&&ev.calendar.identifier===e.calendar.identifier));
  a.ok(e.db.some(ev=>ev.title==='自定义考试'&&ev.calendar.identifier===e.other.identifier));
+});
+
+test('widgetCacheProjection includes synced exams alongside courses',async()=>{
+ const e=await env();
+ const now=Date.UTC(2026,10,20,0,0);
+ const courseStart='2026-11-21T00:00:00.000Z',courseEnd='2026-11-21T01:40:00.000Z';
+ const examStart='2026-11-25T01:00:00.000Z',examEnd='2026-11-25T03:00:00.000Z';
+ e.state.lastCheck='2026-11-20T00:00:00.000Z';
+ e.state.semesters['161']={events:[lesson({start:courseStart,end:courseEnd})]};
+ e.state.exams=[{id:'exam-1',title:'📝 线性代数',start:examStart,end:examEnd,location:'博远楼 202'}];
+ const payload=e.m.widgetCacheProjection(e.state,now);
+ a.ok(payload);
+ a.equal(payload.events.length,2);
+ a.ok(payload.events.some(ev=>ev.title==='📝 线性代数'&&ev.location==='博远楼 202'));
 });
