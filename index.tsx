@@ -2258,15 +2258,19 @@ function createProgress(state,store,interactive){
           // No Activity is loaded until the actual background transition.
           void acquireKeeper();
         }else if(next==='background'){
+          // Re-acquire the keeper if a previous foreground transition released it.
+          // Only the first actual background transition registers an Activity.
+          const keeping=acquireKeeper();
           if(backgroundTriggered)return;
           backgroundTriggered=true;
           backgroundStart=(async()=>{
-            await acquireKeeper();
+            await keeping;
             try{await startBackgroundActivity();}
             catch(_){console.error('[CourseSync] background Activity startup failed');}
           })();
-        }else if(next==='active'&&!backgroundTriggered){
-          // A transient interruption should not keep audio alive.
+        }else if(next==='active'){
+          // Back in the foreground: release our audio request without ending
+          // an Activity that still represents the in-progress refresh.
           void releaseKeeper().then(()=>{keeperRequested=false;});
         }
       };
