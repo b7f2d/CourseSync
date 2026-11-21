@@ -2829,8 +2829,9 @@ function selectTermIds(info){
   return [info.current,...available.filter(sid=>sid!==info.current).sort((a,b)=>a-b)];
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
-  // Check every term in both launch modes. The host may still impose a shorter runtime.
-  const begun=Date.now(),limit=15*60000;
+  // Intent extensions may have a much shorter watchdog than foreground runs.
+  // Abort at a checkpoint instead of continuing a long all-semester refresh.
+  const begun=Date.now(),limit=interactive?15*60000:24000;
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
