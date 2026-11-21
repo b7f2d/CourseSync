@@ -64,7 +64,8 @@ if(globalThis.__COURSESYNC_TEST__){
   ({createNativeProgressView}=await import('./progress-native'));
   // Foreground refreshes never register a Live Activity.
 }
-// Shortcut intent loads the Activity renderer only when background progress starts.
+// The renderer is loaded only after an interactive App refresh enters the background.
+// Intent/scheduled paths never load or access Live Activity or BackgroundKeeper.
 
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
 let __exitAttempted=false;
@@ -2120,7 +2121,31 @@ const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
 function createProgress(state,store,interactive){
   let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
   let phase='connect',updates=Promise.resolve(),finishing;
-  const liveActivity=!interactive?hostAPI('LiveActivity'):null;
+  // Never even read LiveActivity in an Intent/scheduled execution context.
+  const liveActivity=interactive?hostAPI('LiveActivity'):null;
+  const sceneEvents=interactive?hostAPI('AppEvents')?.scenePhase:null;
+  const keeper=interactive?hostAPI('BackgroundKeeper'):null;
+  let sceneListener=null,backgroundStart=Promise.resolve(),backgroundTriggered=false;
+  let keeperTask=Promise.resolve(false),keeperOwned=false,keeperRequested=false;
+  const acquireKeeper=()=>{
+    if(!interactive||closed||keeperRequested)return keeperTask;
+    keeperRequested=true;
+    keeperTask=(async()=>{
+      try{
+        const granted=await keeper?.keepAlive?.();
+        keeperOwned=granted===true;
+        return keeperOwned;
+      }catch(_){console.error('[CourseSync] background keep-alive unavailable');return false;}
+    })();
+    return keeperTask;
+  };
+  const releaseKeeper=async()=>{
+    try{await keeperTask;}catch(_){}
+    if(!keeperOwned)return;
+    keeperOwned=false;
+    try{await keeper?.stopKeepAlive?.();}
+    catch(_){console.error('[CourseSync] background keep-alive release failed');}
+  };
   const activityCall=async work=>{
     try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
     catch(_){return false;}
@@ -2191,31 +2216,17 @@ function createProgress(state,store,interactive){
     setPhase('connect');
     ui?.resume();
   };
-  stage.start=async()=>{
-    if(started||closed)return;
-    started=true;
-    // Only the run holding the sync lock reaches this point. Recover our own
-    // previous activity if the app was interrupted before it could end it.
-    if(interactive){
-      try{
-        if(typeof hostAPI('Navigation')?.present==='function'){
-          ui=createNativeProgressView();
-          ui.show();
-          await new Promise(resolve=>Timer.schedule(100,false,resolve));
-        }
-      }catch(_){ui=null;}
-      return;
-    }
-    // Defer loading the renderer until a real background sync owns the lock.
-    // Failure to import/register is a nonfatal display issue, not a sync error.
+  const startBackgroundActivity=async()=>{
+    if(!interactive||closed||!backgroundTriggered)return;
+    // Live Activity registration is intentionally deferred until the App
+    // actually moves into the background; never used by Intent or scheduled runs.
     if(!globalThis.__COURSESYNC_TEST__){
       try{
         const renderer=await import('./live_activity');
         CourseRefreshActivity=renderer.CourseRefreshActivity;
-      }catch(_){console.error('[CourseSync] Live Activity renderer unavailable');}
+      }catch(_){console.error('[CourseSync] Live Activity renderer unavailable');return;}
     }
-    // A renderer failure still allows recovery of any previous stored activity.
-    if(!await activityCall(dismissPreviousActivity))return;
+    if(closed||!await activityCall(dismissPreviousActivity))return;
     if(closed||typeof CourseRefreshActivity!=='function'||
        !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
     await activityCall(async()=>{
@@ -2223,8 +2234,6 @@ function createProgress(state,store,interactive){
       const initialPhase=phase;
       if(!await candidate.start({phase:initialPhase},{staleDate:Date.now()+5*60000}))return;
       if(closed){
-        // A native start can complete after the JavaScript timeout. Never
-        // attach that activity to a refresh that has already finished.
         if(!await endActivity(candidate,'finish')){
           try{
             if(!HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID))rememberActivity(candidate.activityId);
@@ -2237,24 +2246,71 @@ function createProgress(state,store,interactive){
       if(phase!==initialPhase)updatePhase(phase);
     });
   };
+  stage.start=async()=>{
+    if(started||closed)return;
+    started=true;
+    if(!interactive)return; // Intent: no AppEvents, keeper, Activity, or UI.
+    if(typeof sceneEvents?.addListener==='function'){
+      sceneListener=next=>{
+        if(closed)return;
+        if(next==='inactive'){
+          // Scripting recommends requesting keep-alive before suspension.
+          // No Activity is loaded until the actual background transition.
+          void acquireKeeper();
+        }else if(next==='background'){
+          if(backgroundTriggered)return;
+          backgroundTriggered=true;
+          backgroundStart=(async()=>{
+            await acquireKeeper();
+            try{await startBackgroundActivity();}
+            catch(_){console.error('[CourseSync] background Activity startup failed');}
+          })();
+        }else if(next==='active'&&!backgroundTriggered){
+          // A transient interruption should not keep audio alive.
+          void releaseKeeper().then(()=>{keeperRequested=false;});
+        }
+      };
+      try{sceneEvents.addListener(sceneListener);}
+      catch(_){sceneListener=null;console.error('[CourseSync] App lifecycle monitoring unavailable');}
+    }
+    try{
+      if(typeof hostAPI('Navigation')?.present==='function'){
+        ui=createNativeProgressView();
+        ui.show();
+        await new Promise(resolve=>Timer.schedule(100,false,resolve));
+      }
+    }catch(_){ui=null;}
+  };
   stage.finish=(success=false)=>{
     if(finishing)return finishing;
     closed=true;
     finishing=(async()=>{
-      try{ui?.finish();}catch(_){}
-      if(!activity)return;
       try{
-        await updates;
-        const finalPhase=success?'complete':'finish';
-        if(success){
-          const shown=await activityCall(async()=>
-            (await activity.update({phase:finalPhase}))!==false);
-          if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
+        if(sceneListener){
+          try{sceneEvents.removeListener(sceneListener);}
+          catch(_){console.error('[CourseSync] App lifecycle listener cleanup failed');}
+          sceneListener=null;
         }
-        if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
-      }catch(_){
-        // An Activity error may never veto Script.complete()/Intent.text().
-        console.error('[CourseSync] Live Activity finish failed');
+        try{ui?.finish();}catch(_){}
+        // A background event may have arrived during the last network request.
+        // Let its startup settle before deciding whether an Activity needs ending.
+        try{await backgroundStart;}catch(_){}
+        if(!activity)return;
+        try{
+          await updates;
+          const finalPhase=success?'complete':'finish';
+          if(success){
+            const shown=await activityCall(async()=>
+              (await activity.update({phase:finalPhase}))!==false);
+            if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
+          }
+          if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
+        }catch(_){
+          console.error('[CourseSync] Live Activity finish failed');
+        }
+      }finally{
+        // Only this script's keeper request is released; other owners remain.
+        await releaseKeeper();
       }
     })();
     return finishing;
