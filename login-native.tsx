@@ -216,32 +216,29 @@ type FreeRoomResult =
 type FreeRoomPage = FreeRoomResult | {kind: 'loading'; progress: number};
 
 function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
-  if (page.kind === 'loading') {
-    return <VStack
-      navigationTitle="正在查询空闲教室"
-      navigationBarTitleDisplayMode="inline"
-      frame={{maxWidth:'infinity',maxHeight:'infinity'}}
-      padding={24}
-    >
-      <Spacer />
-      <NativeProgressCard value={page.progress} />
-      <Spacer />
-    </VStack>;
-  }
-  return <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
-    {page.kind === 'error' ? (
+  return <List
+    navigationTitle={page.kind === 'loading' ? '正在查询空闲教室' : '空闲教室'}
+    navigationBarTitleDisplayMode="inline"
+    listStyle="insetGroup"
+  >
+    {page.kind === 'loading' ? (
       <Section>
-        <Text foregroundStyle="secondaryLabel">{page.message}</Text>
-        <Button title="重试" action={retry} />
+        <VStack alignment="center" frame={{maxWidth:'infinity'}} padding={{top:8,bottom:8}}>
+          <NativeProgressCard value={page.progress} />
+        </VStack>
+      </Section>
+    ) : page.kind === 'error' ? (
+      <Section>
+        <Text font="body" foregroundStyle="secondaryLabel">{page.message}</Text>
+        <Button title="重试" systemImage="arrow.clockwise" action={retry} />
       </Section>
     ) : (
-      <Section header={<Text>今天 {page.date}</Text>}>
+      <Section header={<Text font="headline">今天 · {page.date}</Text>}>
         {page.rooms.map(({period, room}) => (
-          <HStack key={period} alignment="center" spacing={12}>
-            <Text foregroundStyle="secondaryLabel">{period}</Text>
-            <Spacer />
-            <Text>{room}</Text>
-          </HStack>
+          <VStack key={period} alignment="leading" spacing={3} padding={{top:6,bottom:6}}>
+            <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
+            <Text font="title3" fontWeight="semibold">{room}</Text>
+          </VStack>
         ))}
       </Section>
     )}
@@ -300,7 +297,8 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
     <NavigationStack>
       <List
         navigationTitle="CourseSync"
-        navigationBarTitleDisplayMode="large"
+        navigationBarTitleDisplayMode="inline"
+        listStyle="insetGroup"
         navigationDestination={{
           isPresented: freeRoomPage !== null,
           onChanged: visible => {
@@ -316,49 +314,40 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
         }}
       >
         <Section>
-          <VStack alignment="leading" spacing={12} padding={{ top: 6, bottom: 6 }}>
-            <HStack alignment="center" spacing={12}>
+          <VStack alignment="leading" spacing={10} padding={{ top: 6, bottom: 6 }}>
+            <HStack alignment="center" spacing={10}>
               <VStack
                 alignment="center"
-                frame={{ width: 44, height: 44 }}
+                frame={{ width: 38, height: 38 }}
                 modifiers={modifiers().background({
                   style: { light: '#2563EB', dark: '#1D4ED8' },
                   shape: { type: 'rect', cornerRadius: 10 }
                 })}
               >
-                <Image systemName="calendar" font={20} foregroundStyle="#FFFFFF" />
+                <Image systemName="calendar" font={18} foregroundStyle="#FFFFFF" />
               </VStack>
-              <HStack spacing={6} alignment="center">
-                <Text font="headline" fontWeight="bold">{schoolName}</Text>
-                {statusBadge ? (
-                  <Text font="caption2" fontWeight="semibold" foregroundStyle={statusColor}>
-                    {statusBadge}
-                  </Text>
-                ) : null}
-              </HStack>
+              <Text font="title2" fontWeight="bold">{schoolName}</Text>
+              <Spacer />
+              {statusBadge ? (
+                <Text font="footnote" fontWeight="semibold" foregroundStyle={statusColor}>
+                  {statusBadge}
+                </Text>
+              ) : null}
             </HStack>
 
-            <VStack
-              alignment="leading"
-              spacing={6}
-              padding={12}
-              modifiers={modifiers().background({
-                style: { light: '#F1F5F9', dark: '#1E293B' },
-                shape: { type: 'rect', cornerRadius: 10 }
-              })}
-            >
-              <HStack alignment="center">
-                <Text font="caption1" foregroundStyle="secondaryLabel">日历</Text>
+            <VStack alignment="leading" spacing={6}>
+              <HStack alignment="center" spacing={10}>
+                <Text font="subheadline" foregroundStyle="secondaryLabel">日历</Text>
                 <Spacer />
-                <Text font="subheadline" fontWeight="medium">{boundCalendarsLabel}</Text>
+                <Text font="subheadline" fontWeight="medium" multilineTextAlignment="trailing">{boundCalendarsLabel}</Text>
               </HStack>
-              <HStack alignment="center">
-                <Text font="caption1" foregroundStyle="secondaryLabel">上次刷新</Text>
+              <HStack alignment="center" spacing={10}>
+                <Text font="subheadline" foregroundStyle="secondaryLabel">上次刷新</Text>
                 <Spacer />
-                <Text font="caption1" foregroundStyle="secondaryLabel">{lastTime}</Text>
+                <Text font="subheadline" fontWeight="medium">{lastTime}</Text>
               </HStack>
               {statusDetail ? (
-                <Text font="caption1" foregroundStyle="secondaryLabel">
+                <Text font="subheadline" foregroundStyle="secondaryLabel">
                   {statusDetail}
                 </Text>
               ) : null}
@@ -369,17 +358,20 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
         <Section>
           <Button
             title="立即刷新"
+            systemImage="arrow.clockwise"
             action={() => dismiss(0)}
           />
           {loadFreeRooms ? (
             <Button
               title="查询空闲教室"
+              systemImage="building.columns"
               action={openFreeRooms}
             />
           ) : null}
           {canSignOut ? (
             <Button
               title="退出当前登录"
+              systemImage="rectangle.portrait.and.arrow.right"
               role="destructive"
               action={() => dismiss(1)}
             />
