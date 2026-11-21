@@ -46,8 +46,6 @@ const __webviews=new Set();
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
 let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
 let presentNativeDashboard,presentNativeCalendarManager,createNativeProgressView;
-let CourseRefreshActivity=null;
-const COURSE_REFRESH_ACTIVITY_NAME='CourseSyncRefresh';
 // Test-only injections simulate the index host without invoking native modules.
 if(globalThis.__COURSESYNC_TEST__){
   presentNativeCredentialForm=(...a)=>globalThis.__nativeCredentialMock(...a);
@@ -56,16 +54,12 @@ if(globalThis.__COURSESYNC_TEST__){
   presentNativeDashboard=(...a)=>globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...a):-1;
   presentNativeCalendarManager=(...a)=>globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...a):null;
   createNativeProgressView=(...a)=>globalThis.__progressUIFactory(...a);
-  CourseRefreshActivity=()=>globalThis.__liveActivityFactory();
 }else if(config.runsInApp){
   const native=await import('./login-native');
   ({presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm,
     presentNativeDashboard,presentNativeCalendarManager}=native);
   ({createNativeProgressView}=await import('./progress-native'));
-  // Foreground refreshes never register a Live Activity.
 }
-// The renderer is loaded only after an interactive App refresh enters the background.
-// Intent/scheduled paths never load or access Live Activity or BackgroundKeeper.
 
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
 let __exitAttempted=false;
@@ -2115,81 +2109,14 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// The app uses a progress sheet. Shortcut refreshes request a Live Activity
-// when Scripting and iOS allow it. UI errors must not fail synchronization.
-const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
+// Foreground refreshes use a native progress sheet. Intent/scheduled refreshes
+// stay silent and return their result through Intent.text; neither mode keeps
+// an activity alive after leaving the App.
 function createProgress(state,store,interactive){
-  let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
-  let phase='connect',updates=Promise.resolve(),finishing;
-  // Never even read LiveActivity in an Intent/scheduled execution context.
-  const liveActivity=interactive?hostAPI('LiveActivity'):null;
-  const sceneEvents=interactive?hostAPI('AppEvents')?.scenePhase:null;
-  const keeper=interactive?hostAPI('BackgroundKeeper'):null;
-  let sceneListener=null,backgroundStart=Promise.resolve(),backgroundTriggered=false;
-  let keeperTask=Promise.resolve(false),keeperOwned=false,keeperRequested=false;
-  const acquireKeeper=()=>{
-    if(!interactive||closed||keeperRequested)return keeperTask;
-    keeperRequested=true;
-    keeperTask=(async()=>{
-      try{
-        const granted=await keeper?.keepAlive?.();
-        keeperOwned=granted===true;
-        return keeperOwned;
-      }catch(_){console.error('[CourseSync] background keep-alive unavailable');return false;}
-    })();
-    return keeperTask;
-  };
-  const releaseKeeper=async()=>{
-    try{await keeperTask;}catch(_){}
-    if(!keeperOwned)return;
-    keeperOwned=false;
-    try{await keeper?.stopKeepAlive?.();}
-    catch(_){console.error('[CourseSync] background keep-alive release failed');}
-  };
-  const activityCall=async work=>{
-    try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
-    catch(_){return false;}
-  };
-  const rememberActivity=id=>{
-    if(!id)return;
-    try{HostStorage?.set?.(COURSE_REFRESH_ACTIVITY_ID,id);}catch(_){}
-  };
-  const endActivity=async(candidate,finalPhase)=>{
-    const ended=await activityCall(async()=>
-      (await candidate.end({phase:finalPhase},{dismissTimeInterval:0}))!==false);
-    if(ended&&candidate.activityId){
-      try{
-        if(HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID)===candidate.activityId)
-          HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
-      }catch(_){}
-    }
-    return ended;
-  };
-  const dismissPreviousActivity=async()=>{
-    const id=HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID);
-    if(typeof id!=='string'||!id||typeof liveActivity?.from!=='function')return true;
-    const previous=await liveActivity.from(id,COURSE_REFRESH_ACTIVITY_NAME);
-    if(previous){
-      const status=await previous.getActivityState();
-      if(status==='active'||status==='stale')return endActivity(previous,'finish');
-    }
-    if(HostStorage.get(COURSE_REFRESH_ACTIVITY_ID)===id)HostStorage.set(COURSE_REFRESH_ACTIVITY_ID,'');
-    return true;
-  };
-  const updatePhase=next=>{
-    if(!activity)return;
-    updates=updates.then(()=>{
-      if(!closed&&next===phase)return activityCall(()=>activity.update({phase:next}));
-    });
-  };
-  const setPhase=next=>{
-    if(next===phase)return;
-    phase=next;
-    updatePhase(next);
-  };
+  let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
   const stage=message=>{
     stampStage(state,store,message);
-    if(closed||!started)return;
+    if(closed||!started||!interactive)return;
     const label=String(message||'');
     if(/检查目标日历/.test(label))ui?.update?.(0.1);
     else if(/连接教务系统|尝试读取教务课表入口|学校单点登录跳转|解析学校登录表单|注册设备指纹|提交学校认证请求/.test(label))ui?.update?.(0.25);
@@ -2199,84 +2126,20 @@ function createProgress(state,store,interactive){
     else if(/完成本次同步/.test(label))ui?.update?.(1);
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
-      setPhase('verify');
       return ui?.pause();
     }
     if(waitingForVerification){
       if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))return;
       waitingForVerification=false;
-      setPhase('connect');
       ui?.resume();
     }
-    if(/^(读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))setPhase('sync');
   };
   stage.pause=()=>ui?.pause();
-  stage.resume=()=>{
-    waitingForVerification=false;
-    setPhase('connect');
-    ui?.resume();
-  };
-  const startBackgroundActivity=async()=>{
-    if(!interactive||closed||!backgroundTriggered)return;
-    // Live Activity registration is intentionally deferred until the App
-    // actually moves into the background; never used by Intent or scheduled runs.
-    if(!globalThis.__COURSESYNC_TEST__){
-      try{
-        const renderer=await import('./live_activity');
-        CourseRefreshActivity=renderer.CourseRefreshActivity;
-      }catch(_){console.error('[CourseSync] Live Activity renderer unavailable');return;}
-    }
-    if(closed||!await activityCall(dismissPreviousActivity))return;
-    if(closed||typeof CourseRefreshActivity!=='function'||
-       !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
-    await activityCall(async()=>{
-      const candidate=CourseRefreshActivity();
-      const initialPhase=phase;
-      if(!await candidate.start({phase:initialPhase},{staleDate:Date.now()+5*60000}))return;
-      if(closed){
-        if(!await endActivity(candidate,'finish')){
-          try{
-            if(!HostStorage?.get?.(COURSE_REFRESH_ACTIVITY_ID))rememberActivity(candidate.activityId);
-          }catch(_){}
-        }
-        return;
-      }
-      activity=candidate;
-      rememberActivity(candidate.activityId);
-      if(phase!==initialPhase)updatePhase(phase);
-    });
-  };
+  stage.resume=()=>{waitingForVerification=false;ui?.resume();};
   stage.start=async()=>{
     if(started||closed)return;
     started=true;
-    if(!interactive)return; // Intent: no AppEvents, keeper, Activity, or UI.
-    if(typeof sceneEvents?.addListener==='function'){
-      sceneListener=next=>{
-        if(closed)return;
-        if(next==='inactive'){
-          // Scripting recommends requesting keep-alive before suspension.
-          // No Activity is loaded until the actual background transition.
-          void acquireKeeper();
-        }else if(next==='background'){
-          // Re-acquire the keeper if a previous foreground transition released it.
-          // Only the first actual background transition registers an Activity.
-          const keeping=acquireKeeper();
-          if(backgroundTriggered)return;
-          backgroundTriggered=true;
-          backgroundStart=(async()=>{
-            await keeping;
-            try{await startBackgroundActivity();}
-            catch(_){console.error('[CourseSync] background Activity startup failed');}
-          })();
-        }else if(next==='active'){
-          // Back in the foreground: release our audio request without ending
-          // an Activity that still represents the in-progress refresh.
-          void releaseKeeper().then(()=>{keeperRequested=false;});
-        }
-      };
-      try{sceneEvents.addListener(sceneListener);}
-      catch(_){sceneListener=null;console.error('[CourseSync] App lifecycle monitoring unavailable');}
-    }
+    if(!interactive)return;
     try{
       if(typeof hostAPI('Navigation')?.present==='function'){
         ui=createNativeProgressView();
@@ -2285,38 +2148,13 @@ function createProgress(state,store,interactive){
       }
     }catch(_){ui=null;}
   };
-  stage.finish=(success=false)=>{
+  stage.finish=()=>{
     if(finishing)return finishing;
     closed=true;
-    finishing=(async()=>{
-      try{
-        if(sceneListener){
-          try{sceneEvents.removeListener(sceneListener);}
-          catch(_){console.error('[CourseSync] App lifecycle listener cleanup failed');}
-          sceneListener=null;
-        }
-        try{ui?.finish();}catch(_){}
-        // A background event may have arrived during the last network request.
-        // Let its startup settle before deciding whether an Activity needs ending.
-        try{await backgroundStart;}catch(_){}
-        if(!activity)return;
-        try{
-          await updates;
-          const finalPhase=success?'complete':'finish';
-          if(success){
-            const shown=await activityCall(async()=>
-              (await activity.update({phase:finalPhase}))!==false);
-            if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
-          }
-          if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
-        }catch(_){
-          console.error('[CourseSync] Live Activity finish failed');
-        }
-      }finally{
-        // Only this script's keeper request is released; other owners remain.
-        await releaseKeeper();
-      }
-    })();
+    finishing=Promise.resolve().then(()=>{
+      try{ui?.finish();}catch(_){}
+      ui=null;
+    });
     return finishing;
   };
   return stage;
