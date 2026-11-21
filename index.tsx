@@ -3359,7 +3359,8 @@ async function run() {
     progress('完成本次同步');state.runStatus=state.termErrors?.length||examError?'partial':'success';state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
     store.write(state);
-    if(progress)await progress.finish(state.runStatus==='success');
+    if(progress){try{await progress.finish(state.runStatus==='success');}
+      catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
     if(state.termErrors?.length){
       if(interactive){
         const details=state.termErrors.map(({sid,code})=>{
@@ -3392,10 +3393,14 @@ async function run() {
       }
       try{store.write(state);}catch(_){}
     }
-    if(!interactive&&code!=='CANCELLED')await reportBackgroundFailure(code,state,store);
+    if(!interactive&&code!=='CANCELLED'){
+      try{await reportBackgroundFailure(code,state,store);}
+      catch(_){console.error('[CourseSync] background failure notification failed');}
+    }
     if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[CourseSync] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
-      if(progress)await progress.finish();
+      if(progress){try{await progress.finish();}
+        catch(_){console.error('[CourseSync] failure progress cleanup failed');}}
       try{await showFailureRecovery(e,state,store);}
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
