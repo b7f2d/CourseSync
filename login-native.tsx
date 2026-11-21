@@ -320,7 +320,7 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
               </VStack>
               <VStack alignment="leading" spacing={3}>
                 <HStack spacing={6} alignment="center">
-                  <Text font="headline" fontWeight="bold">CourseSync</Text>
+                  <Text font="headline" fontWeight="bold">{schoolName}</Text>
                   <Text font="caption2" fontWeight="semibold" foregroundStyle={statusColor}>
                     {statusBadge}
                   </Text>
@@ -338,11 +338,6 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
                 shape: { type: 'rect', cornerRadius: 10 }
               })}
             >
-              <HStack alignment="center">
-                <Text font="caption1" foregroundStyle="secondaryLabel">学校</Text>
-                <Spacer />
-                <Text font="subheadline" fontWeight="medium">{schoolName}</Text>
-              </HStack>
               <HStack alignment="center">
                 <Text font="caption1" foregroundStyle="secondaryLabel">日历</Text>
                 <Spacer />
