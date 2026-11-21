@@ -57,6 +57,8 @@ test('background intent starts, updates and ends Live Activity without showing a
  const progress=e.m.createProgress(e.state,e.store,false);
  await progress.start();
  progress('读取学期 161');
+ // Allow the queued Activity update to flush before the intentional finish.
+ await new Promise(resolve=>setImmediate(resolve));
  await progress.finish(true);
  a.deepEqual(calls,[
    ['start','connect'],['update','sync'],['update','complete'],['end','complete']
