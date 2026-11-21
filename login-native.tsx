@@ -254,6 +254,25 @@ export type DashboardOptions = {
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
 
+function DashboardAction({title, systemImage, action, role}: {
+  title: string;
+  systemImage: string;
+  action: () => void;
+  role?: 'destructive';
+}) {
+  return <Button
+    action={action}
+    role={role}
+    listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
+  >
+    <HStack alignment="center" spacing={10}>
+      <Image systemName={systemImage} font="body" frame={{width:24}} />
+      <Text>{title}</Text>
+      <Spacer />
+    </HStack>
+  </Button>;
+}
+
 function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
@@ -357,22 +376,20 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
         </Section>
 
         <Section>
-          <Button
+          <DashboardAction
             title="立即刷新"
             systemImage="arrow.clockwise"
-            listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
             action={() => dismiss(0)}
           />
           {loadFreeRooms ? (
-            <Button
+            <DashboardAction
               title="查询空闲教室"
               systemImage="building.columns"
-              listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
               action={openFreeRooms}
             />
           ) : null}
           {canSignOut ? (
-            <Button
+            <DashboardAction
               title="退出当前登录"
               systemImage="rectangle.portrait.and.arrow.right"
               role="destructive"
