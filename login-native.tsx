@@ -253,11 +253,10 @@ export type DashboardOptions = {
   schoolName: string;
   canSignOut: boolean;
   statusMessage: string;
-  hasCalendar?: boolean;
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
 
-function DashboardView({ state, schoolName, canSignOut, statusMessage, hasCalendar = true, loadFreeRooms }: DashboardOptions) {
+function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
   const roomQuery = useRef({visible: false, pending: false, progress: 0.08});
@@ -372,12 +371,6 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, hasCalend
             title="立即刷新"
             action={() => dismiss(0)}
           />
-          {hasCalendar ? (
-            <Button
-              title="管理日程"
-              action={() => dismiss({ schedule: true })}
-            />
-          ) : null}
           {loadFreeRooms ? (
             <Button
               title="查询空闲教室"

@@ -4,7 +4,6 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const index=fs.readFileSync(__dirname+'/../index.tsx','utf8');
 const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
-const schedule=fs.readFileSync(__dirname+'/../schedule-native.tsx','utf8');
 const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
 const start=index.indexOf('async function credentialForm(');
 const end=index.indexOf('function validSliderResult(',start);
@@ -153,33 +152,10 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(native,/function DashboardView/);
  assert.match(native,/navigationTitle="CourseSync"/);
  assert.match(native,/title="立即刷新"/);
- assert.match(native,/title="管理日程"/);
+ assert.doesNotMatch(native,/管理日程/);
  assert.match(native,/title="查询空闲教室"/);
  assert.match(native,/title="退出当前登录"/);
  assert.doesNotMatch(native,/运行状态与自检|切换学校|[🎓🏫🔐📅🏛🗓🔄🚪]/u);
  assert.match(index,/presentNativeDashboard\(\{/);
  assert.match(progress,/正在同步课程和考试/);
 });
-
-test('native calendar schedule view presents a real calendar with year, month, 1-30/31 days, and click-to-edit',()=>{
- assert.match(schedule,/export function presentNativeCalendarSchedule/);
- assert.match(schedule,/function CalendarScheduleView/);
- assert.match(schedule,/navigationTitle="日程管理"/);
- assert.match(schedule,/title="添加课程"/);
- assert.match(schedule,/title="添加考试"/);
- assert.match(schedule,/<Section header=\{<Text>本月日程<\/Text>\}>/);
- assert.match(schedule,/Array\.from\(\{ length: totalDays \}, \(_, idx\) => idx \+ 1\)/);
- assert.match(schedule,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
- assert.match(index,/presentNativeCalendarSchedule\(\{/);
- assert.doesNotMatch(schedule,/font=\{\d+\}/);
- assert.match(schedule,/Picker[\s\S]*?title="年份"/);
- assert.match(schedule,/Picker[\s\S]*?title="月份"/);
- assert.doesNotMatch(schedule,/\[教务同步\]|只读|[◀▶✎]/u);
- assert.match(schedule,/>编辑</);
- assert.match(schedule,/monospacedDigit=\{true\}/);
- assert.match(schedule,/frame=\{\{\s*height:\s*6\s*\}\}/);
- assert.match(schedule,/maxWidth:\s*'infinity',\s*minHeight:\s*40,\s*maxHeight:\s*40/);
-});
-
-
-

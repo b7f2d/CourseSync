@@ -9,9 +9,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
-   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";')
- .replace("import { presentScheduleEditor, presentNativeCalendarSchedule } from './schedule-native';",
-   'const presentScheduleEditor=(...args)=>(globalThis.__scheduleEditor?globalThis.__scheduleEditor(...args):null);const presentNativeCalendarSchedule=(...args)=>(globalThis.__calendarScheduleMock?globalThis.__calendarScheduleMock(...args):null);');
+   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -2041,87 +2039,21 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.equal(e.db.length,dbCountBefore);
 });
 
-test('manageManualSchedules presents calendar and handles add/edit',async()=>{
- const e=await env({hostEnv:'index'});
- e.state.examCalendarId=e.other.identifier;e.store.write(e.state);e.store.release();
- const start=Date.UTC(new Date().getFullYear(),5,1,2);
- const details={title:'示例',start:new Date(start).toISOString(),end:new Date(start+3600000).toISOString(),location:'教室'};
- const own=e.add(details,{notes:'手动添加 · CourseSync'});
- own.url='coursesync://manual/course/11111111-2222-3333-4444-555555555555';
- let presented=null;
- e.sandbox.__calendarScheduleMock=async(opts)=>{
-   presented=opts;
-   return null;
- };
- await e.m.manageManualSchedules(e.store);
- a.ok(presented);
- a.equal(presented.year,new Date().getFullYear());
- a.ok(Array.isArray(presented.rows));
-});
+test('calendar cleanup preserves events manually added by older CourseSync versions',async()=>{
+ const e=await env();
+ const course=lesson();
+ e.baseline([course]);
+ const synced=e.add(course);
+ const manualWithNote=e.add(course,{notes:'手动添加 · CourseSync'});
+ const manualWithURL=e.add(course,{notes:'自定义备注'});
+ manualWithURL.url='coursesync://manual/course/11111111-2222-3333-4444-555555555555';
+ const legacy=e.add(course,{notes:'old ICS'});
 
-test('manageManualSchedules hides read-only synced courses and exams',async()=>{
- const e=await env({hostEnv:'index'});
- e.state.examCalendarId=e.other.identifier;
- const year=new Date().getFullYear();
- const start=Date.UTC(year,5,1,2);
- e.baseline([lesson({id:'sys-course-1',title:'高等数学',start:new Date(start).toISOString(),end:new Date(start+3600000).toISOString(),location:'教一101'})]);
- const examStart=Date.UTC(year,5,15,1,0);
- const examEvent=e.add({
-   title:'📝 线性代数',
-   start:new Date(examStart).toISOString(),
-   end:new Date(examStart+7200000).toISOString(),
-   location:'博远楼 202'
- },{notes:'同步：2026-11-01 08:00'});
- e.state.examIndex={[examEvent.identifier]:'[COURSESYNC_EXAM '+e.state.owner+'] ["线性代数","期末",'+examStart+']'};
- e.store.write(e.state);e.store.release();
-
- let presented=null;
- e.sandbox.__calendarScheduleMock=async(opts)=>{
-   presented=opts;
-   return null;
- };
-
- await e.m.manageManualSchedules(e.store);
- a.ok(presented);
- a.equal(presented.rows.length,0);
-});
-
-test('user can add manual course and manual exam via calendar view',async()=>{
- const e=await env({hostEnv:'index'});
- e.state.examCalendarId=e.other.identifier;
- e.store.write(e.state);e.store.release();
-
- const startCourse=Date.UTC(new Date().getFullYear(),5,2,8,0);
- const startExam=Date.UTC(new Date().getFullYear(),5,3,9,0);
-
- e.sandbox.__sdk.Dialog.alert=async()=>{};
-
- let step=0;
- e.sandbox.__calendarScheduleMock=async(opts)=>{
-   if(step===0){
-     step++;
-     return {action:'add',kind:'course',start:startCourse,day:2};
-   }
-   if(step===1){
-     step++;
-     return {action:'add',kind:'exam',start:startExam,day:3};
-   }
-   return null;
- };
-
- e.sandbox.__scheduleEditor=async(kind,initial)=>{
-   if(kind==='course'){
-     return {action:'save',title:'自定义课程',location:'A101',start:startCourse,end:startCourse+3600000};
-   }
-   if(kind==='exam'){
-     return {action:'save',title:'自定义考试',location:'B202',start:startExam,end:startExam+7200000};
-   }
-   return null;
- };
-
- await e.m.manageManualSchedules(e.store);
- a.ok(e.db.some(ev=>ev.title==='自定义课程'&&ev.calendar.identifier===e.calendar.identifier));
- a.ok(e.db.some(ev=>ev.title==='自定义考试'&&ev.calendar.identifier===e.other.identifier));
+ a.equal(e.m.matchesOldCourse(manualWithNote,course,e.state),false);
+ a.equal(e.m.matchesOldCourse(manualWithURL,course,e.state),false);
+ await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);
+ a.deepEqual(e.db.map(ev=>ev.identifier),[synced,manualWithNote,manualWithURL].map(ev=>ev.identifier));
+ a.ok(!e.db.includes(legacy));
 });
 
 test('widgetCacheProjection includes synced exams alongside courses',async()=>{

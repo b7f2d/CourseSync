@@ -4,7 +4,6 @@ import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefres
 import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
-import { presentScheduleEditor, presentNativeCalendarSchedule } from './schedule-native';
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
@@ -1622,6 +1621,11 @@ function legacyLocationCompatible(a,b){
   const clean=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   return !clean(a)||!clean(b)||clean(a)===clean(b);
 }
+const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
+const MANUAL_SCHEDULE_URL=/^coursesync:\/\/manual\/(course|exam)\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+// Preserve events written by older versions when cleaning up imported courses.
+const isPreviouslyAddedEvent=ev=>MANUAL_SCHEDULE_URL.test(ev?.url||'')||
+  String(ev?.notes||'').split('\n').includes(MANUAL_SCHEDULE_NOTE);
 function selectLegacyDuplicates(rows,owner,state){
   const managed=new Map(),duplicates=[], uncertain=[];
   for(const ev of rows){
@@ -1632,7 +1636,7 @@ function selectLegacyDuplicates(rows,owner,state){
   }
   for(const ev of rows){
     const key=legacyEventKey(ev);if(!key||!managed.has(key))continue;
-    if(isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
+    if(isPreviouslyAddedEvent(ev)||isExamEvent(ev,state)||typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '))continue;
     if(Array.isArray(ev.attendees)&&ev.attendees.length)continue;
     const counterpart=managed.get(key).find(own=>legacyLocationCompatible(own.location,ev.location));
     if(counterpart)duplicates.push({ev,managed:counterpart,key});
@@ -1710,7 +1714,7 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   const rows=await dedicatedRows(calendar,state,progress);
   await verifyBaseline(rows,state); // All retained new lessons must exist before deleting anything.
   const byNative=storedEventIndex(state);
-  const isLegacy=e=>!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
+  const isLegacy=e=>!isPreviouslyAddedEvent(e)&&!isExamEvent(e,state)&&!eventRecord(e,state.owner,byNative);
   const legacy=rows.filter(isLegacy);
   if(!legacy.length){state.lastLegacyCleanupRemaining=0;store.write(state);return 0;}
   const stamp=new Date().toISOString(),base='专用日历清理前-'+stamp.replace(/[:.]/g,'-');
@@ -2561,7 +2565,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
 function matchesOldCourse(ev,rec,state){
-  if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
+  if(!ev||isPreviouslyAddedEvent(ev)||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
   const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   const before=norm(ev.title),after=norm(rec.title);
@@ -3033,203 +3037,6 @@ async function loadFreeRoomPage(isActive,onProgress){
   }
 }
 
-const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
-const MANUAL_SCHEDULE_URL=/^coursesync:\/\/manual\/(course|exam)\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const manualKind=ev=>MANUAL_SCHEDULE_URL.exec(ev?.url||'')?.[1];
-const isManualEvent=ev=>!!manualKind(ev)||String(ev?.notes||'').split('\n').includes(MANUAL_SCHEDULE_NOTE);
-const canEditSingleEvent=ev=>!ev.isDetached&&!ev.hasRecurrenceRules&&
-  !ev.recurrenceRules?.length&&!ev.hasAttendees&&!ev.attendees?.length;
-const scheduleName=kind=>kind==='course'?'课程':'考试';
-
-async function manualCalendars(state){
-  const calendars=await visibleCalendars();
-  return {
-    course:calendars.find(cal=>cal.identifier===state.calendarId&&liveCalendar(cal)),
-    exam:calendars.find(cal=>cal.identifier===state.examCalendarId&&
-      cal.identifier!==state.calendarId&&liveCalendar(cal))
-  };
-}
-
-function scheduleFields(result){
-  const title=typeof result.title==='string'?result.title.trim():'';
-  const location=typeof result.location==='string'?result.location.trim():'';
-  const start=Math.floor(result.start/60000)*60000,end=Math.floor(result.end/60000)*60000;
-  assert(title&&title.length<=120&&location.length<=200&&typeof result.start==='number'&&
-    typeof result.end==='number'&&Number.isFinite(+new Date(start))&&
-    Number.isFinite(+new Date(end))&&end>start&&new Date(start).getFullYear()>=1000&&
-    new Date(end).getFullYear()<=9999,'MANUAL_FIELDS');
-  return {title,location,start,end};
-}
-
-// Only hold the synchronization lock while changing the event, leaving forms
-// and confirmation dialogs free to stay open without blocking background sync.
-async function changeManualSchedule(store,kind,calendarId,result,original){
-  const fields=result.action==='save'?scheduleFields(result):null;
-  assert(fields||result.action==='delete'&&original,'MANUAL_FIELDS');
-  store.acquire();
-  try{
-    const state=store.read();
-    assert(!state.signedOut&&state.lastError!=='LOGOUT_INCOMPLETE','MANUAL_CALENDAR');
-    const calendar=(await manualCalendars(state))[kind];
-    assert(calendar?.identifier===calendarId,'MANUAL_CALENDAR');
-    let event;
-    if(original){
-      const rows=await calendarRows(+original.startDate,+original.endDate,calendar);
-      event=rows.find(ev=>ev.identifier===original.identifier&&ev.url===original.url&&
-        manualKind(ev)===kind&&canEditSingleEvent(ev));
-      assert(event&&snapshotSignature(event)===snapshotSignature(original),'MANUAL_CHANGED');
-    }else event=new CalendarEvent();
-    store.check();
-    if(!fields){
-      await event.remove();
-      const remaining=await calendarRows(+original.startDate,+original.endDate,calendar);
-      assert(!remaining.some(ev=>ev.identifier===original.identifier&&ev.url===original.url),'MANUAL_VERIFY');
-      return;
-    }
-    event.calendar=calendar;
-    event.title=fields.title;
-    event.location=fields.location;
-    const notes=String(event.notes||'').split('\n').filter(line=>line!==MANUAL_SCHEDULE_NOTE).join('\n');
-    event.notes=notes?MANUAL_SCHEDULE_NOTE+'\n'+notes:MANUAL_SCHEDULE_NOTE;
-    event.isAllDay=false;
-    event.startDate=new Date(fields.start);
-    event.endDate=new Date(fields.end);
-    if(!original)event.url='coursesync://manual/'+kind+'/'+uuid();
-    await event.save();
-    const saved=await calendarRows(fields.start,fields.end,calendar);
-    assert(saved.some(ev=>ev.identifier===event.identifier&&ev.url===event.url&&
-      ev.title===fields.title&&+ev.startDate===fields.start&&+ev.endDate===fields.end&&
-      (ev.location||'')===fields.location&&ev.notes===event.notes&&!ev.isAllDay),'MANUAL_VERIFY');
-  }finally{store.release();}
-}
-
-async function manageManualSchedules(store){
-  let year=new Date().getFullYear();
-  let month=new Date().getMonth()+1;
-  let selectedDay=new Date().getDate();
-
-  const format=(date,day)=>date.toLocaleString('zh-CN',{...(day?{month:'numeric',day:'numeric'}:{}),
-    hour:'2-digit',minute:'2-digit',hour12:false});
-
-  while(true){
-    const state=store.read();
-    const calendars=await manualCalendars(state);
-    const start=+new Date(year-3,0,1),end=+new Date(year+6,0,1);
-
-    // Load manual calendar events only (read-only synced events are managed by Apple Calendar)
-    const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
-      calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
-        canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
-        +ev.endDate>+ev.startDate):[]));
-    const manualEvents=manualGroups.flat();
-
-    const manualRows=manualEvents.map(ev=>{
-      const sameDay=ev.startDate.toDateString()===ev.endDate.toDateString();
-      return {
-        id:ev.identifier,
-        kind:manualKind(ev),
-        title:ev.title,
-        start:+ev.startDate,
-        end:+ev.endDate,
-        time:format(ev.startDate,!sameDay)+'–'+format(ev.endDate,!sameDay),
-        location:ev.location||'',
-        isManual:true,
-      };
-    });
-
-    const allRows=manualRows.sort((a,b)=>a.start-b.start);
-
-    const selection=await presentNativeCalendarSchedule({
-      year,
-      month,
-      selectedDay,
-      rows:allRows,
-    });
-
-    if(!selection)return;
-
-    if(selection.action==='changeMonth'){
-      year=selection.year;
-      month=selection.month;
-      selectedDay=1;
-      continue;
-    }
-
-    if(selection.action==='add'){
-      const kind=selection.kind||'course';
-      const initialStart=selection.start||+new Date(year,month-1,selection.day||1,8,0);
-      year=new Date(initialStart).getFullYear();
-      month=new Date(initialStart).getMonth()+1;
-      selectedDay=new Date(initialStart).getDate();
-      const calendar=calendars[kind]||calendars.course;
-      if(!calendar){
-        await notice('未找到可用日历','请先在系统设置中配置或绑定课表日历。');
-        continue;
-      }
-      const result=await presentScheduleEditor(kind,{
-        title:'',
-        location:'',
-        start:initialStart,
-        end:initialStart+3600000,
-      });
-      if(result?.action==='save'){
-        try{
-          await changeManualSchedule(store,kind,calendar.identifier,result);
-          year=new Date(result.start).getFullYear();
-          month=new Date(result.start).getMonth()+1;
-          selectedDay=new Date(result.start).getDate();
-          await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
-        }catch(error){
-          await notice('添加失败',errorMessage(error,store.read()));
-        }
-      }
-      continue;
-    }
-
-    if(selection.action==='edit'){
-      const ev=allRows.find(r=>r.id===selection.id);
-      if(!ev)continue;
-      if(Number.isFinite(ev.start)){
-        year=new Date(ev.start).getFullYear();
-        month=new Date(ev.start).getMonth()+1;
-        selectedDay=new Date(ev.start).getDate();
-      }
-      if(!ev.isManual){
-        await notice('教务同步日程','教务系统导入的课表由系统自动同步，不可在此编辑或删除；如需调整请在教务系统处理或添加手动日程。');
-        continue;
-      }
-      const original=manualEvents.find(e=>e.identifier===selection.id);
-      if(original){
-        const kind=manualKind(original);
-        const result=await presentScheduleEditor(kind,{
-          title:original.title,
-          location:original.location||'',
-          start:+original.startDate,
-          end:+original.endDate,
-        });
-        if(result?.action==='delete'){
-          if(await confirm('删除日程','将从日历中删除「'+original.title+'」。')){
-            try{
-              await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
-            }catch(error){
-              await notice('删除失败',errorMessage(error,store.read()));
-            }
-          }
-        }else if(result?.action==='save'){
-          try{
-            await changeManualSchedule(store,kind,original.calendar.identifier,result,original);
-            year=new Date(result.start).getFullYear();
-            month=new Date(result.start).getMonth()+1;
-            selectedDay=new Date(result.start).getDate();
-          }catch(error){
-            await notice('保存失败',errorMessage(error,store.read()));
-          }
-        }
-      }
-    }
-  }
-}
-
 async function run() {
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
   migrateLegacyKeychainData();
@@ -3284,13 +3091,6 @@ async function run() {
         selected=await menu.presentSheet();
       }
       if(selected===null||selected===undefined||selected<0)return;
-      if(typeof selected==='object'&&selected.schedule){
-        const nav=hostAPI('Navigation');
-        if(typeof nav?.present==='function'){
-          await manageManualSchedules(store);
-        }
-        return;
-      }
       if(canSignOut&&selected===1)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
@@ -3430,7 +3230,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms,manageManualSchedules,changeManualSchedule,manualCalendars,scheduleFields};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
