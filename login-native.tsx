@@ -25,22 +25,6 @@ function LoginView({ title }: { title: string }) {
       }}
     >
       <Section>
-        <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
-          <VStack
-            alignment="center"
-            frame={{width:44,height:44}}
-            modifiers={modifiers().background({
-              style:{light:'#2563EB',dark:'#1D4ED8'},
-              shape:{type:'rect',cornerRadius:10}
-            })}
-          >
-            <Image systemName="person.crop.circle" font={22} foregroundStyle="#FFFFFF" />
-          </VStack>
-          <Text font="headline" fontWeight="bold">CourseSync 账号认证</Text>
-          <Text font="caption1" foregroundStyle="secondaryLabel">安全凭据直连学校系统 · 仅保存在本地钥匙串</Text>
-        </VStack>
-      </Section>
-      <Section header={<Text>账号登录</Text>}>
         <TextField
           title="学号"
           prompt="请输入学号"
@@ -57,7 +41,7 @@ function LoginView({ title }: { title: string }) {
           textContentType="password"
         />
       </Section>
-      <Section footer={<Text>支持 iOS「密码」自动填充，凭据仅保存在本地钥匙串。</Text>}>
+      <Section>
         <Button
           title="确认"
           disabled={!valid}
@@ -176,22 +160,6 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
       <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
         <Section>
-          <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
-            <VStack
-              alignment="center"
-              frame={{width:44,height:44}}
-              modifiers={modifiers().background({
-                style:{light:'#2563EB',dark:'#1D4ED8'},
-                shape:{type:'rect',cornerRadius:10}
-              })}
-            >
-              <Image systemName="building.columns" font={20} foregroundStyle="#FFFFFF" />
-            </VStack>
-            <Text font="headline" fontWeight="bold">选择就读高校</Text>
-            <Text font="caption1" foregroundStyle="secondaryLabel">CourseSync 将针对学校教务系统定制同步管道</Text>
-          </VStack>
-        </Section>
-        <Section header={<Text>请选择你的学校</Text>}>
           <Picker title="学校" pickerStyle="menu"
             value={schoolId} onChanged={setSchoolId}>
             <Text key="unselected" tag="unselected">请选择</Text>
@@ -206,29 +174,13 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
       <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
         <Section>
-          <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
-            <VStack
-              alignment="center"
-              frame={{width:44,height:44}}
-              modifiers={modifiers().background({
-                style:{light:'#2563EB',dark:'#1D4ED8'},
-                shape:{type:'rect',cornerRadius:10}
-              })}
-            >
-              <Image systemName="lock.shield" font={22} foregroundStyle="#FFFFFF" />
-            </VStack>
-            <Text font="headline" fontWeight="bold">教务系统认证</Text>
-            <Text font="caption1" foregroundStyle="secondaryLabel">支持系统钥匙串与自动填充 · 密码不离机</Text>
-          </VStack>
-        </Section>
-        <Section header={<Text>账号登录</Text>}>
           <TextField title="学号" prompt="请输入学号" value={username}
             onChanged={setUsername} textContentType="username"
             textInputAutocapitalization="never"/>
           <SecureField title="密码" prompt="请输入密码" value={password}
             onChanged={setPassword} textContentType="password"/>
         </Section>
-        <Section footer={<Text>支持 iOS「密码」自动填充，验证通过后安全保存。</Text>}>
+        <Section>
           <Button title="开始刷新" disabled={!validAccount}
             action={()=>{if(validAccount&&validSchool)dismiss({
               kind:'credentials',schoolId,username:account,password
@@ -272,8 +224,8 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
   const isSignedOut = !!state?.signedOut;
   const isFailed = state?.runStatus === 'failed';
   const isSuccess = state?.runStatus === 'success';
-  const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : isSuccess ? '#10B981' : '#3B82F6';
-  const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '就绪';
+  const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : '#10B981';
+  const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '';
   const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
   const examCalTitle = state?.examCalendarTitle || (state?.examCalendarId && state.examCalendarId !== state?.calendarId ? '考试日历' : '');
   const boundCalendarsLabel = examCalTitle ? `${calTitle} / ${examCalTitle}` : calTitle;
@@ -309,15 +261,14 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
               >
                 <Image systemName="calendar" font={20} foregroundStyle="#FFFFFF" />
               </VStack>
-              <VStack alignment="leading" spacing={3}>
-                <HStack spacing={6} alignment="center">
-                  <Text font="headline" fontWeight="bold">{schoolName}</Text>
+              <HStack spacing={6} alignment="center">
+                <Text font="headline" fontWeight="bold">{schoolName}</Text>
+                {statusBadge ? (
                   <Text font="caption2" fontWeight="semibold" foregroundStyle={statusColor}>
                     {statusBadge}
                   </Text>
-                </HStack>
-                <Text font="caption1" foregroundStyle="secondaryLabel">高校课程和考试本地同步</Text>
-              </VStack>
+                ) : null}
+              </HStack>
             </HStack>
 
             <VStack
@@ -348,7 +299,7 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
           </VStack>
         </Section>
 
-        <Section header={<Text>功能菜单</Text>}>
+        <Section>
           <Button
             title="立即刷新"
             action={() => dismiss(0)}
@@ -450,10 +401,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         </VStack>
         <Spacer />
         {isSelected ? (
-          <HStack spacing={4} alignment="center">
-            <Text font="caption1" fontWeight="semibold" foregroundStyle="#007AFF">当前同步日历</Text>
-            <Text font="body" fontWeight="bold" foregroundStyle="#007AFF">✓</Text>
-          </HStack>
+          <Text font="caption1" fontWeight="semibold" foregroundStyle="#007AFF">当前同步日历</Text>
         ) : (
           <Button
             title="设为同步日历"
@@ -477,7 +425,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
           cancellationAction: <Button title="取消" action={() => dismiss(null)} />
         }}
       >
-        <Section header={<Text>添加新日历</Text>} footer={<Text>在 iCloud 创建独立课程和考试日历，与私人日程隔离。</Text>}>
+        <Section header={<Text>添加新日历</Text>}>
           <TextField
             title="日历名称"
             prompt="例如：课程和考试"
@@ -495,7 +443,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         </Section>
 
         {icloudCalendars.length > 0 ? (
-          <Section header={<Text>iCloud 日历</Text>} footer={<Text>点击「设为同步日历」切换同步目标。</Text>}>
+          <Section header={<Text>iCloud 日历</Text>}>
             {icloudCalendars.map((c, idx) => renderCalendarRow(c, idx))}
           </Section>
         ) : null}

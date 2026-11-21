@@ -34,7 +34,7 @@ test('README distinguishes public CourseSync name from legacy installation ident
 test('README lists the two supported schools and USTS device verification status',()=>{
   assert.match(read('README.md'),/支持南京财经大学和苏州科技大学/);
   assert.match(read('README.md'),/仍待实机验证/);
-  assert.match(read('README.md'),/请选择你的学校/);
+  assert.match(read('README.md'),/选择学校/);
 });
 
 test('README remains text-only without image markup or references',()=>{

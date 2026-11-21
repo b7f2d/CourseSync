@@ -35,7 +35,6 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.match(native,/function RefreshSetupView/);
  assert.match(native,/useState<'school'\|'account'>\('school'\)/);
  assert.match(native,/navigationTitle="选择学校"/);
- assert.match(native,/请选择你的学校/);
  assert.match(native,/<Picker title="学校" pickerStyle="menu"/);
  assert.match(native,/<Text key="unselected" tag="unselected">请选择<\/Text>/);
  assert.match(native,/value=\{schoolId\} onChanged=\{setSchoolId\}/);
@@ -163,7 +162,8 @@ test('native calendar schedule view presents a real calendar with year, month, 1
  assert.match(schedule,/navigationTitle="日程管理"/);
  assert.match(schedule,/title="添加课程"/);
  assert.match(schedule,/title="添加考试"/);
- assert.match(schedule,/1 至 \{totalDays\} 号/);
+ assert.match(schedule,/<Section header=\{<Text>本月日程<\/Text>\}>/);
+ assert.match(schedule,/Array\.from\(\{ length: totalDays \}, \(_, idx\) => idx \+ 1\)/);
  assert.match(schedule,/shape:\s*\{\s*type:\s*'circle'\s*\}/);
  assert.match(index,/presentNativeCalendarSchedule\(\{/);
  assert.doesNotMatch(schedule,/font=\{\d+\}/);

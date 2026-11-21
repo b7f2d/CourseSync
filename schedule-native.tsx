@@ -195,7 +195,7 @@ function CalendarScheduleView({
           cancellationAction: <Button title="完成" action={() => dismiss(null)} />
         }}
       >
-        <Section header={<Text>选择年月</Text>}>
+        <Section>
           <HStack alignment="center" spacing={8} padding={{ top: 2, bottom: 2 }}>
             <Button title="上个月" buttonStyle="borderless" action={prevMonth} />
             <Spacer />
@@ -242,7 +242,7 @@ function CalendarScheduleView({
           </HStack>
         </Section>
 
-        <Section header={<Text>月历视图</Text>}>
+        <Section>
           <VStack spacing={4} padding={{ top: 6, bottom: 6 }} frame={{ maxWidth: 'infinity' }}>
             <HStack alignment="center" spacing={4} padding={{ bottom: 6 }} frame={{ maxWidth: 'infinity' }}>
               {weekdays.map((w, i) => (
@@ -383,7 +383,6 @@ function CalendarScheduleView({
 
         <Section
           header={<Text>{month} 月 {safeSelectedDay} 日 ({selectedWeekday}) 日程明细</Text>}
-          footer={<Text>点击日程可编辑或删除。</Text>}
         >
           {selectedDayEvents.length > 0 ? (
             selectedDayEvents.map(ev => {
@@ -451,7 +450,7 @@ function CalendarScheduleView({
           </HStack>
         </Section>
 
-        <Section header={<Text>{month} 月全部日程列表（1 至 {totalDays} 号）</Text>}>
+        <Section header={<Text>本月日程</Text>}>
           {eventsByDay.size === 0 ? (
             <Text font="subheadline" foregroundStyle="secondaryLabel">
               本月暂无手动添加的日程。
