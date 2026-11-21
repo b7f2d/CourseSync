@@ -954,7 +954,13 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   };
   const rows=await read();
   if(!rows.length&&!target.size){
-    if(state.exams?.length){state.exams=[];store.write(state);}
+    // An empty current portal page must not erase already synchronized history.
+    // Future entries, however, are no longer published and must be removed.
+    const past=(state.exams||[]).filter(exam=>exam&&typeof exam.start==='string'&&
+      Number.isFinite(Date.parse(exam.start))&&Date.parse(exam.start)<now);
+    if(JSON.stringify(past)!==JSON.stringify(state.exams||[])){
+      state.exams=past;store.write(state);
+    }
     return;
   }
   const current=new Map();
