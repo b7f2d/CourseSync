@@ -474,13 +474,13 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         navigationTitle="管理日历"
         navigationBarTitleDisplayMode="inline"
         toolbar={{
-          cancellationAction: <Button title="完成" action={() => dismiss(null)} />
+          cancellationAction: <Button title="取消" action={() => dismiss(null)} />
         }}
       >
         <Section header={<Text>添加新日历</Text>} footer={<Text>在 iCloud 创建独立课程和考试日历，与私人日程隔离。</Text>}>
           <TextField
             title="日历名称"
-            prompt="例如：南财课表、大学课表"
+            prompt="例如：课程和考试"
             value={newTitle}
             onChanged={setNewTitle}
           />

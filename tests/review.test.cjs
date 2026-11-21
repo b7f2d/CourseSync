@@ -4,8 +4,8 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
    'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
- .replace("import { presentNativeDashboard } from './login-native';",
-   'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);')
+ .replace("import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';",
+   'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...args):null);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
@@ -952,6 +952,39 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
  a.equal(e.store.read().calendarTitle,'Custom Calendar');
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
+});
+test('Scripting first provisioning lets user select an existing writable calendar via native manager',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;
+ let prompted=false;
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompted=true;return 'Fallback';};
+ e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier,calendarTitle:e.other.title});
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ a.equal(prompted,false);
+ a.equal(e.store.read().calendarId,e.other.identifier);
+ a.equal(e.store.read().calendarTitle,e.other.title);
+});
+test('Scripting first provisioning lets user create a custom-named iCloud calendar via native manager',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const all=[e.other];
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__sdk.Calendar.forEvents=async()=>all;
+ e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'custom-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
+ e.sandbox.__calendarManagerMock=async()=>({action:'create',title:'我的课表'});
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ a.equal(e.store.read().calendarId,'custom-icloud');
+ a.equal(e.store.read().calendarTitle,'我的课表');
+});
+test('Scripting first provisioning cancels cleanly when native calendar manager is dismissed',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.config.runsInApp=true;e.state.calendarId=null;
+ let prompted=false;
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompted=true;return 'Fallback';};
+ e.sandbox.__calendarManagerMock=async()=>null;
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
+ a.equal(prompted,false);
 });
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);});

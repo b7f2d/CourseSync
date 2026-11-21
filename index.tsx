@@ -1,7 +1,7 @@
 // @ts-nocheck
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
-import { presentNativeDashboard } from './login-native';
+import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';
 import { createNativeProgressView } from './progress-native';
 import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
 import { presentScheduleEditor, presentNativeCalendarSchedule } from './schedule-native';
@@ -2127,29 +2127,40 @@ async function pickCalendar(state,store){
   if(!all.length)fail('CALENDAR_PERMISSION');
   let picked,created=false;
   if(!state.calendarId){
-    // New installs never inherit an unrelated calendar, regardless of name.
+    // New installs let the user choose an existing writable calendar or create a named iCloud calendar.
     const nav=hostAPI('Navigation');
+    let managerPresented=false;
+    let res=null;
     if(typeof nav?.present==='function'){
+      const calItems=all.map(c=>({
+        identifier:c.identifier,
+        title:c.title,
+        color:c.color,
+        sourceTitle:c.source?.title,
+        allowsContentModifications:c.allowsContentModifications
+      }));
       try{
-        const calItems=all.map(c=>({
-          identifier:c.identifier,
-          title:c.title,
-          color:c.color,
-          sourceTitle:c.source?.title,
-          allowsContentModifications:c.allowsContentModifications
-        }));
-        const res=await presentNativeCalendarManager({
+        res=await presentNativeCalendarManager({
           calendars:calItems,
           currentCalendarId:state.calendarId
         });
-        if(res?.action==='create'){
-          picked=await createDedicatedCalendar(res.title);created=true;
-        }else if(res?.action==='select'){
-          picked=all.find(c=>c.identifier===res.calendarId);
-        }
+        managerPresented=true;
       }catch(_){}
     }
-    if(!picked){
+    if(managerPresented){
+      if(!res)fail('CANCELLED');
+      if(res.action==='create'){
+        const title=validCalendarName(res.title);
+        store.check();
+        picked=await createDedicatedCalendar(title);created=true;
+      }else if(res.action==='select'){
+        picked=all.find(c=>c.identifier===res.calendarId);
+        assert(picked&&liveCalendar(picked),'CALENDAR_READONLY');
+        store.check();
+      }else{
+        fail('CANCELLED');
+      }
+    }else{
       picked=await offerDedicatedCalendar(state,store);created=true;
     }
   }else{
