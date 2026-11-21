@@ -82,9 +82,9 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.ok(index.includes("await import('./progress-native')"));
   const intent=read('intent.tsx');
   assert.ok(intent.includes('import "./index"'));
-  assert.doesNotMatch(intent,/^\\s*await\\s+globalThis\\.__COURSESYNC_LAUNCH__/m);
-  assert.match(intent,/Promise\\.resolve\\(globalThis\\.__COURSESYNC_LAUNCH__\\)\\.catch\\(/);
-  assert.match(intent,/Script\\.exit\\(Intent\\.text\\(/);
+  assert.equal(intent.includes('await globalThis.__COURSESYNC_LAUNCH__'),false);
+  assert.ok(intent.includes('Promise.resolve(globalThis.__COURSESYNC_LAUNCH__).catch('));
+  assert.ok(intent.includes('Script.exit(Intent.text('));
   const intentBody= intent.replace(/^import .*;\\s*$/gm,'');
   assert.doesNotThrow(()=>new (require('node:vm').Script)(intentBody));
   assert.ok(read('intent-probe.tsx').includes('CourseSync intent ok'));
