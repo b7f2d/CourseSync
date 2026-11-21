@@ -993,13 +993,27 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   // Save the identifier mapping before replacing recoverable markers with readable notes.
   for(const ev of final)index[ev.identifier]=keyOf(ev);
   state.examIndex=index;
-  state.exams=[...target.values()].map((exam,idx)=>({
-    id:'exam-'+exam.start+'-'+idx,
-    title:exam.title,
-    start:new Date(exam.start).toISOString(),
-    end:new Date(exam.stop).toISOString(),
-    location:exam.location||''
-  }));
+  // The school may stop returning past exam records. Preserve already verified
+  // historical entries in the local cache; missing future exams are cancellations.
+  // This is not a substitute for fetching historical records the school exposes.
+  const verifiedPast=(state.exams||[]).filter(exam=>
+    exam&&typeof exam.start==='string'&&Number.isFinite(Date.parse(exam.start))&&
+    Date.parse(exam.start)<now&&typeof exam.title==='string'&&
+    typeof exam.end==='string'&&Number.isFinite(Date.parse(exam.end)));
+  const examCache=new Map();
+  const cacheKey=exam=>JSON.stringify([exam.title,exam.start]);
+  for(const exam of verifiedPast)examCache.set(cacheKey(exam),exam);
+  for(const exam of target.values()){
+    const item={
+      id:'exam-'+exam.start+'-'+JSON.stringify(exam.title),
+      title:exam.title,
+      start:new Date(exam.start).toISOString(),
+      end:new Date(exam.stop).toISOString(),
+      location:exam.location||''
+    };
+    examCache.set(cacheKey(item),item);
+  }
+  state.exams=[...examCache.values()].sort((a,b)=>a.start.localeCompare(b.start));
   store.write(state);
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
