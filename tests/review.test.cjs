@@ -7,9 +7,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';",
    'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...args):null);')
  .replace("import { createNativeProgressView } from './progress-native';",
-   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
- .replace("import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';",
-   'const CourseRefreshActivity=()=>globalThis.__liveActivityFactory();const COURSE_REFRESH_ACTIVITY_NAME="CourseSyncRefresh";');
+   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -42,10 +40,11 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('intent/scheduled sync never accesses Live Activity, AppEvents, or BackgroundKeeper',async()=>{
- const e=await env(),calls=[];
+test('intent and app progress never import or access background lifecycle APIs',async()=>{
+ const calls=[];
+ const e=await env();
  for(const name of ['LiveActivity','AppEvents','BackgroundKeeper']){
-   Object.defineProperty(e.sandbox.__sdk,name,{get(){calls.push(name);throw Error('Intent must not access '+name);}});
+   Object.defineProperty(e.sandbox.__sdk,name,{get(){calls.push(name);throw Error('must not access '+name);}});
  }
  e.sandbox.__progressUIFactory=()=>{calls.push('progress');return {};};
  const progress=e.m.createProgress(e.state,e.store,false);
@@ -53,161 +52,46 @@ test('intent/scheduled sync never accesses Live Activity, AppEvents, or Backgrou
  progress('读取学期 161');
  await progress.finish(true);
  a.deepEqual(calls,[]);
+ const sourceProgress=source.slice(source.indexOf('function createProgress(state,store,interactive)'),source.indexOf('// Recognize a previously bound calendar'));
+ a.doesNotMatch(sourceProgress,/LiveActivity|AppEvents|BackgroundKeeper|scenePhase|live_activity|COURSE_REFRESH_ACTIVITY/);
+ a.doesNotMatch(source,/import\\(['"]\\.\\/live_activity/);
 });
 
-test('refresh presentation names both courses and exams without removed status UI',()=>{
- const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
- const island=fs.readFileSync(__dirname+'/../live_activity.tsx','utf8');
- a.match(progress,/正在同步课程和考试/);
- a.match(progress,/navigationTitle=\{title\}/);
- a.doesNotMatch(progress,/<Button\b|<Text\b|自动收起/);
- a.match(progress,/modalPresentationStyle:'pageSheet'/);
- a.match(island,/课程和考试已同步/);
- a.match(island,/正在同步课程和考试/);
- a.doesNotMatch(island,/可在 CourseSync 查看运行状态|正在刷新课表/);
- a.match(source,/读取考试日程\|更新考试日程/);
-});
-
-test('successful intent sync returns text without a Live Activity',async()=>{
- const e=await env(),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
- e.sandbox.__liveActivityFactory=()=>{calls.push('activity');return {};};
- loggedIn(e,raw([activity()]));
- await executeDaily(e);
- a.deepEqual(calls,[]);
- a.match(e.sandbox.output,/刷新成功/);
-});
-
-test('in-app refresh uses the sheet without starting a Live Activity',async()=>{
+test('foreground progress stays native and does not touch background APIs',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
+ for(const name of ['LiveActivity','AppEvents','BackgroundKeeper']){
+   Object.defineProperty(e.sandbox.__sdk,name,{get(){calls.push(name);throw Error('unexpected '+name);}});
+ }
  e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__liveActivityFactory=()=>{calls.push('activity');};
  e.sandbox.__progressUIFactory=()=>({show:()=>calls.push('sheet'),finish:()=>calls.push('close')});
  const progress=e.m.createProgress(e.state,e.store,true);
  await progress.start();
- await progress.finish();
+ progress('读取学期 161');
+ await progress.finish(true);
  a.deepEqual(calls,['sheet','close']);
 });
 
-test('in-app refresh starts Live Activity only after actual background transition',async()=>{
- const e=await env({hostEnv:'index'}),calls=[],listeners=[];
- e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?5:ms);
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>({show:()=>calls.push('sheet'),finish:()=>calls.push('close')});
- e.sandbox.__sdk.AppEvents={scenePhase:{
-   addListener(fn){listeners.push(fn);calls.push('listen');},
-   removeListener(fn){a.equal(fn,listeners[0]);calls.push('unlisten');}
- }};
- e.sandbox.__sdk.BackgroundKeeper={
-   async keepAlive(){calls.push('keep');return true;},
-   async stopKeepAlive(){calls.push('stop');}
- };
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
- e.sandbox.__liveActivityFactory=()=>({
-   activityId:'app-live',
-   async start(state){calls.push(['start',state.phase]);return true;},
-   async update(state){calls.push(['update',state.phase]);return true;},
-   async end(state){calls.push(['end',state.phase]);return true;}
- });
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();
- p('读取学期 161');
- a.equal(calls.some(c=>Array.isArray(c)&&c[0]==='start'),false);
- listeners[0]('inactive');
- await new Promise(resolve=>setImmediate(resolve));
- a.equal(calls.filter(c=>c==='keep').length,1);
- a.equal(calls.some(c=>Array.isArray(c)&&c[0]==='start'),false);
- listeners[0]('background');
- await new Promise(resolve=>setImmediate(resolve));
- p('更新考试日程');
- await new Promise(resolve=>setImmediate(resolve));
- await p.finish(true);
- a.ok(calls.some(c=>Array.isArray(c)&&c[0]==='start'));
- a.ok(calls.some(c=>Array.isArray(c)&&c[0]==='end'&&c[1]==='complete'));
- a.equal(calls.filter(c=>c==='keep').length,1);
- a.equal(calls.filter(c=>c==='stop').length,1);
- a.ok(calls.includes('unlisten'));
- a.equal(calls.filter(c=>c==='sheet').length,1);
-});
-
-test('foreground-only refresh neither acquires keeper nor starts Live Activity',async()=>{
- const e=await env({hostEnv:'index'}),calls=[],listeners=[];
- e.sandbox.__sdk.AppEvents={scenePhase:{
-   addListener(fn){listeners.push(fn);},
-   removeListener(fn){calls.push('unlisten');}
- }};
- e.sandbox.__sdk.BackgroundKeeper={async keepAlive(){calls.push('keep');return true;},async stopKeepAlive(){calls.push('stop');}};
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
- e.sandbox.__liveActivityFactory=()=>{calls.push('start');throw Error('should not launch');};
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();
- p('读取学期 161');
- await p.finish(true);
- a.deepEqual(calls,['unlisten']);
-});
-
-test('returning to App foreground releases keeper and later background reacquires it once',async()=>{
- const e=await env({hostEnv:'index'}),calls=[],listeners=[];
- e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?5:ms);
- e.sandbox.__sdk.AppEvents={scenePhase:{
-   addListener(fn){listeners.push(fn);},
-   removeListener(){calls.push('unlisten');}
- }};
- e.sandbox.__sdk.BackgroundKeeper={
-   async keepAlive(){calls.push('keep');return true;},
-   async stopKeepAlive(){calls.push('stop');}
- };
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
- e.sandbox.__liveActivityFactory=()=>({
-   activityId:'one-app-live',
-   async start(){calls.push('start');return true;},
-   async update(){return true;},
-   async end(){calls.push('end');return true;}
- });
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();
- listeners[0]('background');
- await new Promise(resolve=>setImmediate(resolve));
- listeners[0]('active');
- await new Promise(resolve=>setImmediate(resolve));
- listeners[0]('background');
- await new Promise(resolve=>setImmediate(resolve));
- await p.finish(true);
- a.equal(calls.filter(x=>x==='start').length,1);
- a.equal(calls.filter(x=>x==='keep').length,2);
- a.equal(calls.filter(x=>x==='stop').length,2);
- a.equal(calls.filter(x=>x==='end').length,1);
-});
-
-test('foreground-to-background Activity errors do not block completion or keeper cleanup',async()=>{
- const e=await env({hostEnv:'index'}),calls=[],listeners=[];
- e.sandbox.__sdk.AppEvents={scenePhase:{
-   addListener(fn){listeners.push(fn);},
-   removeListener(){calls.push('unlisten');}
- }};
- e.sandbox.__sdk.BackgroundKeeper={
-   async keepAlive(){calls.push('keep');return true;},
-   async stopKeepAlive(){calls.push('stop');}
- };
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{throw Error('Activity denied');}};
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();
- listeners[0]('background');
- await p.finish(true);
- a.deepEqual(calls,['keep','unlisten','stop']);
-});
-
-test('Live Activity failures cannot affect background sync result or Intent exit',async()=>{
+test('shortcut sync still returns Intent.text and writes calendar without background APIs',async()=>{
  const e=await env(),calls=[];
+ for(const name of ['LiveActivity','AppEvents','BackgroundKeeper']){
+   Object.defineProperty(e.sandbox.__sdk,name,{get(){calls.push(name);throw Error('unexpected '+name);}});
+ }
  e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{throw Error('unavailable');}};
- e.sandbox.__liveActivityFactory=()=>{calls.push('activity');throw Error('should not be called');};
  loggedIn(e,raw([activity()]));
  await executeDaily(e);
- a.deepEqual(calls,[]);
  a.equal(e.sandbox.output.type,'text');
  a.match(e.sandbox.output.value,/刷新成功/);
+ a.deepEqual(calls,[]);
+ a.ok(e.db.length>0);
+});
+
+test('native foreground progress presentation names courses and exams',()=>{
+ const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
+ a.match(progress,/正在同步课程和考试/);
+ a.match(progress,/navigationTitle=\\{title\\}/);
+ a.doesNotMatch(progress,/<Button\\b|<Text\\b|自动收起/);
+ a.match(progress,/modalPresentationStyle:'pageSheet'/);
+ a.match(source,/读取考试日程\\|更新考试日程/);
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
