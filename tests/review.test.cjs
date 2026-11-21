@@ -7,7 +7,8 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace("import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';",
    'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...args):null);')
  .replace("import { createNativeProgressView } from './progress-native';",
-   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
+   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
+ .replace('export function launchCourseSync()', 'function launchCourseSync()');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -26,7 +27,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const nativeScript={name:'CourseSync',env:hostEnv,queryParameters:mode==='menu'?{mode:'menu'}:{},exit:r=>{sandbox.output=r;},createRunURLScheme:(name,q)=>'scripting://run/'+encodeURIComponent(name)+'?mode='+q.mode};
  const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>[calendar,other],presentChooser:async()=>[calendar]},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
  sandbox.__sdk=sdk;sandbox.__COURSESYNC_TEST__=true;sandbox.setTimeout=setTimeout;sandbox.clearTimeout=clearTimeout;sandbox.setInterval=setInterval;sandbox.clearInterval=clearInterval;sandbox.crypto=crypto.webcrypto;
- await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',sandbox);
+ await vm.runInNewContext('(async()=>{'+source+'\nawait launchCourseSync(); globalThis.__testLaunch=launchCourseSync;})()',sandbox);
  sandbox.config=sandbox.module.exports.ScriptingAdapter.config;sandbox.args=sandbox.module.exports.ScriptingAdapter.args;
  const m=sandbox.module.exports,store=new m.Store();store.acquire();
  const state={version:1,owner:'installation-owner',calendarId:calendar.identifier,anchors:{'161':'2026-09-07'},semesters:{},minutes:0,failures:0};
@@ -1047,10 +1048,33 @@ test('remaining slider WebView is ephemeral, does not expose JS evaluation and p
  w.inner.dispose();
 });
 test('Scripting recurrence flag detects even a single visible series instance',async()=>{const e=await env();const old=e.add(lesson());old.hasRecurrenceRules=true;old.recurrenceRules=[{frequency:'weekly',interval:1}];e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,old.identifier);});
-test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
+test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait launchCourseSync();})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
 
 test('Scripting 3.2.1 entry parses as an ordinary script without a module async wrapper',()=>{a.doesNotThrow(()=>new vm.Script(source));});
-test('production ordinary-script entry runs even with process and module compatibility globals',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
+test('production ordinary-script entry runs even with process and module compatibility globals',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(e.notices.length,0);await vm.runInNewContext('launchCourseSync()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
+test('two launchCourseSync calls independently exit with typed Intent.text',async()=>{
+ const e=await env();
+ e.state.signedOut=true;
+ e.store.write(e.state);
+ e.store.release();
+ const exits=[];
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
+ e.sandbox.__sdk.Script.exit=value=>{exits.push(value);};
+ e.sandbox.__COURSESYNC_TEST__=false;
+ const first=e.sandbox.__testLaunch();
+ a.equal(e.sandbox.__COURSESYNC_LAUNCH__,first);
+ await first;
+ const second=e.sandbox.__testLaunch();
+ a.notEqual(first,second);
+ a.equal(e.sandbox.__COURSESYNC_LAUNCH__,second);
+ await second;
+ a.equal(exits.length,2);
+ for(const result of exits){
+   a.equal(result.type,'text');
+   a.match(result.value,/已退出登录/);
+ }
+});
+
 test('intent finalizer returns Intent.text even when lock release throws',async()=>{
  const e=await env();
  e.state.signedOut=true;
@@ -1084,7 +1108,7 @@ test('intent startup errors use notification and text output without a dialog',a
  e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  e.sandbox.__COURSESYNC_TEST__=false;
- await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',e.sandbox);
+ await vm.runInNewContext('(async()=>{'+source+'\nawait launchCourseSync();})()',e.sandbox);
  a.equal(alerts.length,0);
  a.ok(e.notices.some(n=>/启动失败/.test(n.title)));
  a.equal(e.sandbox.output.type,'text');
