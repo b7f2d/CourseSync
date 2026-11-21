@@ -49,8 +49,7 @@ function CourseCard({course,compact=false,width,density='normal'}){
   const fg=done?COLORS.finished:current?COLORS.white:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   // Modifier order matters: paint the rounded background AFTER sizing the
-  // card. Previously the visible background used its intrinsic text width
-  // and sat to the left inside an otherwise centered, fixed-width frame.
+  // card so the background fills the fixed-width frame.
   const cardStyle=modifiers()
     .padding(cardPadding)
     .frame(width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'})
@@ -219,7 +218,7 @@ function SmallPanel({model}){
           {chosen.location?<Text font={tight?10:11} lineLimit={1}
             minScaleFactor={0.85} foregroundStyle={detail}>{chosen.location}</Text>:null}
         </VStack>:
-        <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
+        <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程和考试</Text>}
         {remaining>0?<Text font={10} foregroundStyle={COLORS.faint}>
           +{remaining}节课
         </Text>:null}

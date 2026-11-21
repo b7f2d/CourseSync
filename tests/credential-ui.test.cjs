@@ -153,7 +153,7 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(native,/title="🚪 退出当前登录"/);
  assert.doesNotMatch(native,/运行状态与自检|切换学校/);
  assert.match(index,/presentNativeDashboard\(\{/);
- assert.match(progress,/正在同步课程与考试/);
+ assert.match(progress,/正在同步课程和考试/);
 });
 
 test('native calendar schedule view presents a real calendar with year, month, 1-30/31 days, and click-to-edit',()=>{

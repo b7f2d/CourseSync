@@ -39,7 +39,7 @@ function ProgressScreen({session,title}:{session:ProgressSession,title:string}) 
   </NavigationStack>;
 }
 
-export function createNativeProgressView(title='正在同步课程与考试'){
+export function createNativeProgressView(title='正在同步课程和考试'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,

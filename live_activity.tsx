@@ -5,8 +5,8 @@ const { HStack, Image, Text, LiveActivityUI, LiveActivityUIExpandedCenter } = Sc
 const phases = {
   connect: '连接教务系统',
   verify: '请在 Scripting 完成验证',
-  sync: '正在同步课程与考试',
-  complete: '课程与考试已同步',
+  sync: '正在同步课程和考试',
+  complete: '课程和考试已同步',
   finish: '刷新未完成',
 };
 

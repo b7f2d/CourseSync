@@ -67,12 +67,12 @@ test('shortcut refresh shows one Live Activity and no progress sheet',async()=>{
 test('refresh presentation names both courses and exams without removed status UI',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  const island=fs.readFileSync(__dirname+'/../live_activity.tsx','utf8');
- a.match(progress,/正在同步课程与考试/);
+ a.match(progress,/正在同步课程和考试/);
  a.match(progress,/navigationTitle=\{title\}/);
  a.doesNotMatch(progress,/<Button\b|<Text\b|自动收起/);
  a.match(progress,/modalPresentationStyle:'pageSheet'/);
- a.match(island,/课程与考试已同步/);
- a.match(island,/正在同步课程与考试/);
+ a.match(island,/课程和考试已同步/);
+ a.match(island,/正在同步课程和考试/);
  a.doesNotMatch(island,/可在 CourseSync 查看运行状态|正在刷新课表/);
  a.match(source,/读取考试日程\|更新考试日程/);
 });

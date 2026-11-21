@@ -7,9 +7,8 @@ const STATE_DIR = 'CourseSync/CourseSync-v2';
 const LEGACY_STATE_DIR = 'NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
 const NAMES = ['一','二','三','四','五','六','日'];
 
-// Read the shared snapshots exactly as the sync engine does. Avoid a hard
-// dependency on statSync: file metadata isn't necessary to parse our own JSON,
-// and unsupported/failed metadata calls used to mask readable caches.
+// Read the shared snapshots exactly as the sync engine does without requiring
+// statSync file metadata calls.
 const MIRROR_KEY='CourseSync.Widget.Courses.v1';
 const LEGACY_MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
 // Storage is private to the CourseSync project (no shared:true). The
@@ -34,7 +33,6 @@ export function readWidgetMirror(storage){
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
     events.push(e);
   }
-  // Legacy preview fields in older cached payloads are intentionally ignored.
   return {kind:'ready',state:{lastCheck:obj.lastCheck,
     semesters:{widget:{events}}}};
 }

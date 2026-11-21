@@ -183,7 +183,6 @@ function loadSelectedSchool(fallback='nufe',requireConfirmation=false){
     }
     if(!Keychain.contains(SCHOOL_KEY))return fallback;
     const id=Keychain.get(SCHOOL_KEY);
-    // NUFE used to be stored as a default. A legacy USTS selection was explicit.
     return schoolById(id)&&(!requireConfirmation||id==='usts')?id:fallback;
   }catch(_){return fallback;}
 }
@@ -365,7 +364,6 @@ function validateEndpointSettings(value) {
   }
   return result;
 }
-// Old manually edited endpoint overrides are deliberately ignored.
 function loadEndpointSettings(){return {...ENDPOINT_DEFAULTS};}
 function activateEndpointSettings(value){
   const valid=validateEndpointSettings(value);
@@ -400,7 +398,6 @@ async function prepareManualRefresh(state){
   else assert(typeof response.username==='string'&&typeof response.password==='string'&&
     response.username.trim().length>0&&response.username.length<=100&&
     response.password.length>0&&response.password.length<=512,'CREDENTIALS_INVALID');
-  // Do not keep the old custom URLs alive in the background.
   try{
     if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
     if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
@@ -886,8 +883,6 @@ async function fieldsFrom(html,id) {
   for(const name of ['execution','lt'])if(!out[name]){const x=lookup('name',name);if(x)out[name]=x.value||'';}
   return out;
 }
-// Passwords are entered in a native iOS sheet. No embedded HTML login page,
-// fake website domain, separate cookie store or duplicated credential bridge.
 async function fallbackCredentialForm({title='CourseSync 登录'}={}){
   const username=(await legacyInput(title,'学号')).trim();
   const password=await legacyInput(title,'密码（安全输入）',true);
@@ -1747,7 +1742,6 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   assert(!remaining,'LEGACY_VERIFY');return requests;
 }
 async function cleanupLegacyDuplicates(calendar,state,store,progress=()=>{}){
-  // Manual menu uses the same no-dialog backup -> verify -> cleanup pipeline.
   return await replaceDedicatedLegacy(calendar,state,store,progress);
 }
 async function refreshReminders(state,store){
@@ -1807,7 +1801,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整���结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程和考试由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整���结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程和考试缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程和考试。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程和考试变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程和考试在新日历中不可见。为避免重复课程和考试，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程和考试，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程和考试身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -1816,15 +1810,15 @@ const ERROR_GUIDE={
   ENDPOINT_CONFIG:['学校预设接口格式异常，已停止请求。','请更新 CourseSync 或联系维护者检查学校接口配置。'],
   ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
   ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后重新点击「立即刷新」，选择学校重试。'],
-  TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
-  EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
-  LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
+  TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程和考试。','需要检查学校学期列表；保留本地备份和事务。'],
+  EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程和考试，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
+  LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程和考试已保留。'],
   LEGACY_INVITATION:['专用日历中存在带邀请信息的旧事件，删除可能通知其他人，已停止。','先在 Apple 日历核对这条事件，勿将会议邀请混入专用课表日历。'],
-  LEGACY_VERIFY:['部分旧内容仍然可见，或 iCloud 尚未反映删除，不能报告刷新成功。','稍后再运行；将重新抓取、备份、扫描，不重复创建已有课程。'],
+  LEGACY_VERIFY:['部分旧内容仍然可见，或 iCloud 尚未反映删除，不能报告刷新成功。','稍后再运行；将重新抓取、备份、扫描，不重复创建已有课程和考试。'],
 
   RETRY_LATER:['上次刷新失败，当前处于退避等待期，未重复请求学校。','稍后重试；可前台运行查看上次失败原因。'],
   PARTIAL_SYNC:['部分学期读取或同步失败，不能报告整次刷新成功。','查看状态中的学期错误。'],
-  NOTIFICATION_FAILED:['课表写入已核验，但课程提醒提交失败。','检查 Scripting 通知权限。'],
+  NOTIFICATION_FAILED:['课表写入已核验，但课程和考试提醒提交失败。','检查 Scripting 通知权限。'],
 
   COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录错误代码并联系维护者处理；不要删除课表日历。'],
   BACKUP_FAILED:['同步或核对前的本地备份无法写入或校验，已停止写入。','检查存储空间，保留现有状态。'],
@@ -1857,7 +1851,7 @@ const ERROR_GUIDE={
   TOO_LARGE:['学校返回的数据超过脚本安全处理上限，未继续解析或覆盖课表。','保留当前课表和错误代码，等待检查接口返回内容。'],
   CRYPTO:['学校密码加密所需参数无效，未提交登录密码。','检查认证页面是否发生变化，保留错误代码供适配。'],
   CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','从主菜单「立即刷新」重新指定原日历；不要直接删除旧日历。'],
-  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程。','请在 Apple 日历确认新建日历的账户来源，必要时手工创建 iCloud 日历。由于 Scripting 不支持指定精确账户，请保留现有日历，避免重复创建。'],
+  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程和考试。','请在 Apple 日历确认新建日历的账户来源，必要时手工创建 iCloud 日历。由于 Scripting 不支持指定精确账户，请保留现有日历，避免重复创建。'],
   CALENDAR_NAME:['日历名称为空、过长或包含不支持的字符。','请输入 1～60 字符的自定义日历名称。'],
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
@@ -1871,16 +1865,16 @@ const ERROR_GUIDE={
   STATE_CORRUPT:['本地状态文件无法通过校验，不能安全恢复以前的同步进度。','不要清理状态目录或删除日历；先备份文件并检查。'],
   STATE_WRITE:['本地状态写入后校验失败，可能是存储空间或文件权限问题。','检查 iPhone 存储空间，保留旧状态文件，不要反复同步。'],
   BUDGET:['本次执行超过运行时间预算，程序停止以避免无限运行。','在前台再次运行，程序会尝试安全恢复未完成事务。'],
-  SCHEMA:['教务系统返回的课程或学期数据结构不符合预期，为避免覆盖已有课表已停止。','请保留诊断信息，等待更新解析规则。'],
+  SCHEMA:['教务系统返回的课程和考试或学期数据结构不符合预期，为避免覆盖已有课表已停止。','请保留诊断信息，等待更新解析规则。'],
   HTTP_404:['学校服务器返回 404，所请求的具体接口可能已修改或暂时不可访问。','验证学校登录和课表页面在 Safari 是否正常，检查对应接口。'],
   HTTP_500:['学校服务器返回 500，服务端暂时出现异常。','稍后重试；如果持续发生，联系学校技术支持。'],
   HTTP_502:['学校服务网关返回 502。','等学校服务恢复再同步。'],
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
-  CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
-  CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
-  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先检查可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
+  CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程和考试。','不要删除旧日历；先检查以前同步的课程和考试所在日历。'],
+  CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程和考试，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程和考试。'],
+  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程和考试。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程和考试，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先检查可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -2091,7 +2085,7 @@ async function offerDedicatedCalendar(state,store){
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
   const previous=!!state.calendarId;
   if(previous&&!await confirm('原日历不可见',
-    '未找到之前绑定的日历。如新建日历，旧日历恢复后可能出现重复课程。确定要新建一份独立的 iCloud 日历？'))fail('CANCELLED');
+    '未找到之前绑定的日历。如新建日历，旧日历恢复后可能出现重复课程和考试。确定要新建一份独立的 iCloud 日历？'))fail('CANCELLED');
   const title=validCalendarName(await input('创建 iCloud 日历','请输入自定义日历名称'));
   store.check(); // Do not create a calendar if a waiting task superseded this run.
   return await createDedicatedCalendar(title);
@@ -2139,7 +2133,7 @@ async function pickCalendar(state,store){
     }
   }else{
     const dialog=new Alert();dialog.title='原日历不可见';
-    dialog.message='请选择原来的专用日历，或创建新的 iCloud 日历。更换目标可能让已同步课程重复；不得选择包含私人活动的日历。';
+    dialog.message='请选择原来的专用日历，或创建新的 iCloud 日历。更换目标可能让已同步课程和考试重复；不得选择包含私人活动的日历。';
     dialog.addAction('指定已有日历');dialog.addAction('创建新 iCloud 日历');dialog.addCancelAction('取消');
     const choice=await dialog.presentSheet();
     if(choice<0)fail('CANCELLED');
@@ -2164,8 +2158,6 @@ async function pickCalendar(state,store){
   store.write(state);
   return picked;
 }
-// Present recovery controls only for a matching failure. The main menu and
-// routine status screen remain limited to daily-use functions.
 function availableRecovery(code,state,store){
   if(code==='COOKIE_STORAGE')return {kind:'cookie',label:'清除异常 Cookie'};
   if(code==='LOCK_CORRUPT')return {kind:'lock',label:'检查并修复异常同步锁'};
@@ -2181,7 +2173,7 @@ async function clearBrokenCookies(state,store){
   // A credential-based automatic login can be attempted on the next refresh.
   state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;
   state.lastError=null;store.write(state);
-  await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程日历均已保留，下次刷新将重新认证。');
+  await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程和考试日历均已保留，下次刷新将重新认证。');
 }
 async function exportRecoveryBackups(state,store){
   const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName]
@@ -2202,7 +2194,7 @@ async function repairAbnormalLock(store){
     return;
   }
   if(!await confirm('确认修复异常同步锁',
-    '请确认所有 Scripting 同步任务和快捷指令自动化均已停止。本操作只移除异常的锁文件，不删除账号凭据或日历课程。'))return;
+    '请确认所有 Scripting 同步任务和快捷指令自动化均已停止。本操作只移除异常的锁文件，不删除账号凭据或日历中的课程和考试。'))return;
   if(!store.fm.fileExists(path)||store.fm.readString(path)!==original){
     await notice('暂未处理','同步锁在确认期间发生变化，未修改锁文件。');return;
   }
@@ -2333,7 +2325,7 @@ async function probeSchoolSession(jar){
     pageInfo(html);
     return {
       connection:{level:'正常',detail:'学校课表入口可访问'},
-      auth:{level:'正常',detail:'刚刚使用本机 Cookie 验证成功；未获取课程或提交密码'}
+      auth:{level:'正常',detail:'刚刚使用本机 Cookie 验证成功；未获取课程和考试或提交密码'}
     };
   }catch(_){
     const login=/<form\b[^>]*\bid=["']pwdFromId["']|name=["'](?:password|username)["']/i.test(html);
@@ -2419,7 +2411,7 @@ function environmentCheckText(checks,state){
     lines.push('建议：'+actionFor(state.lastError));
   }
   return title+'（? 表示尚无法确认）\n\n'+lines.join('\n')+
-    '\n\n只读检查；不会删除课程、清理 Cookie 或修改日历。';
+    '\n\n只读检查；不会删除课程和考试、清理 Cookie 或修改日历。';
 }
 async function showEnvironmentCheck(state,store){
   const checks=await inspectEnvironment(state,store);
@@ -2508,7 +2500,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     ev.title=title;ev.notes=expectedNotes;
-    progress('更新课程同步时间：'+rec.title);
+    progress('更新课程和考试同步时间：'+rec.title);
     await ev.save();budget();modified++;
     if(ev.identifier!==nativeId){
       term.index[rec.id]=ev.identifier;
@@ -2554,7 +2546,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
   assert(Number.isFinite(low)&&Number.isFinite(high)&&high-low<=366*DAY,'SCAN_RANGE');
   const rows=new Map();
   for(let at=low;at<high;at+=45*DAY){
-    budget();progress('核对旧课程：'+localDateTime(new Date(at).toISOString()).slice(0,10));
+    budget();progress('核对旧课程和考试：'+localDateTime(new Date(at).toISOString()).slice(0,10));
     for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))rows.set(occurrenceKey(ev),ev);
   }
   const keep=new Set(Object.values(term.index||{}));
@@ -2580,7 +2572,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
     const keeper=rowsNow.find(x=>x.identifier===term.index[lesson.id]&&+x.startDate===Date.parse(lesson.start));
     assert(keeper&&eventRecord(keeper,state.owner,storedEventIndex(state)),'CALENDAR_VERIFY');
     await old.remove();count++;
-    progress('移除重复旧课程：'+count+' / '+candidates.length);
+    progress('移除重复旧课程和考试：'+count+' / '+candidates.length);
   }
   const leftovers=new Map();
   for(let at=low;at<high;at+=45*DAY){
@@ -2613,7 +2605,7 @@ async function finishTx(state,store,adapter,budget) {
     notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
   const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
-  if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
+  if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程和考试变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
   state.tx=null;store.write(state);
   await polishTermNotes(adapter.calendar,state,store,tx.sid,budget);
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
@@ -2765,7 +2757,7 @@ async function loginPreflight(state,store,progress){
   if(!f)fail('LOGIN_SCHEMA');
   if(!f.salt)fail('LOGIN_SALT_MISSING');
   if(!f.execution)fail('LOGIN_EXECUTION_MISSING');
-  return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
+  return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程和考试。';
 }
 // Credentials are automatically stored only after the school verifies login.
 // Logging out deletes local session cookies and Scripting's saved credentials,
@@ -2795,7 +2787,7 @@ async function signOut(state,store){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已清除本机会话与凭据。已同步的课程和日历均已保留。');}catch(_){}
+  try{await notice('已退出登录','已清除本机会话与凭据。已同步的课程和考试及日历均已保留。');}catch(_){}
   return true;
 }
 async function refreshFailure(code){
@@ -2882,7 +2874,7 @@ function offlineAgenda(state,now=Date.now()) {
     if(lines.length===20)break;
   }
   return (state.lastCheck?'上次同步：'+localDateTime(state.lastCheck)+'\n\n':'')+
-    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
+    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程和考试，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
@@ -3083,7 +3075,7 @@ async function manageManualSchedules(store){
     const calendars=await manualCalendars(state);
     const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
 
-    // 1. Load manual calendar events only (read-only synced events are managed by Apple Calendar)
+    // Load manual calendar events only (read-only synced events are managed by Apple Calendar)
     const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
       calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
         canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
@@ -3427,6 +3419,5 @@ else await run();
 
   }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
-// Calling an async function is supported by Scripting 3.2.1's normal script loader.
 // The Promise is exposed solely for local entry-point regression tests, never credentials.
 globalThis.__COURSESYNC_LAUNCH__=__NUFE_START();
