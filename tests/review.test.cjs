@@ -42,17 +42,25 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('intent background refresh never opens a progress sheet or Live Activity',async()=>{
+test('background intent starts, updates and ends Live Activity without showing a sheet',async()=>{
  const e=await env(),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
  e.sandbox.__sdk.Navigation={present:()=>{calls.push('sheet');}};
  e.sandbox.__progressUIFactory=()=>{calls.push('progress');return {};};
- e.sandbox.__liveActivityFactory=()=>{calls.push('activity');return {};};
+ e.sandbox.__liveActivityFactory=()=>({
+   activityId:'intent-live',
+   async start(state){calls.push(['start',state.phase]);return true;},
+   async update(state){calls.push(['update',state.phase]);return true;},
+   async end(state){calls.push(['end',state.phase]);return true;}
+ });
+ e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?5:ms);
  const progress=e.m.createProgress(e.state,e.store,false);
  await progress.start();
  progress('读取学期 161');
- await progress.finish();
- a.deepEqual(calls,[]);
+ await progress.finish(true);
+ a.deepEqual(calls,[
+   ['start','connect'],['update','sync'],['update','complete'],['end','complete']
+ ]);
 });
 
 test('refresh presentation names both courses and exams without removed status UI',()=>{
@@ -68,13 +76,19 @@ test('refresh presentation names both courses and exams without removed status U
  a.match(source,/读取考试日程\|更新考试日程/);
 });
 
-test('successful intent sync returns text without launching Live Activity',async()=>{
+test('successful intent sync returns text and completes the Live Activity',async()=>{
  const e=await env(),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
- e.sandbox.__liveActivityFactory=()=>{calls.push('activity');return {};};
+ e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?5:ms);
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__liveActivityFactory=()=>({
+   async start(state){calls.push(['start',state.phase]);return true;},
+   async update(state){calls.push(['update',state.phase]);return true;},
+   async end(state){calls.push(['end',state.phase]);return true;}
+ });
  loggedIn(e,raw([activity()]));
  await executeDaily(e);
- a.deepEqual(calls,[]);
+ a.ok(calls.some(c=>c[0]==='start'));
+ a.ok(calls.some(c=>c[0]==='end'&&c[1]==='complete'));
  a.match(e.sandbox.output,/刷新成功/);
 });
 
@@ -90,14 +104,16 @@ test('in-app refresh uses the sheet without starting a Live Activity',async()=>{
  a.deepEqual(calls,['sheet','close']);
 });
 
-test('intent sync ignores Live Activity APIs even when unavailable',async()=>{
+test('Live Activity failures cannot affect background sync result or Intent exit',async()=>{
  const e=await env(),calls=[];
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{throw Error('unavailable');}};
  e.sandbox.__liveActivityFactory=()=>{calls.push('activity');throw Error('should not be called');};
  loggedIn(e,raw([activity()]));
  await executeDaily(e);
  a.deepEqual(calls,[]);
- a.match(e.sandbox.output,/刷新成功/);
+ a.equal(e.sandbox.output.type,'text');
+ a.match(e.sandbox.output.value,/刷新成功/);
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
