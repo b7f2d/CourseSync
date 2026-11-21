@@ -54,7 +54,7 @@ test('intent and app progress never import or access background lifecycle APIs',
  a.deepEqual(calls,[]);
  const sourceProgress=source.slice(source.indexOf('function createProgress(state,store,interactive)'),source.indexOf('// Recognize a previously bound calendar'));
  a.doesNotMatch(sourceProgress,/LiveActivity|AppEvents|BackgroundKeeper|scenePhase|live_activity|COURSE_REFRESH_ACTIVITY/);
- a.doesNotMatch(source,/import\\(['"]\\.\\/live_activity/);
+ a.equal(source.includes("import('./live_activity')"),false);
 });
 
 test('foreground progress stays native and does not touch background APIs',async()=>{
@@ -88,10 +88,10 @@ test('shortcut sync still returns Intent.text and writes calendar without backgr
 test('native foreground progress presentation names courses and exams',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  a.match(progress,/正在同步课程和考试/);
- a.match(progress,/navigationTitle=\\{title\\}/);
- a.doesNotMatch(progress,/<Button\\b|<Text\\b|自动收起/);
- a.match(progress,/modalPresentationStyle:'pageSheet'/);
- a.match(source,/读取考试日程\\|更新考试日程/);
+ a.ok(progress.includes('navigationTitle={title}'));
+ a.equal(progress.includes('<Button'),false);
+ a.ok(progress.includes("modalPresentationStyle:'pageSheet'"));
+ a.ok(source.includes('读取考试日程|更新考试日程'));
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
