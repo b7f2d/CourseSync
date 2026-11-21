@@ -1087,12 +1087,14 @@ test('intent startup errors use notification and text output without a dialog',a
  const e=await env(),alerts=[];
  e.store.release();
  e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  e.sandbox.__COURSESYNC_TEST__=false;
  await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',e.sandbox);
  a.equal(alerts.length,0);
  a.ok(e.notices.some(n=>/启动失败/.test(n.title)));
- a.match(String(e.sandbox.output),/刷新失败：STARTUP_TYPE/);
+ a.equal(e.sandbox.output.type,'text');
+ a.match(e.sandbox.output.value,/刷新失败：STARTUP_TYPE/);
 });
 test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
