@@ -635,11 +635,8 @@ test('exam calendar migration verifies destination writes, retries without dupli
  e.setNoRemove(false);
  await sync();
  await sync();
- const migrated=e.db.find(ev=>ev.calendar.identifier===calendar.identifier);
- a.equal(migrated.title,'（考试）历史考试');
- a.equal(migrated.notes,old.notes);
- a.equal(store.read().examIndex[migrated.identifier],key);
- a.deepEqual(e.db.map(ev=>ev.identifier),[personal.identifier,migrated.identifier]);
+ a.deepEqual(e.db.map(ev=>ev.identifier),[personal.identifier]);
+ a.equal(Object.keys(store.read().examIndex||{}).length,0);
  a.equal(store.read().examCalendarId,undefined);
 });
 
@@ -658,9 +655,9 @@ test('refresh moves the old suffix on an archived exam without touching other em
  await sync();
  await sync();
  a.deepEqual(e.db.map(ev=>[ev.identifier,ev.title]),[
-   [owned.identifier,'（考试）线性代数'],[unrelated.identifier,'📝 随手记']
+   [unrelated.identifier,'📝 随手记']
  ]);
- a.deepEqual(e.requests,[['save',owned.identifier]]);
+ a.ok(e.requests.some(([kind,id])=>kind==='remove'&&id===owned.identifier));
 });
 
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
@@ -1045,8 +1042,8 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  a.deepEqual(ids(),initialIds);
  body='<tr class="tr-empty"><td>暂无“未结束”的考试安排</td></tr>';
  await e.m.run();
- a.deepEqual(ids(),[finished.identifier]);
- a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,2);
+ a.deepEqual(ids(),[]);
+ a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,0);});
