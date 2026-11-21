@@ -292,7 +292,13 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
   const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
   const examCalTitle = state?.examCalendarTitle || (state?.examCalendarId && state.examCalendarId !== state?.calendarId ? '考试日历' : '');
   const boundCalendarsLabel = examCalTitle ? `${calTitle} / ${examCalTitle}` : calTitle;
-  const lastTime = state?.lastCheck ? String(state.lastCheck).replace('T', ' ').slice(0, 16) : '暂无同步记录';
+  const formatLastCheck = (iso?: string) => {
+    if (!iso) return '暂无同步记录';
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return String(iso).replace('T', ' ').slice(0, 16);
+    return new Date(ms + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
+  };
+  const lastTime = formatLastCheck(state?.lastCheck);
 
   const statusDetail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
 

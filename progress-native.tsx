@@ -1,7 +1,7 @@
 // One native, indeterminate progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Navigation, NavigationStack, ProgressView, Spacer, VStack,
+  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, modifiers,
 } from 'scripting';
 
 type ProgressSession={
@@ -33,7 +33,27 @@ function ProgressScreen({session,title}:{session:ProgressSession,title:string}) 
       spacing={16}
     >
       <Spacer/>
-      <ProgressView progressViewStyle="circular"/>
+      <VStack
+        alignment="center"
+        spacing={18}
+        padding={28}
+        modifiers={modifiers().background({
+          style: { light: '#F1F5F9', dark: '#1E293B' },
+          shape: { type: 'rect', cornerRadius: 20 }
+        })}
+      >
+        <VStack
+          alignment="center"
+          frame={{ width: 52, height: 52 }}
+          modifiers={modifiers().background({
+            style: { light: '#2563EB', dark: '#1D4ED8' },
+            shape: { type: 'rect', cornerRadius: 14 }
+          })}
+        >
+          <Image systemName="calendar" font={24} foregroundStyle="#FFFFFF" />
+        </VStack>
+        <ProgressView progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
+      </VStack>
       <Spacer/>
     </VStack>
   </NavigationStack>;

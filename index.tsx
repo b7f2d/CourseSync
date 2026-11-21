@@ -3073,7 +3073,7 @@ async function manageManualSchedules(store){
   while(true){
     const state=store.read();
     const calendars=await manualCalendars(state);
-    const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
+    const start=+new Date(year-3,0,1),end=+new Date(year+6,0,1);
 
     // Load manual calendar events only (read-only synced events are managed by Apple Calendar)
     const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>

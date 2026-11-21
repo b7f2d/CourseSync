@@ -115,9 +115,6 @@ function CalendarScheduleView({
     setYear(nextY);
     setMonth(nextM);
     setSelectedDay(1);
-    if (nextY !== year) {
-      dismiss({ action: 'changeMonth', year: nextY, month: nextM });
-    }
   };
 
   const nextMonth = () => {
@@ -130,9 +127,6 @@ function CalendarScheduleView({
     setYear(nextY);
     setMonth(nextM);
     setSelectedDay(1);
-    if (nextY !== year) {
-      dismiss({ action: 'changeMonth', year: nextY, month: nextM });
-    }
   };
 
   const eventsByDay = new Map<number, ScheduleRow[]>();
@@ -203,13 +197,13 @@ function CalendarScheduleView({
       >
         <Section header={<Text>选择年月</Text>}>
           <HStack alignment="center" spacing={8} padding={{ top: 2, bottom: 2 }}>
-            <Button title="上个月" action={prevMonth} />
+            <Button title="上个月" buttonStyle="borderless" action={prevMonth} />
             <Spacer />
             <Text font="headline" fontWeight="bold">
               {year} 年 {month} 月
             </Text>
             <Spacer />
-            <Button title="下个月" action={nextMonth} />
+            <Button title="下个月" buttonStyle="borderless" action={nextMonth} />
           </HStack>
           <HStack alignment="center" spacing={12}>
             <Picker
@@ -221,7 +215,6 @@ function CalendarScheduleView({
                 if (Number.isFinite(y) && y !== year) {
                   setYear(y);
                   setSelectedDay(1);
-                  dismiss({ action: 'changeMonth', year: y, month });
                 }
               }}
             >
@@ -440,6 +433,7 @@ function CalendarScheduleView({
           <HStack alignment="center" spacing={12} padding={{ top: 6 }}>
             <Button
               title="添加课程"
+              buttonStyle="borderless"
               action={() => {
                 const startTime = new Date(year, month - 1, safeSelectedDay, 8, 0).getTime();
                 dismiss({ action: 'add', kind: 'course', start: startTime, day: safeSelectedDay });
@@ -448,6 +442,7 @@ function CalendarScheduleView({
             <Spacer />
             <Button
               title="添加考试"
+              buttonStyle="borderless"
               action={() => {
                 const startTime = new Date(year, month - 1, safeSelectedDay, 9, 0).getTime();
                 dismiss({ action: 'add', kind: 'exam', start: startTime, day: safeSelectedDay });

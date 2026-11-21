@@ -90,7 +90,7 @@ test('only school slider verification retains ephemeral, isolated WebKit',()=>{
 });
 
 test('native progress replaces the HTML view with one stable system sheet',()=>{
- assert.match(progress,/ProgressView progressViewStyle="circular"/);
+ assert.match(progress,/progressViewStyle="linear"/);
  assert.match(progress,/Navigation\.present\(\{/);
  assert.match(progress,/session\.suppressed=true/);
  assert.match(progress,/session\.revision\+\+/);
