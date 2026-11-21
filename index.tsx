@@ -2912,25 +2912,23 @@ const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/f
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
 
 async function queryFreeRoomsForPeriod(http,date,units){
-  try{
-    const payload={
-      campusId:2,buildingId:'',roomId:'',roomType:undefined,seatsForLessonGte:'',
-      dateTimeSegmentCmd:{startDateTime:date,endDateTime:date,units:units}
-    };
-    const data=await http.json(NUFE_FREE_ROOM_ENDPOINT,{body:JSON.stringify(payload),json:true});
-    const list=Array.isArray(data?.roomList)?data.roomList:[];
-    return list.filter(r=>{
-      const bName=r.building?.nameZh||r.buildingName;
-      return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
-    }).sort((a,b)=>{
-      const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
-      const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
-      if(bpA!==bpB)return bpA-bpB;
-      const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
-      if(flA!==flB)return flA-flB;
-      return String(a.nameZh||a.name).localeCompare(String(b.nameZh||b.name));
-    });
-  }catch(_){return [];}
+  const payload={
+    campusId:2,buildingId:'',roomId:'',roomType:undefined,seatsForLessonGte:'',
+    dateTimeSegmentCmd:{startDateTime:date,endDateTime:date,units:units}
+  };
+  const data=await http.json(NUFE_FREE_ROOM_ENDPOINT,{body:JSON.stringify(payload),json:true});
+  assert(Array.isArray(data?.roomList),'SCHEMA');
+  return data.roomList.filter(r=>{
+    const bName=r.building?.nameZh||r.buildingName;
+    return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
+  }).sort((a,b)=>{
+    const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
+    const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
+    if(bpA!==bpB)return bpA-bpB;
+    const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
+    if(flA!==flB)return flA-flB;
+    return String(a.nameZh||a.name).localeCompare(String(b.nameZh||b.name));
+  });
 }
 
 const MORNING_UNITS=['1','2','3','4'];
@@ -2946,7 +2944,7 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   // 1. 全天同一教室 (上午 + 下午 + 晚上)
   const allDayRoom=mornRooms.find(r=>inList(aftRooms,r)&&inList(eveRooms,r));
   if(allDayRoom){
-    return [`• 全天：${formatRoom(allDayRoom)}`];
+    return [{period:'全天',room:formatRoom(allDayRoom)}];
   }
 
   // 2. 白天同一教室 (上午 + 下午)
@@ -2955,16 +2953,16 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
 
   if(mornAftRoom){
     return [
-      `• 白天：${formatRoom(mornAftRoom)}`,
-      `• 晚上：${formatRoom(eveRooms[0]||null)}`
+      {period:'白天',room:formatRoom(mornAftRoom)},
+      {period:'晚上',room:formatRoom(eveRooms[0]||null)}
     ];
   }
 
   // 3. 下午至晚上同一教室 (下午 + 晚上)
   if(aftEveRoom){
     return [
-      `• 上午：${formatRoom(mornRooms[0]||null)}`,
-      `• 下午至晚上：${formatRoom(aftEveRoom)}`
+      {period:'上午',room:formatRoom(mornRooms[0]||null)},
+      {period:'下午至晚上',room:formatRoom(aftEveRoom)}
     ];
   }
 
@@ -2972,17 +2970,17 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const mornEveRoom=mornRooms.find(r=>inList(eveRooms,r));
   if(mornEveRoom){
     return [
-      `• 上午：${formatRoom(mornEveRoom)}`,
-      `• 下午：${formatRoom(aftRooms[0]||null)}`,
-      `• 晚上：${formatRoom(mornEveRoom)}（同上午）`
+      {period:'上午',room:formatRoom(mornEveRoom)},
+      {period:'下午',room:formatRoom(aftRooms[0]||null)},
+      {period:'晚上',room:`${formatRoom(mornEveRoom)}（同上午）`}
     ];
   }
 
   // 5. 各时段独立教室
   return [
-    `• 上午：${formatRoom(mornRooms[0]||null)}`,
-    `• 下午：${formatRoom(aftRooms[0]||null)}`,
-    `• 晚上：${formatRoom(eveRooms[0]||null)}`
+    {period:'上午',room:formatRoom(mornRooms[0]||null)},
+    {period:'下午',room:formatRoom(aftRooms[0]||null)},
+    {period:'晚上',room:formatRoom(eveRooms[0]||null)}
   ];
 }
 
@@ -2992,36 +2990,41 @@ async function queryDayRooms(http,date){
     if(!r.length)r=await queryFreeRoomsForPeriod(http,date,AFTERNOON_FALLBACK);
     return r;
   }
-  const [morn,aft,eve]=await Promise.all([
+  const results=await Promise.allSettled([
     queryFreeRoomsForPeriod(http,date,MORNING_UNITS),
     getAft(),
     queryFreeRoomsForPeriod(http,date,EVENING_UNITS)
   ]);
-  return resolveDayRooms(morn,aft,eve);
+  const rejected=results.find(result=>result.status==='rejected');
+  if(rejected)throw rejected.reason;
+  return resolveDayRooms(...results.map(result=>result.value));
 }
 
-async function queryAndShowFreeRooms(http,interactive=true,stage=()=>{},manualAuth=null,now=Date.now(),progress=null){
-  stage('正在连接教务系统...');
+async function queryFreeRoomsToday(http,onStage=()=>{},now=Date.now()){
+  await coursePage(http,true,onStage);
+  onStage();
+  const date=localDateTime(new Date(now).toISOString()).slice(0,10);
+  return {date,rooms:await queryDayRooms(http,date)};
+}
+
+async function loadFreeRoomPage(isActive){
+  const checkActive=()=>{if(!isActive())fail('CANCELLED');};
   try{
-    await coursePage(http,interactive,stage,manualAuth?.username?manualAuth:null);
-  }catch(e){
-    if(progress)await progress.finish();
-    if(['AUTH_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(e.code)){
-      await notice('登录失败','请核对学号和密码，重新登录后再查询。');
-      return '';
-    }
-    throw e;
+    checkActive();
+    const cookieKey=schoolKey(KEY);
+    const http=new HTTP(readCookieJar(),cookies=>{
+      checkActive();
+      Keychain.set(cookieKey,JSON.stringify(cookies));
+    },checkActive);
+    const results=await queryFreeRoomsToday(http,checkActive);
+    return {kind:'ready',...results};
+  }catch(error){
+    const code=diagnosticCode(error);
+    if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
+    if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
+      return {kind:'error',message:'登录失败，请重新登录后再查询。'};
+    return {kind:'error',message:'查询失败，请稍后重试。'};
   }
-  stage('正在查询空闲教室...');
-  const today=localDateTime(new Date(now).toISOString()).slice(0,10);
-  const todayLines=await queryDayRooms(http,today);
-  const message=[
-    `【今天 ${today}】`,
-    ...todayLines
-  ].join('\n');
-  if(progress)await progress.finish();
-  await notice('空闲教室',message);
-  return message;
 }
 
 const MANUAL_SCHEDULE_NOTE='手动添加 · CourseSync';
@@ -3261,7 +3264,8 @@ async function run() {
           }catch(_){}
         }
         selected=await presentNativeDashboard({
-          state:dashboardState,schoolName,canFreeRooms,canSignOut,statusMessage
+          state:dashboardState,schoolName,canSignOut,statusMessage,
+          loadFreeRooms:canFreeRooms?loadFreeRoomPage:undefined
         });
       }
       if(selected==='dismiss')return;
@@ -3269,7 +3273,6 @@ async function run() {
         const menu=new Alert();menu.title='CourseSync';
         menu.message=statusMessage;
         menu.addAction('立即刷新');
-        if(canFreeRooms)menu.addAction('空闲教室');
         if(canSignOut)menu.addDestructiveAction('退出登录');
         menu.addCancelAction('关闭');
         selected=await menu.presentSheet();
@@ -3281,42 +3284,8 @@ async function run() {
           await manageManualSchedules(store);
         }
         return;
-      }else{
-        if(canFreeRooms&&selected===1){
-          let progress=null;
-          try{
-            if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
-              progress=createNativeProgressView('正在查询空闲教室');
-              progress.show();
-              await new Promise(resolve=>Timer.schedule(100,false,resolve));
-            }
-          }catch(_){progress=null;}
-          let waiting=false;
-          const freeRoomStage=msg=>{
-            if(!progress)return;
-            const label=String(msg||'');
-            if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
-              waiting=true;
-              return progress.pause?.();
-            }
-            if(waiting&&/认证完成后读取课表页面|正在查询空闲教室/.test(label)){
-              waiting=false;
-              progress.resume?.();
-            }
-            if(/正在连接教务系统/.test(label))progress.update?.(0.35);
-            else if(/正在查询空闲教室/.test(label))progress.update?.(0.75);
-          };
-          try{
-            const jar=readCookieJar();
-            const http=new HTTP(jar,c=>Keychain.set(schoolKey(KEY),JSON.stringify(c)),()=>{},freeRoomStage);
-            await queryAndShowFreeRooms(http,interactive,freeRoomStage,null,Date.now(),progress);
-          }finally{
-            if(progress)await progress.finish();
-          }
-          return;
-        }
-        if(canSignOut&&selected===(canFreeRooms?2:1))action=13;
       }
+      if(canSignOut&&selected===1)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -3455,7 +3424,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryAndShowFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms,manageManualSchedules,changeManualSchedule,manualCalendars,scheduleFields};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms,manageManualSchedules,changeManualSchedule,manualCalendars,scheduleFields};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.

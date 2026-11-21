@@ -4,7 +4,7 @@
 import {
   Navigation, NavigationStack, List, Section, Text,
   TextField, SecureField, Button, Image, Picker, useState,
-  VStack, HStack, Spacer, modifiers,
+  VStack, HStack, Spacer, ProgressView, modifiers, useRef,
 } from 'scripting';
 
 function LoginView({ title }: { title: string }) {
@@ -209,18 +209,63 @@ export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
   return {kind:'credentials',schoolId:result.schoolId,username,password};
 }
 
-// Native App Dashboard presenting a modern, styled iOS app interface for CourseSync.
+type FreeRoomResult =
+  | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
+  | {kind: 'error'; message: string};
+type FreeRoomPage = FreeRoomResult | {kind: 'loading'};
+
+function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
+  return <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
+    {page.kind === 'loading' ? (
+      <Section>
+        <ProgressView progressViewStyle="circular" label={<Text>正在查询</Text>} />
+      </Section>
+    ) : page.kind === 'error' ? (
+      <Section>
+        <Text foregroundStyle="secondaryLabel">{page.message}</Text>
+        <Button title="重试" action={retry} />
+      </Section>
+    ) : (
+      <Section header={<Text>今天 {page.date}</Text>}>
+        {page.rooms.map(({period, room}) => (
+          <HStack key={period} alignment="center" spacing={12}>
+            <Text foregroundStyle="secondaryLabel">{period}</Text>
+            <Spacer />
+            <Text>{room}</Text>
+          </HStack>
+        ))}
+      </Section>
+    )}
+  </List>;
+}
+
 export type DashboardOptions = {
   state: any;
   schoolName: string;
-  canFreeRooms: boolean;
   canSignOut: boolean;
   statusMessage: string;
   hasCalendar?: boolean;
+  loadFreeRooms?: (isActive: () => boolean) => Promise<FreeRoomResult>;
 };
 
-function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMessage, hasCalendar = true }: DashboardOptions) {
+function DashboardView({ state, schoolName, canSignOut, statusMessage, hasCalendar = true, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
+  const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
+  const roomQuery = useRef({visible: false, pending: false});
+  const openFreeRooms = async () => {
+    if (!loadFreeRooms) return;
+    const query = roomQuery.current;
+    query.visible = true;
+    setFreeRoomPage({kind: 'loading'});
+    if (query.pending) return;
+    query.pending = true;
+    try {
+      const result = await loadFreeRooms(() => query.visible);
+      if (query.visible) setFreeRoomPage(result);
+    } finally {
+      query.pending = false;
+    }
+  };
   const isSignedOut = !!state?.signedOut;
   const isFailed = state?.runStatus === 'failed';
   const isSuccess = state?.runStatus === 'success';
@@ -244,6 +289,16 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
       <List
         navigationTitle="CourseSync"
         navigationBarTitleDisplayMode="large"
+        navigationDestination={{
+          isPresented: freeRoomPage !== null,
+          onChanged: visible => {
+            if (!visible) {
+              roomQuery.current.visible = false;
+              setFreeRoomPage(null);
+            }
+          },
+          content: freeRoomPage ? <FreeRoomView page={freeRoomPage} retry={openFreeRooms} /> : <Text />,
+        }}
         toolbar={{
           cancellationAction: <Button title="完成" action={() => dismiss(-1)} />
         }}
@@ -310,17 +365,17 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
               action={() => dismiss({ schedule: true })}
             />
           ) : null}
-          {canFreeRooms ? (
+          {loadFreeRooms ? (
             <Button
               title="查询空闲教室"
-              action={() => dismiss(1)}
+              action={openFreeRooms}
             />
           ) : null}
           {canSignOut ? (
             <Button
               title="退出当前登录"
               role="destructive"
-              action={() => dismiss(canFreeRooms ? 2 : 1)}
+              action={() => dismiss(1)}
             />
           ) : null}
         </Section>
@@ -330,12 +385,20 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
-  const result = await Navigation.present({
-    element: <DashboardView {...options} />,
-    modalPresentationStyle: 'pageSheet'
-  });
-  if (result === null || result === undefined || result === -1) return 'dismiss';
-  return result;
+  let presented = true;
+  const loadFreeRooms = options.loadFreeRooms;
+  try {
+    const result = await Navigation.present({
+      element: <DashboardView {...options} loadFreeRooms={loadFreeRooms
+        ? isActive => loadFreeRooms(() => presented && isActive())
+        : undefined} />,
+      modalPresentationStyle: 'pageSheet'
+    });
+    if (result === null || result === undefined || result === -1) return 'dismiss';
+    return result;
+  } finally {
+    presented = false;
+  }
 }
 
 // Native Calendar Manager: displays existing calendars with colors, source, and allows adding new calendars.

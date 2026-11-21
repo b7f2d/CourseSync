@@ -134,12 +134,15 @@ test('native secure input preserves exact secret without trimming and supports u
 
 test('NUFE provides free classroom query button in dashboard only, not in unauthenticated login/setup views',()=>{
  assert.match(native,/title="查询空闲教室"/);
- const loginSection=native.slice(0,native.indexOf('function DashboardView('));
+ const loginSection=native.slice(0,native.indexOf('type FreeRoomResult'));
  assert.doesNotMatch(loginSection,/查询空闲教室|freeRooms/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
- assert.match(index,/queryAndShowFreeRooms/);
+ assert.match(index,/queryFreeRoomsToday/);
+ assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
+ assert.match(native,/navigationDestination=\{\{/);
+ assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 

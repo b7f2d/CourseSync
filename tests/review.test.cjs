@@ -867,8 +867,8 @@ test('main menu keeps refresh and available sign-out without removed status entr
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','空闲教室','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,true]);
  a.equal(e.requests.length,0);
 });
 test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
@@ -1246,7 +1246,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1944,22 +1944,23 @@ test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms
  const rAll={id:1,nameZh:'博远楼JC101',floor:1};
  const rAft={id:2,nameZh:'博远楼JC203',floor:2};
  const rEve={id:3,nameZh:'博观楼JB105',floor:1};
+ const describe=rows=>rows.map(({period,room})=>period+'：'+room).join('\n');
 
  // 1. 全天同一教室
  const allDayLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rAll,rEve]);
- a.equal(allDayLines.join('\n'),'• 全天：博远楼JC101');
+ a.equal(describe(allDayLines),'全天：博远楼JC101');
 
  // 2. 白天同一教室 (上午 + 下午)
  const mornAftLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rEve]);
- a.equal(mornAftLines.join('\n'),'• 白天：博远楼JC101\n• 晚上：博观楼JB105');
+ a.equal(describe(mornAftLines),'白天：博远楼JC101\n晚上：博观楼JB105');
 
  // 3. 下午至晚上同一教室 (下午 + 晚上)
  const aftEveLines=e.m.resolveDayRooms([rAll],[rAft],[rAft,rEve]);
- a.equal(aftEveLines.join('\n'),'• 上午：博远楼JC101\n• 下午至晚上：博远楼JC203');
+ a.equal(describe(aftEveLines),'上午：博远楼JC101\n下午至晚上：博远楼JC203');
 
  // 4. 三时段各不相同
  const sepLines=e.m.resolveDayRooms([rAll],[rAft],[rEve]);
- a.equal(sepLines.join('\n'),'• 上午：博远楼JC101\n• 下午：博远楼JC203\n• 晚上：博观楼JB105');
+ a.equal(describe(sepLines),'上午：博远楼JC101\n下午：博远楼JC203\n晚上：博观楼JB105');
 });
 
 test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
@@ -1978,50 +1979,43 @@ test('NUFE free classroom query only requests today in China time and merges per
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
    }
  };
- let noticeTitle=null,noticeMsg=null;
- e.sandbox.__sdk.Dialog.alert=async o=>{noticeTitle=o.title;noticeMsg=o.message;};
- const msg=await e.m.queryAndShowFreeRooms(http,true,()=>{},null,Date.parse('2026-11-15T16:30:00Z'));
- a.match(msg,/【今天 2026-11-16】/);
- a.ok(msg.includes('白天：博远楼JC101'));
- a.ok(msg.includes('晚上：博远楼JC403'));
- a.doesNotMatch(msg,/明天|2026-11-17/);
+ const result=await e.m.queryFreeRoomsToday(http,()=>{},Date.parse('2026-11-15T16:30:00Z'));
+ a.equal(result.date,'2026-11-16');
+ a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
+   {period:'白天',room:'博远楼JC101'},
+   {period:'晚上',room:'博远楼JC403'}
+ ]);
  a.equal(requestedSegments.length,3);
  for(const segment of requestedSegments){
    a.equal(segment.startDateTime,'2026-11-16');
    a.equal(segment.endDateTime,'2026-11-16');
  }
- a.equal(noticeTitle,'空闲教室');
- a.equal(noticeMsg,msg);
  a.equal(e.db.length,dbCountBefore);
 });
 
-test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes explanation, and triggers query without calendar sync',async()=>{
+test('NUFE dashboard loads classroom rows and retryable failures without extra dialogs or calendar sync',async()=>{
  const e=await env({hostEnv:'index'});
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.store.write(e.state);
  e.store.release();
  const dbCountBefore=e.db.length;
- let actionSheetLabels=null;
- e.sandbox.__sdk.Dialog.actionSheet=async opts=>{
-   actionSheetLabels=opts.actions.map(x=>x.label);
-   return opts.actions.findIndex(x=>x.label==='空闲教室');
- };
- let progressShown=0,progressClosed=0,closed=false;
- e.sandbox.__sdk.Navigation={present:async()=>null,useDismiss:()=>()=>{}};
- e.sandbox.__progressUIFactory=(title,subtitle)=>{
-   return {
-     show:()=>{progressShown++;},
-     finish:()=>{if(!closed){closed=true;progressClosed++;}}
-   };
- };
- let noticeTitle=null,noticeMsg=null,progressClosedWhenNotice=false;
- e.sandbox.__sdk.Dialog.alert=async o=>{
-   noticeTitle=o.title;
-   noticeMsg=o.message;
-   progressClosedWhenNotice=(progressClosed===1);
+ const shownDialogs=[];
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{shownDialogs.push(opts);return -1;};
+ e.sandbox.__sdk.Dialog.alert=async opts=>{shownDialogs.push(opts);};
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ let results, failure, cancelled, roomRequests=0, offline=false;
+ e.sandbox.__nativeDashboardMock=async opts=>{
+   a.equal(typeof opts.loadFreeRooms,'function');
+   results=await opts.loadFreeRooms(()=>true);
+   offline=true;
+   failure=await opts.loadFreeRooms(()=>true);
+   cancelled=await opts.loadFreeRooms(()=>false);
+   return 'dismiss';
  };
  e.sandbox.fetchImpl=async(url,options)=>{
    if(url.includes('free-list')){
+     roomRequests++;
+     if(offline)throw Error('offline');
      return {
        status:200,headers:new Map(),cookies:[],mimeType:'application/json',
        text:async()=>JSON.stringify({roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]})
@@ -2033,13 +2027,13 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
    };
  };
  await e.m.run();
- a.equal(actionSheetLabels.join(','),'立即刷新,空闲教室,退出登录');
- a.equal(progressShown,1);
- a.equal(progressClosed,1);
- a.equal(progressClosedWhenNotice,true);
- a.equal(noticeTitle,'空闲教室');
- a.ok(noticeMsg.includes('博远楼JC101'));
- a.ok(!noticeMsg.includes('说明：'));
+ a.equal(results.kind,'ready');
+ a.equal(results.rooms[0].room,'博远楼JC101');
+ a.equal(failure.kind,'error');
+ a.match(failure.message,/查询失败/);
+ a.match(cancelled.message,/已取消/);
+ a.equal(roomRequests,6);
+ a.deepEqual(shownDialogs,[]);
  a.equal(e.db.length,dbCountBefore);
 });
 
