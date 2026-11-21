@@ -2984,30 +2984,36 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   ];
 }
 
-async function queryDayRooms(http,date){
+async function queryDayRooms(http,date,onProgress=()=>{}){
   async function getAft(){
     let r=await queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS);
     if(!r.length)r=await queryFreeRoomsForPeriod(http,date,AFTERNOON_FALLBACK);
     return r;
   }
-  const results=await Promise.allSettled([
+  let completed=0;
+  const requests=[
     queryFreeRoomsForPeriod(http,date,MORNING_UNITS),
     getAft(),
     queryFreeRoomsForPeriod(http,date,EVENING_UNITS)
-  ]);
+  ];
+  const results=await Promise.allSettled(requests.map(request=>request.then(rooms=>{
+    onProgress(0.25+0.25*++completed);
+    return rooms;
+  })));
   const rejected=results.find(result=>result.status==='rejected');
   if(rejected)throw rejected.reason;
   return resolveDayRooms(...results.map(result=>result.value));
 }
 
-async function queryFreeRoomsToday(http,onStage=()=>{},now=Date.now()){
+async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now=Date.now()){
   await coursePage(http,true,onStage);
   onStage();
+  onProgress(0.25);
   const date=localDateTime(new Date(now).toISOString()).slice(0,10);
-  return {date,rooms:await queryDayRooms(http,date)};
+  return {date,rooms:await queryDayRooms(http,date,onProgress)};
 }
 
-async function loadFreeRoomPage(isActive){
+async function loadFreeRoomPage(isActive,onProgress){
   const checkActive=()=>{if(!isActive())fail('CANCELLED');};
   try{
     checkActive();
@@ -3016,7 +3022,7 @@ async function loadFreeRoomPage(isActive){
       checkActive();
       Keychain.set(cookieKey,JSON.stringify(cookies));
     },checkActive);
-    const results=await queryFreeRoomsToday(http,checkActive);
+    const results=await queryFreeRoomsToday(http,checkActive,onProgress);
     return {kind:'ready',...results};
   }catch(error){
     const code=diagnosticCode(error);

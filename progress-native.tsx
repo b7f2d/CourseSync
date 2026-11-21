@@ -15,6 +15,30 @@ type ProgressSession={
   dismiss:(() => void)|null;
 };
 
+export function NativeProgressCard({value}:{value:number}) {
+  return <VStack
+    alignment="center"
+    spacing={18}
+    padding={28}
+    modifiers={modifiers().background({
+      style: { light: '#F1F5F9', dark: '#1E293B' },
+      shape: { type: 'rect', cornerRadius: 20 }
+    })}
+  >
+    <VStack
+      alignment="center"
+      frame={{ width: 52, height: 52 }}
+      modifiers={modifiers().background({
+        style: { light: '#2563EB', dark: '#1D4ED8' },
+        shape: { type: 'rect', cornerRadius: 14 }
+      })}
+    >
+      <Image systemName="calendar" font={24} foregroundStyle="#FFFFFF" />
+    </VStack>
+    <ProgressView value={value} total={1} progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
+  </VStack>;
+}
+
 function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
   const dismiss=Navigation.useDismiss();
   const [value,setValue]=useState(session.progress);
@@ -37,27 +61,7 @@ function ProgressScreen({session,title}:{session:ProgressSession,title:string}) 
       spacing={16}
     >
       <Spacer/>
-      <VStack
-        alignment="center"
-        spacing={18}
-        padding={28}
-        modifiers={modifiers().background({
-          style: { light: '#F1F5F9', dark: '#1E293B' },
-          shape: { type: 'rect', cornerRadius: 20 }
-        })}
-      >
-        <VStack
-          alignment="center"
-          frame={{ width: 52, height: 52 }}
-          modifiers={modifiers().background({
-            style: { light: '#2563EB', dark: '#1D4ED8' },
-            shape: { type: 'rect', cornerRadius: 14 }
-          })}
-        >
-          <Image systemName="calendar" font={24} foregroundStyle="#FFFFFF" />
-        </VStack>
-        <ProgressView value={value} total={1} progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
-      </VStack>
+      <NativeProgressCard value={value} />
       <Spacer/>
     </VStack>
   </NavigationStack>;

@@ -1979,7 +1979,9 @@ test('NUFE free classroom query only requests today in China time and merges per
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
    }
  };
- const result=await e.m.queryFreeRoomsToday(http,()=>{},Date.parse('2026-11-15T16:30:00Z'));
+ const progress=[];
+ const result=await e.m.queryFreeRoomsToday(http,()=>{},value=>progress.push(value),Date.parse('2026-11-15T16:30:00Z'));
+ a.deepEqual(progress,[0.25,0.5,0.75,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
    {period:'白天',room:'博远楼JC101'},
@@ -2003,10 +2005,11 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{shownDialogs.push(opts);return -1;};
  e.sandbox.__sdk.Dialog.alert=async opts=>{shownDialogs.push(opts);};
  e.sandbox.__sdk.Navigation={present:async()=>null};
+ const progress=[];
  let results, failure, cancelled, roomRequests=0, offline=false;
  e.sandbox.__nativeDashboardMock=async opts=>{
    a.equal(typeof opts.loadFreeRooms,'function');
-   results=await opts.loadFreeRooms(()=>true);
+   results=await opts.loadFreeRooms(()=>true,value=>progress.push(value));
    offline=true;
    failure=await opts.loadFreeRooms(()=>true);
    cancelled=await opts.loadFreeRooms(()=>false);
@@ -2028,6 +2031,7 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  };
  await e.m.run();
  a.equal(results.kind,'ready');
+ a.deepEqual(progress,[0.25,0.5,0.75,1]);
  a.equal(results.rooms[0].room,'博远楼JC101');
  a.equal(failure.kind,'error');
  a.match(failure.message,/查询失败/);

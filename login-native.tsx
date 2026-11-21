@@ -4,8 +4,9 @@
 import {
   Navigation, NavigationStack, List, Section, Text,
   TextField, SecureField, Button, Image, Picker, useState,
-  VStack, HStack, Spacer, ProgressView, modifiers, useRef,
+  VStack, HStack, Spacer, modifiers, useRef,
 } from 'scripting';
+import { NativeProgressCard } from './progress-native';
 
 function LoginView({ title }: { title: string }) {
   const dismiss = Navigation.useDismiss();
@@ -212,15 +213,23 @@ export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
 type FreeRoomResult =
   | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
   | {kind: 'error'; message: string};
-type FreeRoomPage = FreeRoomResult | {kind: 'loading'};
+type FreeRoomPage = FreeRoomResult | {kind: 'loading'; progress: number};
 
 function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
+  if (page.kind === 'loading') {
+    return <VStack
+      navigationTitle="正在查询空闲教室"
+      navigationBarTitleDisplayMode="inline"
+      frame={{maxWidth:'infinity',maxHeight:'infinity'}}
+      padding={24}
+    >
+      <Spacer />
+      <NativeProgressCard value={page.progress} />
+      <Spacer />
+    </VStack>;
+  }
   return <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
-    {page.kind === 'loading' ? (
-      <Section>
-        <ProgressView progressViewStyle="circular" label={<Text>正在查询</Text>} />
-      </Section>
-    ) : page.kind === 'error' ? (
+    {page.kind === 'error' ? (
       <Section>
         <Text foregroundStyle="secondaryLabel">{page.message}</Text>
         <Button title="重试" action={retry} />
@@ -245,22 +254,26 @@ export type DashboardOptions = {
   canSignOut: boolean;
   statusMessage: string;
   hasCalendar?: boolean;
-  loadFreeRooms?: (isActive: () => boolean) => Promise<FreeRoomResult>;
+  loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
 
 function DashboardView({ state, schoolName, canSignOut, statusMessage, hasCalendar = true, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
-  const roomQuery = useRef({visible: false, pending: false});
+  const roomQuery = useRef({visible: false, pending: false, progress: 0.08});
   const openFreeRooms = async () => {
     if (!loadFreeRooms) return;
     const query = roomQuery.current;
     query.visible = true;
-    setFreeRoomPage({kind: 'loading'});
+    if (!query.pending) query.progress = 0.08;
+    setFreeRoomPage({kind: 'loading', progress: query.progress});
     if (query.pending) return;
     query.pending = true;
     try {
-      const result = await loadFreeRooms(() => query.visible);
+      const result = await loadFreeRooms(() => query.visible, progress => {
+        query.progress = progress;
+        if (query.visible) setFreeRoomPage({kind: 'loading', progress});
+      });
       if (query.visible) setFreeRoomPage(result);
     } finally {
       query.pending = false;
@@ -390,7 +403,9 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
   try {
     const result = await Navigation.present({
       element: <DashboardView {...options} loadFreeRooms={loadFreeRooms
-        ? isActive => loadFreeRooms(() => presented && isActive())
+        ? (isActive, updateProgress) => loadFreeRooms(() => presented && isActive(), progress => {
+          if (presented) updateProgress(progress);
+        })
         : undefined} />,
       modalPresentationStyle: 'pageSheet'
     });
