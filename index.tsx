@@ -929,11 +929,22 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
-  // Scan the future for cancellations and only the historical windows
-  // represented in the school response. Keep history when the school archives it.
+  // Every successful school response is authoritative, including an empty list.
+  // Scan historical managed exams as well so deletions are reflected in EventKit,
+  // rather than merely dropping them from the widget cache.
   const windowSize=90*DAY;
-  const historical=new Set([...target.values()].filter(exam=>exam.start<now)
-    .map(exam=>Math.floor(exam.start/windowSize)*windowSize));
+  const storedIndex=state.examIndex||{};
+  const storedStarts=Object.values(storedIndex).map(key=>{
+    try{
+      if(typeof key!=='string'||!key.startsWith(prefix))return NaN;
+      const parsed=JSON.parse(key.slice(prefix.length));
+      return Number(parsed[2]);
+    }catch(_){return NaN;}
+  });
+  const priorStarts=(state.exams||[]).map(exam=>Date.parse(exam.start));
+  const historical=new Set([...target.values()].map(exam=>exam.start)
+    .concat(storedStarts,priorStarts).filter(start=>Number.isFinite(start)&&start<now)
+    .map(start=>Math.floor(start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   await migrateLegacyExamCalendar(state,store,calendar,windows,progress);
   const index=Object.assign(Object.create(null),state.examIndex);
@@ -945,7 +956,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
       store.check();
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
-        if(typeof key==='string'&&key.startsWith(prefix)&&(target.has(key)||(!source.unpublished&&+ev.endDate>now))){
+        if(typeof key==='string'&&key.startsWith(prefix)){
           owned.set(occurrenceKey(ev),ev);
         }
       }
@@ -954,13 +965,9 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   };
   const rows=await read();
   if(!rows.length&&!target.size){
-    // An empty current portal page must not erase already synchronized history.
-    // Future entries, however, are no longer published and must be removed.
-    const past=(state.exams||[]).filter(exam=>exam&&typeof exam.start==='string'&&
-      Number.isFinite(Date.parse(exam.start))&&Date.parse(exam.start)<now);
-    if(JSON.stringify(past)!==JSON.stringify(state.exams||[])){
-      state.exams=past;store.write(state);
-    }
+    state.exams=[];
+    state.examIndex={};
+    store.write(state);
     return;
   }
   const current=new Map();
@@ -999,27 +1006,13 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   // Save the identifier mapping before replacing recoverable markers with readable notes.
   for(const ev of final)index[ev.identifier]=keyOf(ev);
   state.examIndex=index;
-  // The school may stop returning past exam records. Preserve already verified
-  // historical entries in the local cache; missing future exams are cancellations.
-  // This is not a substitute for fetching historical records the school exposes.
-  const verifiedPast=(state.exams||[]).filter(exam=>
-    exam&&typeof exam.start==='string'&&Number.isFinite(Date.parse(exam.start))&&
-    Date.parse(exam.start)<now&&typeof exam.title==='string'&&
-    typeof exam.end==='string'&&Number.isFinite(Date.parse(exam.end)));
-  const examCache=new Map();
-  const cacheKey=exam=>JSON.stringify([exam.title,exam.start]);
-  for(const exam of verifiedPast)examCache.set(cacheKey(exam),exam);
-  for(const exam of target.values()){
-    const item={
-      id:'exam-'+exam.start+'-'+JSON.stringify(exam.title),
-      title:exam.title,
-      start:new Date(exam.start).toISOString(),
-      end:new Date(exam.stop).toISOString(),
-      location:exam.location||''
-    };
-    examCache.set(cacheKey(item),item);
-  }
-  state.exams=[...examCache.values()].sort((a,b)=>a.start.localeCompare(b.start));
+  state.exams=[...target.values()].map((exam,idx)=>({
+    id:'exam-'+exam.start+'-'+idx,
+    title:exam.title,
+    start:new Date(exam.start).toISOString(),
+    end:new Date(exam.stop).toISOString(),
+    location:exam.location||''
+  }));
   store.write(state);
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
