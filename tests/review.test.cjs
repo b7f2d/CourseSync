@@ -380,8 +380,8 @@ test('NUFE endpoint settings keep default URLs and validate academic paths',asyn
 
 test('school selection restricts requests to the active school',async()=>{
   const {m}=await env();
-  a.deepEqual(Array.from(m.SCHOOL_WHITELIST,s=>s.name),['南京财经大学','苏州科技大学']);
-  a.equal(m.SCHOOL_WHITELIST[0].id,'nufe');
+  a.equal(m.NUFE_SCHOOL.name,'南京财经大学');
+  a.equal(m.NUFE_SCHOOL.id,'nufe');
   a.equal(m.schoolById('nufe').endpoints.table,m.ENDPOINT_DEFAULTS.table);
   a.equal(m.schoolById('unverified-university'),null);
   a.throws(()=>m.safeURL('https://jwgl.usts.edu.cn/'),code('DOMAIN_BLOCKED'));
@@ -392,15 +392,15 @@ test('school selection restricts requests to the active school',async()=>{
   a.equal(m.loadSelectedSchool(),'nufe');
 });
 
-test('manual school selection uses fixed endpoints and retires old custom URLs',async()=>{
+test('manual setup uses fixed NUFE endpoints and retires old custom URLs',async()=>{
   const e=await env({hostEnv:'index'}),m=e.m,d=m.ENDPOINT_DEFAULTS;
   const oldKey='CourseSync.Local.v1.school-endpoints';
   const schoolKey='CourseSync.Local.v1.school-choice';
   e.keys.set(oldKey,JSON.stringify({version:1,values:{...d,
     table:'https://jwxt.nufe.edu.cn/student/for-std/course-table-v2'}}));
   const calls=[];
-  e.sandbox.__nativeRefreshMock=async(schools,selectedId,allowReuse)=>{
-    calls.push({schools,selectedId,allowReuse});
+  e.sandbox.__nativeRefreshMock=async(schoolId,allowReuse)=>{
+    calls.push({schoolId,allowReuse});
     return {kind:'credentials',schoolId:'nufe',
       username:'local-user',password:'not-a-real-password'};
   };
@@ -411,14 +411,13 @@ test('manual school selection uses fixed endpoints and retires old custom URLs',
   a.equal(m.loadEndpointSettings().table,d.table);
   a.equal(e.keys.has(oldKey),false);
   a.equal(e.keys.get(schoolKey),'nufe');
-  a.deepEqual(Array.from(calls[0].schools,s=>s.name),['南京财经大学','苏州科技大学']);
-  a.equal(calls[0].selectedId,'nufe');
+  a.equal(calls[0].schoolId,'nufe');
   a.equal(calls[0].allowReuse,false);
   a.equal(e.db.length,0);
   a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
 });
 
-test('school selection with existing credentials can reuse them',async()=>{
+test('NUFE setup with existing credentials can reuse them',async()=>{
   const e=await env({hostEnv:'index'}),m=e.m;
   e.keys.set('CourseSync.Local.v1.cookies','[]');
   e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});
@@ -426,10 +425,10 @@ test('school selection with existing credentials can reuse them',async()=>{
   a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
 });
 
-test('unsupported school selection is rejected without saving any configuration',async()=>{
+test('unexpected school ID is rejected without saving any configuration',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',
-    schoolId:'not-whitelisted',username:'student',password:'secret'});
+    schoolId:'unsupported',username:'student',password:'secret'});
   await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
   a.equal(e.keys.has('CourseSync.Local.v1.school-choice'),false);
   a.equal(e.requests.length,0);
@@ -440,8 +439,10 @@ test('USTS credentials, cookies and calendar state are scoped to the selected sc
   e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'usts'});
   await a.rejects(()=>m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
   e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',schoolId:'usts',username:'usts-sample',password:'usts-test-password'});
-  a.equal((await m.prepareManualRefresh(e.state)).username,'usts-sample');
+  await a.rejects(()=>m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
+  e.keys.set('CourseSync.Local.v1.school-choice','usts');
   a.equal(m.loadSelectedSchool(),'usts');
+  m.activateSelectedSchool(m.loadSelectedSchool());
   a.equal(m.readSavedCredentials(),null);
   a.notEqual(new m.Store().dir,e.store.dir);
   m.saveCredentials('usts-sample','usts-test-password');
@@ -549,6 +550,24 @@ test('USTS exam query writes published times and retains existing future exams w
   items=[];await sync();
   a.equal(e.db.length,0);
 });
+test('exam refresh includes historical terms even without a course baseline',async()=>{
+ const e=await env();
+ e.m.activateSelectedSchool('usts');
+ e.state.availableSemesters=[{id:202603},{id:202512}];
+ const queried=[];
+ const http={json:async(url,{body})=>{
+  const params=new URLSearchParams(body);
+  const sid=100*Number(params.get('xnm'))+Number(params.get('xqm'));
+  queried.push(sid);
+  if(sid===202603)return {currentPage:1,totalPage:0,items:[]};
+  return {currentPage:1,totalPage:1,items:[
+    {kcmc:'线性代数',ksmc:'期末',kssj:'2026-06-18 (09:00-11:00)',cdmc:'考场'}
+  ]};
+ }};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},Date.parse('2026-11-16T00:00:00Z'));
+ a.deepEqual(queried,[202603,202512]);
+ a.deepEqual(e.db.map(ev=>ev.title),['（考试）线性代数']);
+});
 test('exam calendar migration verifies destination writes, retries without duplicates, and preserves unrelated events',async()=>{
  const e=await env();
  const {m,state,store,calendar,other}=e;
@@ -575,28 +594,29 @@ test('exam calendar migration verifies destination writes, retries without dupli
  await sync();
  await sync();
  const migrated=e.db.find(ev=>ev.calendar.identifier===calendar.identifier);
- a.equal(migrated.title,'历史考试（考试）');
+ a.equal(migrated.title,'（考试）历史考试');
  a.equal(migrated.notes,old.notes);
  a.equal(store.read().examIndex[migrated.identifier],key);
  a.deepEqual(e.db.map(ev=>ev.identifier),[personal.identifier,migrated.identifier]);
  a.equal(store.read().examCalendarId,undefined);
 });
 
-test('refresh renames already archived exams in place without touching other emoji titles',async()=>{
+test('refresh moves the old suffix on an archived exam without touching other emoji titles',async()=>{
  const e=await env();
- const historic={title:'📝 线性代数',start:'2024-12-18T01:00:00.000Z',
+ const historic={title:'线性代数（考试）',start:'2024-12-18T01:00:00.000Z',
    end:'2024-12-18T03:00:00.000Z',location:'旧考场'};
  const owned=e.add(historic,{notes:'同步：2024-12-01 09:00'});
  const unrelated=e.add({...historic,title:'📝 随手记'},{notes:'个人'});
  const key='[COURSESYNC_EXAM '+e.state.owner+'] '+JSON.stringify(['线性代数','期末',Date.parse(historic.start)]);
  e.state.examIndex={[owned.identifier]:key};
+ e.state.examTitleFormat='suffix';
  const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
    text:'<table id="exams"><tr class="tr-empty"><td>暂无</td></tr></table>'})};
  const sync=()=>e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},Date.parse('2026-11-16T00:00:00Z'));
  await sync();
  await sync();
  a.deepEqual(e.db.map(ev=>[ev.identifier,ev.title]),[
-   [owned.identifier,'线性代数（考试）'],[unrelated.identifier,'📝 随手记']
+   [owned.identifier,'（考试）线性代数'],[unrelated.identifier,'📝 随手记']
  ]);
  a.deepEqual(e.requests,[['save',owned.identifier]]);
 });
@@ -921,7 +941,7 @@ test('main menu keeps refresh and available sign-out without removed status entr
  a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,true]);
  a.equal(e.requests.length,0);
 });
-test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
+test('an upgraded NUFE installation reuses credentials and preserves exam history',async()=>{
  const e=await env({hostEnv:'index'}),alerts=[];
  const day=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
  let body='<tr data-finished="false"><td><div class="time">'+day+' 08:00~10:00</div><div><span>教学楼</span><span>101</span></div></td><td><div>测试 &amp; 统计</div><div>期末</div></td><td>未结束</td></tr>'+
@@ -929,10 +949,9 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  e.m.saveCredentials('sample','test-only');
  e.keys.set('CourseSync.Local.v1.school','nufe');
  let schoolPrompts=0;
- e.sandbox.__nativeRefreshMock=async(schools,previous,canReuse)=>{
+ e.sandbox.__nativeRefreshMock=async(schoolId,canReuse)=>{
    schoolPrompts++;
-   a.deepEqual(Array.from(schools,s=>s.id),['nufe','usts']);
-   a.equal(previous,'nufe');
+   a.equal(schoolId,'nufe');
    a.equal(canReuse,true);
    return {kind:'reuse',schoolId:'nufe'};
  };
@@ -950,11 +969,11 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
- const exams=()=>e.db.filter(x=>x.title.endsWith('（考试）')||x.title.startsWith('🌟 '));
+ const exams=()=>e.db.filter(x=>x.title.startsWith('（考试）')||x.title.startsWith('🌟 '));
  a.equal(alerts.length,0,JSON.stringify(alerts));
  a.equal(exams().length,2);
- const upcoming=exams().find(x=>x.title==='测试 & 统计（考试）');
- const finished=exams().find(x=>x.title==='旧考试（考试）');
+ const upcoming=exams().find(x=>x.title==='（考试）测试 & 统计');
+ const finished=exams().find(x=>x.title==='（考试）旧考试');
  const ids=()=>exams().map(x=>x.identifier).sort();
  const initialIds=ids();
  a.equal(upcoming.calendar.identifier,e.calendar.identifier);
@@ -972,7 +991,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.deepEqual(ids(),initialIds);
- a.equal(exams().find(x=>x.identifier===finished.identifier).title,'旧考试（考试）');
+ a.equal(exams().find(x=>x.identifier===finished.identifier).title,'（考试）旧考试');
  a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
  e.store.acquire();
  try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
@@ -1071,7 +1090,7 @@ test('widget has a single dedicated Scripting entry with no legacy ListWidget re
 });
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('first manual sync imports all history and subsequent refreshes rotate one term',async()=>{
+test('each refresh fetches all terms and retries failed terms on the next refresh',async()=>{
  const e=await env(),fetched=[];
  e.m.HTTP.prototype.get=async()=>({
    url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
@@ -1088,11 +1107,16 @@ test('first manual sync imports all history and subsequent refreshes rotate one 
  a.deepEqual(fetched.splice(0),[161,159,160]);
  failHistorical=true;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,159]);
+ a.deepEqual(fetched.splice(0),[161,159,160]);
  a.equal(e.state.termErrors[0].sid,'159');
- a.equal(e.store.read().lastHistoryTerm,159);
+ failHistorical=false;
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched,[161,160]);
+ a.deepEqual(fetched.splice(0),[161,159,160]);
+ const pending=e.state.semesters['160'];
+ e.state.tx={...tx(pending.events,pending.events),sid:'160',anchor:pending.anchor};
+ e.store.write(e.state);
+ await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
+ a.deepEqual(fetched,[160,161,159]);
  a.equal(e.state.termErrors.length,0);
 });
 
@@ -1306,7 +1330,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  a.equal(alerts.at(-1).title,'已退出登录');
  a.equal(e.keys.get('CourseSync.Local.v1.school-reselect'),'nufe');
 });
-test('opening CourseSync after logout goes directly to the school picker and keeps the bound calendar',async()=>{
+test('opening CourseSync after logout goes straight to login and keeps the bound calendar',async()=>{
  for(const id of ['nufe','usts']){
   const e=await env({hostEnv:'index'}),m=e.m;
   e.store.release();
@@ -1316,9 +1340,9 @@ test('opening CourseSync after logout goes directly to the school picker and kee
   e.keys.set(id==='nufe'?'CourseSync.Local.v1.school-choice':'CourseSync.Local.v1.school-reselect',id);
   let dashboardPrompts=0,schoolPrompts=0;
   e.sandbox.__sdk.Dialog.actionSheet=async()=>{dashboardPrompts++;return null;};
-  e.sandbox.__nativeRefreshMock=async(schools,previous,allowReuse)=>{
+  e.sandbox.__nativeRefreshMock=async(schoolId,allowReuse)=>{
     schoolPrompts++;
-    a.deepEqual(Array.from(schools,school=>school.id),['nufe','usts']);
+    a.equal(schoolId,'nufe');
     a.equal(allowReuse,false);
     return null;
   };
@@ -1330,6 +1354,24 @@ test('opening CourseSync after logout goes directly to the school picker and kee
   a.deepEqual(e.requests,[]);
  }
 });
+test('a legacy USTS binding opens the fixed NUFE entry without making school requests',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.store.release();
+ e.m.activateSelectedSchool('usts');
+ const oldStore=new e.m.Store();
+ oldStore.acquire();oldStore.write(e.state);oldStore.release();
+ e.keys.set('CourseSync.Local.v1.school-choice','usts');
+ let offered=null;
+ e.sandbox.__nativeRefreshMock=async(schoolId,allowReuse)=>{offered=[schoolId,allowReuse];return null;};
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>{throw Error('Unexpected dashboard');};
+ let networkCalls=0;
+ e.sandbox.fetchImpl=async()=>{networkCalls++;throw Error('Unexpected network');};
+ await e.m.run();
+ a.deepEqual(offered,['nufe',false]);
+ a.equal(networkCalls,0);
+ a.equal(oldStore.read().calendarId,e.calendar.identifier);
+ a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'usts');
+});
 test('background refresh after logout does not fall back to another school',async()=>{
  const e=await env();
  e.store.write(e.state);e.store.release();
@@ -1338,10 +1380,10 @@ test('background refresh after logout does not fall back to another school',asyn
  e.sandbox.fetchImpl=async()=>{networkCalls++;throw Error('unexpected network');};
  await e.m.run();
  a.equal(networkCalls,0);
- a.match(e.sandbox.output,/重新选择学校/);
+ a.match(e.sandbox.output,/登录南京财经大学/);
  a.equal(e.keys.get('CourseSync.Local.v1.school-reselect'),'usts');
 });
-test('a verified login after reselecting a school clears the logout marker',async()=>{
+test('a verified re-login clears the logout marker',async()=>{
  const e=await env({hostEnv:'index'});
  e.baseline([lesson()]);
  e.add(lesson());
@@ -2123,5 +2165,5 @@ test('widgetCacheProjection includes synced exams alongside courses',async()=>{
  const payload=e.m.widgetCacheProjection(e.state,now);
  a.ok(payload);
  a.equal(payload.events.length,2);
- a.ok(payload.events.some(ev=>ev.title==='线性代数（考试）'&&ev.location==='博远楼 202'));
+ a.ok(payload.events.some(ev=>ev.title==='（考试）线性代数'&&ev.location==='博远楼 202'));
 });

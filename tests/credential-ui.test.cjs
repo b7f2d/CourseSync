@@ -29,28 +29,18 @@ test('native iOS credential sheet has both autofill fields and no WebView',()=>{
  assert.doesNotMatch(native,/WebView|loadURL|fetch\(|Clipboard|console\.log/);
 });
 
-test('first step uses a native dropdown for whitelisted schools, then native credentials',()=>{
+test('first setup opens the native credential form directly',()=>{
  assert.match(native,/export async function presentNativeRefreshForm/);
- assert.match(native,/function RefreshSetupView/);
- assert.match(native,/useState<'school'\|'account'>\('school'\)/);
- assert.match(native,/navigationTitle="选择学校"/);
- assert.match(native,/<Picker title="学校" pickerStyle="menu"/);
- assert.match(native,/<Text key="unselected" tag="unselected">请选择<\/Text>/);
- assert.match(native,/value=\{schoolId\} onChanged=\{setSchoolId\}/);
- assert.match(native,/schools\.map\(s=><Text key=\{s\.id\} tag=\{s\.id\}>\{s\.name\}<\/Text>\)/);
- assert.match(native,/title="下一步：账号密码"/);
- assert.match(native,/navigationTitle="账号密码"/);
- assert.match(native,/title="开始刷新"/);
+ assert.match(native,/presentLoginView\('登录账号','开始刷新',allowReuse\)/);
+ assert.doesNotMatch(native,/选择学校|选择其他学校|下一步：账号密码/);
  assert.match(native,/title="使用现有登录信息继续"/);
  assert.match(native,/textContentType="username"/);
  assert.match(native,/textContentType="password"/);
  assert.doesNotMatch(native,/教务接口|默认接口|统一认证根地址|SSO 登录入口|课表页面|学期详情|课表数据|WebView|fetch\(|Clipboard|console\.log/);
- assert.match(index,/const SCHOOL_WHITELIST=Object\.freeze/);
  assert.match(index,/id:'nufe',name:'南京财经大学'/);
  assert.match(index,/function prepareManualRefresh\(state,forceCredentials=false\)/);
- assert.match(index,/presentNativeRefreshForm\(/);
- assert.match(index,/schoolById\(response\.schoolId\)/);
- assert.match(index,/activateSelectedSchool\(school\.id\)/);
+ assert.match(index,/presentNativeRefreshForm\(NUFE_SCHOOL\.id,allowReuse\)/);
+ assert.match(index,/response\.schoolId===NUFE_SCHOOL\.id/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
  assert.match(index,/if\(interactive&&action===0\)/);
  assert.match(index,/if\(!manualAuth\)return;/);

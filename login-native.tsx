@@ -3,12 +3,12 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, Picker, useState,
+  TextField, SecureField, Button, Image, useState,
   VStack, HStack, Spacer, modifiers, useRef,
 } from 'scripting';
 import { NativeProgressCard } from './progress-native';
 
-function LoginView({ title }: { title: string }) {
+function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
   const dismiss = Navigation.useDismiss();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -44,37 +44,36 @@ function LoginView({ title }: { title: string }) {
       </Section>
       <Section>
         <Button
-          title="确认"
+          title={confirmTitle}
           disabled={!valid}
           action={() => {
             if (!valid) return;
             dismiss({ username: account, password });
           }}
         />
-        <Button
-          title="选择其他学校"
-          action={() => {
-            dismiss({ changeSchool: true });
-          }}
-        />
+        {allowReuse ? <Button title="使用现有登录信息继续" action={() => dismiss({reuse:true})} /> : null}
       </Section>
     </List>
   </NavigationStack>;
 }
 
-export async function presentNativeCredentialForm(title = 'CourseSync 登录') {
-  const result = await Navigation.present({
-    element: <LoginView title={title} />,
-    modalPresentationStyle: 'pageSheet',
+function presentLoginView(title:string,confirmTitle:string,allowReuse=false){
+  return Navigation.present({
+    element:<LoginView title={title} confirmTitle={confirmTitle} allowReuse={allowReuse}/>,
+    modalPresentationStyle:'pageSheet',
   });
-  if (!result || typeof result !== 'object') return null;
-  if (result.changeSchool === true) return { changeSchool: true };
-  const username = typeof result.username === 'string' ? result.username.trim() : '';
-  const password = typeof result.password === 'string' ? result.password : '';
-  if (!username || username.length > 100 || !password || password.length > 512) return null;
-  return { username, password };
 }
 
+function readNativeCredentials(result: any){
+  const username=typeof result?.username==='string'?result.username.trim():'';
+  const password=typeof result?.password==='string'?result.password:'';
+  if(!username||username.length>100||!password||password.length>512)return null;
+  return {username,password};
+}
+
+export async function presentNativeCredentialForm(title='CourseSync 登录'){
+  return readNativeCredentials(await presentLoginView(title,'确认'));
+}
 
 // All short interactive challenges use an iOS-native text entry sheet.
 // OTPs use oneTimeCode so iOS can offer the system SMS/Password code suggestion.
@@ -137,77 +136,15 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
 }
 
 
-// Native two-step flow. School selection is a whitelist, not a URL editor.
-export type NativeSchoolChoice = {id:string;name:string};
 type RefreshFormOutcome=
   | {kind:'credentials';schoolId:string;username:string;password:string}
   | {kind:'reuse';schoolId:string};
 
-function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
-  schools:NativeSchoolChoice[];initialSchoolId:string;allowReuse:boolean;
-}){
-  const dismiss=Navigation.useDismiss();
-  const [step,setStep]=useState<'school'|'account'>('school');
-  const [schoolId,setSchoolId]=useState('unselected');
-  const [username,setUsername]=useState('');
-  const [password,setPassword]=useState('');
-  const validSchool=schools.some(s=>s.id===schoolId);
-  const account=username.trim();
-  const validAccount=account.length>0&&account.length<=100&&
-    password.length>0&&password.length<=512;
-  const back=()=>step==='school'?dismiss(null):setStep('school');
-  return <NavigationStack>
-    {step==='school'?
-      <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
-        toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
-        <Section>
-          <Picker title="学校" pickerStyle="menu"
-            value={schoolId} onChanged={setSchoolId}>
-            <Text key="unselected" tag="unselected">请选择</Text>
-            {schools.map(s=><Text key={s.id} tag={s.id}>{s.name}</Text>)}
-          </Picker>
-        </Section>
-        <Section>
-          <Button title="下一步：账号密码" disabled={!validSchool}
-            action={()=>{if(validSchool)setStep('account');}}/>
-        </Section>
-      </List>:
-      <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
-        toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
-        <Section>
-          <TextField title="学号" prompt="请输入学号" value={username}
-            onChanged={setUsername} textContentType="username"
-            textInputAutocapitalization="never"/>
-          <SecureField title="密码" prompt="请输入密码" value={password}
-            onChanged={setPassword} textContentType="password"/>
-        </Section>
-        <Section>
-          <Button title="开始刷新" disabled={!validAccount}
-            action={()=>{if(validAccount&&validSchool)dismiss({
-              kind:'credentials',schoolId,username:account,password
-            });}}/>
-          {allowReuse&&schoolId===initialSchoolId?<Button title="使用现有登录信息继续"
-            disabled={!validSchool}
-            action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
-        </Section>
-      </List>}
-  </NavigationStack>;
-}
-
-export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
-  initialSchoolId:string,allowReuse=false):Promise<RefreshFormOutcome|null>{
-  const result=await Navigation.present({
-    element:<RefreshSetupView schools={schools} initialSchoolId={initialSchoolId}
-      allowReuse={allowReuse}/>,
-    modalPresentationStyle:'pageSheet'
-  });
-  if(!result||!['credentials','reuse'].includes(result.kind))return null;
-  if(!schools.some(s=>s.id===result.schoolId))return null;
-  if(result.kind==='reuse')return allowReuse&&result.schoolId===initialSchoolId?{kind:'reuse',schoolId:result.schoolId}:null;
-  const username=typeof result.username==='string'?result.username.trim():'';
-  const password=typeof result.password==='string'?result.password:'';
-  if(!username||username.length>100||!password||password.length>512)return null;
-  return {kind:'credentials',schoolId:result.schoolId,username,password};
+export async function presentNativeRefreshForm(schoolId:string,allowReuse=false):Promise<RefreshFormOutcome|null>{
+  const result=await presentLoginView('登录账号','开始刷新',allowReuse);
+  if(result?.reuse===true)return allowReuse?{kind:'reuse',schoolId}:null;
+  const credentials=readNativeCredentials(result);
+  return credentials?{kind:'credentials',schoolId,...credentials}:null;
 }
 
 type FreeRoomResult =

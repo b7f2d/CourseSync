@@ -28,10 +28,10 @@ test('README distinguishes public CourseSync name from legacy installation ident
   assert.match(readme,/CourseSync/);
 });
 
-test('README lists the two supported schools and USTS device verification status',()=>{
-  assert.match(read('README.md'),/支持南京财经大学和苏州科技大学/);
-  assert.match(read('README.md'),/仍待实机验证/);
-  assert.match(read('README.md'),/选择学校/);
+test('README describes NUFE as the only currently open school',()=>{
+  assert.match(read('README.md'),/当前仅开放\*\*南京财经大学\*\*/);
+  assert.doesNotMatch(read('README.md'),/苏州科技大学/);
+  assert.match(read('README.md'),/账号登录/);
 });
 
 test('README remains text-only without image markup or references',()=>{
@@ -41,13 +41,12 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/沿用首次选定的学校/);
+  assert.match(readme,/再次打开 CourseSync 时直接进入登录页/);
 });
 
-test('README and engineering docs point to the main branch for remote import',()=>{
+test('README points to the main branch for remote import',()=>{
   const url='https://github.com/b7f2d/CourseSync/tree/main';
   assert.ok(read('README.md').includes(url));
-  assert.ok(read('docs/engineering.md').includes(url));
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
