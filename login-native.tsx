@@ -266,7 +266,16 @@ function DashboardAction({title, systemImage, action, role}: {
     listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
   >
     <HStack alignment="center" spacing={10}>
-      <Image systemName={systemImage} font="body" frame={{width:24,alignment:'leading'}} />
+      <VStack
+        alignment="center"
+        frame={{width:24,height:24}}
+        modifiers={modifiers().background({
+          style: { light: '#EDF1F5', dark: '#27313F' },
+          shape: { type: 'circle' },
+        })}
+      >
+        <Image systemName={systemImage} font={14} />
+      </VStack>
       <Text>{title}</Text>
       <Spacer />
     </HStack>
