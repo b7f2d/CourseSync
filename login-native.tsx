@@ -290,6 +290,8 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
   const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : isSuccess ? '#10B981' : '#3B82F6';
   const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '就绪';
   const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
+  const examCalTitle = state?.examCalendarTitle || (state?.examCalendarId && state.examCalendarId !== state?.calendarId ? '考试日历' : '');
+  const boundCalendarsLabel = examCalTitle ? `${calTitle} / ${examCalTitle}` : calTitle;
   const lastTime = state?.lastCheck ? String(state.lastCheck).replace('T', ' ').slice(0, 16) : '暂无同步记录';
 
   return (
@@ -337,7 +339,7 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
               <HStack alignment="center">
                 <Text font="subheadline" fontWeight="semibold">🏛 {schoolName}</Text>
                 <Spacer />
-                <Text font="caption1" foregroundStyle="secondaryLabel">🗓 {calTitle}</Text>
+                <Text font="caption1" foregroundStyle="secondaryLabel">🗓 {boundCalendarsLabel}</Text>
               </HStack>
               <Text font="caption1" foregroundStyle="secondaryLabel">
                 {statusMessage}

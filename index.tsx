@@ -3202,8 +3202,16 @@ async function run() {
       let selected=-1;
       const nav=hostAPI('Navigation');
       if(typeof nav?.present==='function'){
+        let dashboardState=state;
+        if(state.examCalendarId&&state.examCalendarId!==state.calendarId&&!state.examCalendarTitle){
+          try{
+            const cals=await visibleCalendars();
+            const examCal=cals.find(c=>c&&c.identifier===state.examCalendarId);
+            if(examCal?.title)dashboardState={...state,examCalendarTitle:examCal.title};
+          }catch(_){}
+        }
         selected=await presentNativeDashboard({
-          state,schoolName,canFreeRooms,canSignOut,statusMessage
+          state:dashboardState,schoolName,canFreeRooms,canSignOut,statusMessage
         });
       }
       if(selected==='dismiss')return;
