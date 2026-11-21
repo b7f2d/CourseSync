@@ -233,11 +233,12 @@ function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
         <Button title="重试" systemImage="arrow.clockwise" action={retry} />
       </Section>
     ) : (
-      <Section header={<Text font="headline">今天 · {page.date}</Text>}>
+      <Section>
+        <Text font="headline" padding={{top:4,bottom:4}}>今天 · {page.date}</Text>
         {page.rooms.map(({period, room}) => (
-          <VStack key={period} alignment="leading" spacing={3} padding={{top:6,bottom:6}}>
+          <VStack key={period} alignment="leading" spacing={4} padding={{top:8,bottom:8}}>
             <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
-            <Text font="title3" fontWeight="semibold">{room}</Text>
+            <Text font="title2" fontWeight="semibold">{room}</Text>
           </VStack>
         ))}
       </Section>
@@ -294,7 +295,7 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
   const statusDetail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
 
   return (
-    <NavigationStack>
+    <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
       <List
         navigationTitle="CourseSync"
         navigationBarTitleDisplayMode="inline"
@@ -359,12 +360,14 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
           <Button
             title="立即刷新"
             systemImage="arrow.clockwise"
+            listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
             action={() => dismiss(0)}
           />
           {loadFreeRooms ? (
             <Button
               title="查询空闲教室"
               systemImage="building.columns"
+              listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
               action={openFreeRooms}
             />
           ) : null}
