@@ -18,7 +18,16 @@ async function __COURSESYNC_REPORT_STARTUP(error){
   const __intent=Scripting.Intent??globalThis.Intent;
   const __hostScript=Scripting.Script??globalThis.Script;
   const msg='刷新失败：'+known;
-  try{__hostScript.exit(__intent?.text?__intent.text(msg):msg);}catch(_){}
+  // A Shortcuts result must remain an IntentValue, including on startup errors.
+  // Never fall back to a bare string or silently fabricate a successful exit.
+  try{
+    if(typeof __hostScript?.exit!=='function'||typeof __intent?.text!=='function')
+      throw new Error('Intent text/Script exit unavailable');
+    __hostScript.exit(__intent.text(msg));
+  }catch(exitError){
+    console.error('[CourseSync] Intent startup exit failed');
+    throw exitError;
+  }
 }
 async function __NUFE_START(){
   try{
@@ -58,9 +67,17 @@ if(globalThis.__COURSESYNC_TEST__){
 // Shortcut intent intentionally does not import the native UI or Activity modules.
 
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
+let __exitAttempted=false;
 const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutput=String(value);},complete:()=>{
+  // Cleanup must never suppress the result returned to Shortcuts.
   for(const w of __webviews)try{w.dispose();}catch(_){}
-  HostScript.exit(__intent?.text?__intent.text(__shortcutOutput||'处理完成'):__shortcutOutput);
+  __webviews.clear();
+  if(__exitAttempted)return;
+  if(typeof HostScript.exit!=='function'||typeof __intent?.text!=='function')
+    throw new Error('Intent text/Script exit unavailable');
+  const result=__intent.text(__shortcutOutput??'处理完成');
+  __exitAttempted=true;
+  HostScript.exit(result);
 }};
 const FileManager={local:()=>({
   libraryDirectory:()=>HostFiles.appGroupDocumentsDirectory+'/CourseSync',
@@ -3383,7 +3400,18 @@ async function run() {
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
     else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
-  }finally{if(manualAuth?.password)manualAuth.password='';if(progress)await progress.finish();if(locked)store.release();Script.complete();}
+  }finally{
+    // Each release is independent: failures after a successful calendar write
+    // must never prevent the required IntentValue exit.
+    try{if(manualAuth?.password)manualAuth.password='';}
+    catch(_){console.error('[CourseSync] credential cleanup failed');}
+    try{if(progress)await progress.finish();}
+    catch(_){console.error('[CourseSync] progress cleanup failed');}
+    try{if(locked)store.release();}
+    catch(_){console.error('[CourseSync] sync lock release failed');}
+    // Always attempt the host exit even if every preceding cleanup failed.
+    Script.complete();
+  }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
 if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
