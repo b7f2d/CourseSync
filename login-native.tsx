@@ -289,7 +289,7 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
   const isSuccess = state?.runStatus === 'success';
   const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : isSuccess ? '#10B981' : '#3B82F6';
   const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '就绪';
-  const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课表日历' : '未绑定');
+  const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
   const lastTime = state?.lastCheck ? String(state.lastCheck).replace('T', ' ').slice(0, 16) : '暂无同步记录';
 
   return (
@@ -321,7 +321,7 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
                     ● {statusBadge}
                   </Text>
                 </HStack>
-                <Text font="caption1" foregroundStyle="secondaryLabel">高校课表本地同步引擎</Text>
+                <Text font="caption1" foregroundStyle="secondaryLabel">高校课程和考试本地同步引擎</Text>
               </VStack>
             </HStack>
 

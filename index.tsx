@@ -3197,7 +3197,7 @@ async function run() {
       const canFreeRooms=activeSchoolId==='nufe';
       const canSignOut=canOfferSignOut(state);
       const schoolName=schoolById(activeSchoolId)?.name||'高校';
-      const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
+      const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课程和考试保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课程和考试保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课程和考试日历。';
 
       let selected=-1;
       const nav=hostAPI('Navigation');
