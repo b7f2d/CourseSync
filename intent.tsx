@@ -1,6 +1,11 @@
-// CourseSync — Shortcuts intent entry.
-// The imported sync module starts its run immediately; explicitly await that
-// Promise so this entry does not resolve before calendar sync and final cleanup.
+// CourseSync — Shortcuts background entry.
+// Keep top-level code synchronous: Scripting's intent parser rejects top-level await.
+import { Intent, Script } from "scripting";
 import "./index";
 
-await globalThis.__COURSESYNC_LAUNCH__;
+Promise.resolve(globalThis.__COURSESYNC_LAUNCH__).catch(error => {
+  const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)
+    ? error.code : 'INTENT_LAUNCH_FAILED';
+  console.error('[CourseSync] Intent launch failed: ' + code);
+  Script.exit(Intent.text('刷新失败：' + code));
+});
