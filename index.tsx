@@ -2151,10 +2151,9 @@ function createProgress(state,store,interactive){
   stage.finish=()=>{
     if(finishing)return finishing;
     closed=true;
-    finishing=Promise.resolve().then(()=>{
-      try{ui?.finish();}catch(_){}
-      ui=null;
-    });
+    try{ui?.finish();}catch(_){}
+    ui=null;
+    finishing=Promise.resolve();
     return finishing;
   };
   return stage;
