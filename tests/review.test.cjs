@@ -575,11 +575,30 @@ test('exam calendar migration verifies destination writes, retries without dupli
  await sync();
  await sync();
  const migrated=e.db.find(ev=>ev.calendar.identifier===calendar.identifier);
- a.equal(migrated.title,historic.title);
+ a.equal(migrated.title,'历史考试（考试）');
  a.equal(migrated.notes,old.notes);
  a.equal(store.read().examIndex[migrated.identifier],key);
  a.deepEqual(e.db.map(ev=>ev.identifier),[personal.identifier,migrated.identifier]);
  a.equal(store.read().examCalendarId,undefined);
+});
+
+test('refresh renames already archived exams in place without touching other emoji titles',async()=>{
+ const e=await env();
+ const historic={title:'📝 线性代数',start:'2024-12-18T01:00:00.000Z',
+   end:'2024-12-18T03:00:00.000Z',location:'旧考场'};
+ const owned=e.add(historic,{notes:'同步：2024-12-01 09:00'});
+ const unrelated=e.add({...historic,title:'📝 随手记'},{notes:'个人'});
+ const key='[COURSESYNC_EXAM '+e.state.owner+'] '+JSON.stringify(['线性代数','期末',Date.parse(historic.start)]);
+ e.state.examIndex={[owned.identifier]:key};
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+   text:'<table id="exams"><tr class="tr-empty"><td>暂无</td></tr></table>'})};
+ const sync=()=>e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},Date.parse('2026-11-16T00:00:00Z'));
+ await sync();
+ await sync();
+ a.deepEqual(e.db.map(ev=>[ev.identifier,ev.title]),[
+   [owned.identifier,'线性代数（考试）'],[unrelated.identifier,'📝 随手记']
+ ]);
+ a.deepEqual(e.requests,[['save',owned.identifier]]);
 });
 
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
@@ -931,11 +950,11 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
- const exams=()=>e.db.filter(x=>/^(📝|🌟) /u.test(x.title));
+ const exams=()=>e.db.filter(x=>x.title.endsWith('（考试）')||x.title.startsWith('🌟 '));
  a.equal(alerts.length,0,JSON.stringify(alerts));
  a.equal(exams().length,2);
- const upcoming=exams().find(x=>x.title==='📝 测试 & 统计');
- const finished=exams().find(x=>x.title==='📝 旧考试');
+ const upcoming=exams().find(x=>x.title==='测试 & 统计（考试）');
+ const finished=exams().find(x=>x.title==='旧考试（考试）');
  const ids=()=>exams().map(x=>x.identifier).sort();
  const initialIds=ids();
  a.equal(upcoming.calendar.identifier,e.calendar.identifier);
@@ -953,7 +972,7 @@ test('an upgraded NUFE installation confirms school once, reuses credentials and
  await e.m.run();
  a.equal(schoolPrompts,1);
  a.deepEqual(ids(),initialIds);
- a.equal(exams().find(x=>x.identifier===finished.identifier).title,'📝 旧考试');
+ a.equal(exams().find(x=>x.identifier===finished.identifier).title,'旧考试（考试）');
  a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
  e.store.acquire();
  try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
@@ -2083,5 +2102,5 @@ test('widgetCacheProjection includes synced exams alongside courses',async()=>{
  const payload=e.m.widgetCacheProjection(e.state,now);
  a.ok(payload);
  a.equal(payload.events.length,2);
- a.ok(payload.events.some(ev=>ev.title==='📝 线性代数'&&ev.location==='博远楼 202'));
+ a.ok(payload.events.some(ev=>ev.title==='线性代数（考试）'&&ev.location==='博远楼 202'));
 });

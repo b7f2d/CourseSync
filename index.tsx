@@ -706,10 +706,17 @@ function attributes(tag) {
 function inputs(html){return [...html.matchAll(/<input\b[^>]*>/gi)].map(m=>attributes(m[0]));}
 const EXAM_PATH='/student/for-std/exam-arrange';
 const EXAM_MARKER='[COURSESYNC_EXAM ';
-const EXAM_ICON='📝 ';
+const LEGACY_EXAM_ICON='📝 ';
+const EXAM_SUFFIX='（考试）';
+function examTitle(title,limit=Infinity){
+  if(title.startsWith(LEGACY_EXAM_ICON))title=title.slice(LEGACY_EXAM_ICON.length);
+  if(title.endsWith(EXAM_SUFFIX))title=title.slice(0,-EXAM_SUFFIX.length);
+  return title.trimEnd().slice(0,limit-EXAM_SUFFIX.length)+EXAM_SUFFIX;
+}
 const isExamEvent=(ev,state)=>String(ev?.notes||'').startsWith(EXAM_MARKER)||
   Object.prototype.hasOwnProperty.call(state?.examIndex||{},ev?.identifier)||
-  (String(ev?.title||'').startsWith(EXAM_ICON)&&/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(ev.notes||''));
+  (/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(ev?.notes||'')&&
+    (String(ev?.title||'').startsWith(LEGACY_EXAM_ICON)||String(ev?.title||'').endsWith(EXAM_SUFFIX)));
 function examRows(html) {
   const clean=html.replace(/<!--[\s\S]*?-->/g,'');
   const table=[...clean.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table\s*>/gi)]
@@ -772,6 +779,15 @@ async function ustsExamRows(http,state){
   }
   return {rows,unpublished};
 }
+function indexedExamWindows(index,prefix){
+  const ranges=[];
+  for(const key of new Set(Object.values(index))){
+    let start;
+    try{start=JSON.parse(key.slice(prefix.length))[2];}catch(_){continue;}
+    if(Number.isFinite(start))ranges.push([start-DAY,start+DAY]);
+  }
+  return ranges;
+}
 async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
   const legacyId=state.examCalendarId;
   if(!legacyId||legacyId===calendar.identifier){
@@ -791,13 +807,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
     const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
     return typeof key==='string'&&key.startsWith(prefix)?key:null;
   };
-  const indexedWindows=[];
-  for(const key of new Set(Object.values(index))){
-    let start;
-    try{start=JSON.parse(key.slice(prefix.length))[2];}catch(_){continue;}
-    if(Number.isFinite(start))indexedWindows.push([start-DAY,start+DAY]);
-  }
-  const ranges=[...windows,...dedicatedWindows(state),...indexedWindows].sort((a,b)=>a[0]-b[0]);
+  const ranges=[...windows,...dedicatedWindows(state),...indexedExamWindows(index,prefix)].sort((a,b)=>a[0]-b[0]);
   const merged=[];
   for(const [start,end] of ranges){
     const last=merged[merged.length-1];
@@ -827,14 +837,14 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
       if(!destination){
         store.check();
         const copy=new CalendarEvent();
-        copy.calendar=calendar;copy.title=ev.title;copy.location=ev.location||'';
+        copy.calendar=calendar;copy.title=examTitle(ev.title);copy.location=ev.location||'';
         copy.startDate=new Date(start);copy.endDate=new Date(end);
         copy.timeZone=ev.timeZone||'Asia/Shanghai';copy.notes=key;
         if(ev.url)copy.url=ev.url;
         for(const alarm of ev.alarms||[])copy.addAlarm(alarm);
         await copy.save();
         destination=(await calendarRows(start,end,calendar)).find(item=>
-          keyOf(item)===key&&item.title===ev.title&&+item.startDate===start&&+item.endDate===end&&
+          keyOf(item)===key&&item.title===copy.title&&+item.startDate===start&&+item.endDate===end&&
           (item.location||'')===(ev.location||''));
         assert(destination,'CALENDAR_VERIFY');
         existing.set(key,destination);
@@ -866,6 +876,35 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
   delete state.examCalendarTitle;
   store.write(state);
 }
+async function upgradeExamTitles(state,store,calendar,index,prefix,windows){
+  if(state.examTitleFormat==='suffix')return;
+  for(const [start,end] of [...windows,...indexedExamWindows(index,prefix)]){
+    for(let at=start;at<end;at+=90*DAY){
+      store.check();
+      for(const ev of await calendarRows(at,Math.min(at+90*DAY,end),calendar)){
+        if(!String(ev.title||'').startsWith(LEGACY_EXAM_ICON))continue;
+        const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
+        if(!key?.startsWith(prefix))continue;
+        assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&
+          !ev.recurrenceRules?.length&&!ev.attendees?.length,'MANAGED_SERIES');
+        store.check();
+        const oldId=ev.identifier,title=examTitle(ev.title);
+        ev.title=title;
+        await ev.save();
+        assert((await calendarRows(+ev.startDate,+ev.endDate,calendar)).some(item=>
+          item.identifier===ev.identifier&&item.title===title),'CALENDAR_VERIFY');
+        if(ev.identifier!==oldId){
+          delete index[oldId];
+          index[ev.identifier]=key;
+          state.examIndex=index;
+          store.write(state);
+        }
+      }
+    }
+  }
+  state.examTitleFormat='suffix';
+  store.write(state);
+}
 async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   progress('读取考试日程');
   const end=now+366*DAY;
@@ -881,7 +920,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:EXAM_ICON+row.title,start,stop,location:row.location});
+    target.set(key,{title:examTitle(row.title),start,stop,location:row.location});
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
@@ -893,6 +932,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   await migrateLegacyExamCalendar(state,store,calendar,windows,progress);
   const index=Object.assign(Object.create(null),state.examIndex);
+  await upgradeExamTitles(state,store,calendar,index,prefix,windows);
   const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
   const read=async()=>{
     const owned=new Map();
@@ -1884,7 +1924,7 @@ function widgetCacheProjection(state,now=Date.now()){
          end<earliest||start>latest)continue;
       courses.push({
         id:String(e.id||'').slice(0,100),
-        title:e.title.slice(0,90),
+        title:examTitle(e.title,90),
         location:String(e.location||'').slice(0,65),
         teacher:'',
         start:e.start,end:e.end
