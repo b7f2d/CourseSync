@@ -1057,6 +1057,32 @@ test('Scripting process/module compatibility globals do not turn production star
 
 test('Scripting 3.2.1 entry parses as an ordinary script without a module async wrapper',()=>{a.doesNotThrow(()=>new vm.Script(source));});
 test('production ordinary-script entry runs even with process and module compatibility globals',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
+test('intent finalizer returns Intent.text even when lock release throws',async()=>{
+ const e=await env();
+ e.state.signedOut=true;
+ e.store.write(e.state);
+ e.store.release();
+ const original=e.m.Store.prototype.release;
+ let released=0;
+ e.m.Store.prototype.release=function(){released++;throw new Error('release failed');};
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
+ try{
+   await e.m.run();
+   a.ok(released>=1);
+   a.equal(e.sandbox.output.type,'text');
+   a.match(e.sandbox.output.value,/已退出登录/);
+ }finally{e.m.Store.prototype.release=original;}
+});
+
+test('intent success returns a typed text value, not a raw string',async()=>{
+ const e=await env();
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
+ loggedIn(e,raw([activity()]));
+ await executeDaily(e);
+ a.equal(e.sandbox.output.type,'text');
+ a.match(e.sandbox.output.value,/刷新成功/);
+});
+
 test('intent startup errors use notification and text output without a dialog',async()=>{
  const e=await env(),alerts=[];
  e.store.release();
