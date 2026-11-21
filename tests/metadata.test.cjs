@@ -85,7 +85,7 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.doesNotMatch(intent,/^\\s*await\\s+globalThis\\.__COURSESYNC_LAUNCH__/m);
   assert.match(intent,/Promise\\.resolve\\(globalThis\\.__COURSESYNC_LAUNCH__\\)\\.catch\\(/);
   assert.match(intent,/Script\\.exit\\(Intent\\.text\\(/);
-  const entry= intent.replace(/^import .*;\\s*$/gm,'');
-  assert.doesNotThrow(()=>new (require('node:vm').Script)(entry));
+  const intentBody= intent.replace(/^import .*;\\s*$/gm,'');
+  assert.doesNotThrow(()=>new (require('node:vm').Script)(intentBody));
   assert.ok(read('intent-probe.tsx').includes('CourseSync intent ok'));
 });
