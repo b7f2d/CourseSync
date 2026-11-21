@@ -568,6 +568,38 @@ test('exam refresh includes historical terms even without a course baseline',asy
  a.deepEqual(queried,[202603,202512]);
  a.deepEqual(e.db.map(ev=>ev.title),['（考试）线性代数']);
 });
+test('empty exam portal retains archived cache but removes unpublished future entries',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-16T00:00:00Z');
+ const past={id:'old-exam',title:'（考试）历史考试',start:'2024-12-18T01:00:00.000Z',
+   end:'2024-12-18T03:00:00.000Z',location:'旧考场'};
+ const future={id:'future-exam',title:'（考试）未来考试',start:'2026-12-18T01:00:00.000Z',
+   end:'2026-12-18T03:00:00.000Z',location:'新考场'};
+ e.state.exams=[past,future];
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+   text:'<table id="exams"><tr class="tr-empty"><td>暂无</td></tr></table>'})};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.deepEqual(e.state.exams,[past]);
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.deepEqual(e.state.exams,[past]);
+});
+test('partial exam portal response retains archived exam cache without duplicating new entries',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-16T00:00:00Z');
+ const old={id:'exam-archived',title:'（考试）历史考试',start:'2024-12-18T01:00:00.000Z',
+   end:'2024-12-18T03:00:00.000Z',location:'旧考场'};
+ e.state.exams=[old];
+ const row='<tr data-finished="true"><td><div class="time">2025-12-18 09:00~11:00</div></td>'+
+   '<td><div>线性代数</div><div>期末</div></td><td>已结束</td></tr>';
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+   text:'<table id="exams">'+row+'</table>'})};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.equal(e.state.exams.length,2);
+ a.ok(e.state.exams.some(x=>x.id===old.id));
+ a.ok(e.state.exams.some(x=>x.title==='（考试）线性代数'));
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.equal(e.state.exams.length,2);
+});
 test('exam calendar migration verifies destination writes, retries without duplicates, and preserves unrelated events',async()=>{
  const e=await env();
  const {m,state,store,calendar,other}=e;
