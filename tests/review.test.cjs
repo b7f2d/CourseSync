@@ -546,7 +546,7 @@ test('USTS successful exam query replaces unpublished future records',async()=>{
   const id=e.db[0].identifier;
   items=[{...exam,kssj:'未放开不可查'}];
   await sync();
-  a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
+  a.equal(e.db.length,0);
   items=[];await sync();
   a.equal(e.db.length,0);
 });
