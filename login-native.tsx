@@ -28,13 +28,13 @@ function LoginView({ title }: { title: string }) {
         <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
           <VStack
             alignment="center"
-            frame={{width:52,height:52}}
+            frame={{width:44,height:44}}
             modifiers={modifiers().background({
               style:{light:'#2563EB',dark:'#1D4ED8'},
-              shape:{type:'rect',cornerRadius:12}
+              shape:{type:'rect',cornerRadius:10}
             })}
           >
-            <Text font={28}>🎓</Text>
+            <Image systemName="person.crop.circle" font={22} foregroundStyle="#FFFFFF" />
           </VStack>
           <Text font="headline" fontWeight="bold">CourseSync 账号认证</Text>
           <Text font="caption1" foregroundStyle="secondaryLabel">安全凭据直连学校系统 · 仅保存在本地钥匙串</Text>
@@ -189,13 +189,13 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
             <VStack
               alignment="center"
-              frame={{width:52,height:52}}
+              frame={{width:44,height:44}}
               modifiers={modifiers().background({
                 style:{light:'#2563EB',dark:'#1D4ED8'},
-                shape:{type:'rect',cornerRadius:12}
+                shape:{type:'rect',cornerRadius:10}
               })}
             >
-              <Text font={28}>🏫</Text>
+              <Image systemName="building.columns" font={20} foregroundStyle="#FFFFFF" />
             </VStack>
             <Text font="headline" fontWeight="bold">选择就读高校</Text>
             <Text font="caption1" foregroundStyle="secondaryLabel">CourseSync 将针对学校教务系统定制同步管道</Text>
@@ -221,13 +221,13 @@ function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
           <VStack alignment="center" spacing={8} frame={{maxWidth:'infinity'}} padding={{top:12,bottom:12}}>
             <VStack
               alignment="center"
-              frame={{width:52,height:52}}
+              frame={{width:44,height:44}}
               modifiers={modifiers().background({
                 style:{light:'#2563EB',dark:'#1D4ED8'},
-                shape:{type:'rect',cornerRadius:12}
+                shape:{type:'rect',cornerRadius:10}
               })}
             >
-              <Text font={28}>🔐</Text>
+              <Image systemName="lock.shield" font={22} foregroundStyle="#FFFFFF" />
             </VStack>
             <Text font="headline" fontWeight="bold">教务系统认证</Text>
             <Text font="caption1" foregroundStyle="secondaryLabel">支持系统钥匙串与自动填充 · 密码不离机</Text>
@@ -294,6 +294,8 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
   const boundCalendarsLabel = examCalTitle ? `${calTitle} / ${examCalTitle}` : calTitle;
   const lastTime = state?.lastCheck ? String(state.lastCheck).replace('T', ' ').slice(0, 16) : '暂无同步记录';
 
+  const statusDetail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
+
   return (
     <NavigationStack>
       <List
@@ -304,73 +306,82 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
         }}
       >
         <Section>
-          <VStack alignment="leading" spacing={12} padding={{ top: 8, bottom: 8 }}>
+          <VStack alignment="leading" spacing={12} padding={{ top: 6, bottom: 6 }}>
             <HStack alignment="center" spacing={12}>
               <VStack
                 alignment="center"
-                frame={{ width: 48, height: 48 }}
+                frame={{ width: 44, height: 44 }}
                 modifiers={modifiers().background({
                   style: { light: '#2563EB', dark: '#1D4ED8' },
-                  shape: { type: 'rect', cornerRadius: 12 }
+                  shape: { type: 'rect', cornerRadius: 10 }
                 })}
               >
-                <Text font={26}>📅</Text>
+                <Image systemName="calendar" font={20} foregroundStyle="#FFFFFF" />
               </VStack>
               <VStack alignment="leading" spacing={3}>
                 <HStack spacing={6} alignment="center">
                   <Text font="headline" fontWeight="bold">CourseSync</Text>
                   <Text font="caption2" fontWeight="semibold" foregroundStyle={statusColor}>
-                    ● {statusBadge}
+                    {statusBadge}
                   </Text>
                 </HStack>
-                <Text font="caption1" foregroundStyle="secondaryLabel">高校课程和考试本地同步引擎</Text>
+                <Text font="caption1" foregroundStyle="secondaryLabel">高校课程和考试本地同步</Text>
               </VStack>
             </HStack>
 
             <VStack
               alignment="leading"
-              spacing={8}
+              spacing={6}
               padding={12}
               modifiers={modifiers().background({
                 style: { light: '#F1F5F9', dark: '#1E293B' },
-                shape: { type: 'rect', cornerRadius: 12 }
+                shape: { type: 'rect', cornerRadius: 10 }
               })}
             >
               <HStack alignment="center">
-                <Text font="subheadline" fontWeight="semibold">🏛 {schoolName}</Text>
+                <Text font="caption1" foregroundStyle="secondaryLabel">学校</Text>
                 <Spacer />
-                <Text font="caption1" foregroundStyle="secondaryLabel">🗓 {boundCalendarsLabel}</Text>
+                <Text font="subheadline" fontWeight="medium">{schoolName}</Text>
               </HStack>
-              <Text font="caption1" foregroundStyle="secondaryLabel">
-                {statusMessage}
-              </Text>
-              <Text font="caption2" foregroundStyle="tertiaryLabel">
-                上次刷新：{lastTime}
-              </Text>
+              <HStack alignment="center">
+                <Text font="caption1" foregroundStyle="secondaryLabel">日历</Text>
+                <Spacer />
+                <Text font="subheadline" fontWeight="medium">{boundCalendarsLabel}</Text>
+              </HStack>
+              <HStack alignment="center">
+                <Text font="caption1" foregroundStyle="secondaryLabel">上次刷新</Text>
+                <Spacer />
+                <Text font="caption1" foregroundStyle="secondaryLabel">{lastTime}</Text>
+              </HStack>
+              {statusDetail ? (
+                <Text font="caption1" foregroundStyle="secondaryLabel">
+                  {statusDetail}
+                </Text>
+              ) : null}
             </VStack>
           </VStack>
         </Section>
 
         <Section header={<Text>功能菜单</Text>}>
           <Button
-            title="🔄 立即刷新"
+            title="立即刷新"
             action={() => dismiss(0)}
           />
           {hasCalendar ? (
             <Button
-              title="📅 管理日程"
+              title="管理日程"
               action={() => dismiss({ schedule: true })}
             />
           ) : null}
           {canFreeRooms ? (
             <Button
-              title="🏫 查询空闲教室"
+              title="查询空闲教室"
               action={() => dismiss(1)}
             />
           ) : null}
           {canSignOut ? (
             <Button
-              title="🚪 退出当前登录"
+              title="退出当前登录"
               role="destructive"
               action={() => dismiss(canFreeRooms ? 2 : 1)}
             />
@@ -488,7 +499,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
             onChanged={setNewTitle}
           />
           <Button
-            title="＋ 创建并绑定新 iCloud 日历"
+            title="创建并绑定新 iCloud 日历"
             disabled={!validTitle}
             action={() => {
               if (!validTitle) return;

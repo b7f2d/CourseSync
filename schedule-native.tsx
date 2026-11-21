@@ -203,13 +203,13 @@ function CalendarScheduleView({
       >
         <Section header={<Text>选择年月</Text>}>
           <HStack alignment="center" spacing={8} padding={{ top: 2, bottom: 2 }}>
-            <Button title="◀ 上个月" action={prevMonth} />
+            <Button title="上个月" action={prevMonth} />
             <Spacer />
             <Text font="headline" fontWeight="bold">
               {year} 年 {month} 月
             </Text>
             <Spacer />
-            <Button title="下个月 ▶" action={nextMonth} />
+            <Button title="下个月" action={nextMonth} />
           </HStack>
           <HStack alignment="center" spacing={12}>
             <Picker
@@ -425,7 +425,7 @@ function CalendarScheduleView({
                     </VStack>
                     <Spacer />
                     <Text font="subheadline" foregroundStyle="secondaryLabel">
-                      ✎ 编辑 ›
+                      编辑
                     </Text>
                   </HStack>
                 </Button>
@@ -439,7 +439,7 @@ function CalendarScheduleView({
 
           <HStack alignment="center" spacing={12} padding={{ top: 6 }}>
             <Button
-              title="＋ 添加此日课程"
+              title="添加课程"
               action={() => {
                 const startTime = new Date(year, month - 1, safeSelectedDay, 8, 0).getTime();
                 dismiss({ action: 'add', kind: 'course', start: startTime, day: safeSelectedDay });
@@ -447,7 +447,7 @@ function CalendarScheduleView({
             />
             <Spacer />
             <Button
-              title="＋ 添加此日考试"
+              title="添加考试"
               action={() => {
                 const startTime = new Date(year, month - 1, safeSelectedDay, 9, 0).getTime();
                 dismiss({ action: 'add', kind: 'exam', start: startTime, day: safeSelectedDay });
@@ -496,7 +496,7 @@ function CalendarScheduleView({
                         </Text>
                         <Text font="caption2" foregroundStyle="secondaryLabel">{ev.time}</Text>
                         <Spacer />
-                        <Text font="caption1" foregroundStyle="secondaryLabel">✎ 编辑 ›</Text>
+                        <Text font="caption1" foregroundStyle="secondaryLabel">编辑</Text>
                       </HStack>
                     </Button>
                   );
