@@ -1,9 +1,7 @@
 // @ts-nocheck
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
-import { presentNativeDashboard, presentNativeCalendarManager } from './login-native';
-import { createNativeProgressView } from './progress-native';
-import { CourseRefreshActivity, COURSE_REFRESH_ACTIVITY_NAME } from './live_activity';
+// Native UI is loaded only inside the foreground index host. The intent host
+// must not resolve SwiftUI and Live Activity modules during background startup.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
@@ -11,9 +9,16 @@ async function __COURSESYNC_REPORT_STARTUP(error){
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
   const message='阶段：'+__COURSESYNC_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
   console.error('[CourseSync] '+known+' · '+__COURSESYNC_BOOT_PHASE);
-  try{await api('Dialog').alert({title:'课表启动失败',message});}
-  catch(_){try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(__){}}
-  try{api('Script').exit('刷新失败：'+known);}catch(_){}
+  if(api('Script')?.env==='index'){
+    try{await api('Dialog').alert({title:'课表启动失败',message});}
+    catch(_){try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(__){}}
+  }else{
+    try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(_){}
+  }
+  const __intent=Scripting.Intent??globalThis.Intent;
+  const __hostScript=Scripting.Script??globalThis.Script;
+  const msg='刷新失败：'+known;
+  try{__hostScript.exit(__intent?.text?__intent.text(msg):msg);}catch(_){}
 }
 async function __NUFE_START(){
   try{
@@ -30,6 +35,28 @@ const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu'
 let __shortcutOutput=null;
 const __webviews=new Set();
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
+let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
+let presentNativeDashboard,presentNativeCalendarManager,createNativeProgressView;
+let CourseRefreshActivity=null;
+const COURSE_REFRESH_ACTIVITY_NAME='CourseSyncRefresh';
+// Test-only injections simulate the index host without invoking native modules.
+if(globalThis.__COURSESYNC_TEST__){
+  presentNativeCredentialForm=(...a)=>globalThis.__nativeCredentialMock(...a);
+  presentNativeTextForm=(...a)=>globalThis.__nativeTextMock(...a);
+  presentNativeRefreshForm=(...a)=>globalThis.__nativeRefreshMock(...a);
+  presentNativeDashboard=(...a)=>globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...a):-1;
+  presentNativeCalendarManager=(...a)=>globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...a):null;
+  createNativeProgressView=(...a)=>globalThis.__progressUIFactory(...a);
+  CourseRefreshActivity=()=>globalThis.__liveActivityFactory();
+}else if(config.runsInApp){
+  const native=await import('./login-native');
+  ({presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm,
+    presentNativeDashboard,presentNativeCalendarManager}=native);
+  ({createNativeProgressView}=await import('./progress-native'));
+  // The interactive progress sheet does not need an Activity registration.
+}
+// Shortcut intent intentionally does not import the native UI or Activity modules.
+
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
 const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutput=String(value);},complete:()=>{
   for(const w of __webviews)try{w.dispose();}catch(_){}
@@ -2076,7 +2103,7 @@ const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
 function createProgress(state,store,interactive){
   let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
   let phase='connect',updates=Promise.resolve(),finishing;
-  const liveActivity=hostAPI('LiveActivity');
+  const liveActivity=interactive?hostAPI('LiveActivity'):null;
   const activityCall=async work=>{
     try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
     catch(_){return false;}
@@ -2163,6 +2190,7 @@ function createProgress(state,store,interactive){
       if(typeof liveActivity?.from==='function')await activityCall(dismissPreviousActivity);
       return;
     }
+    if(!interactive)return; // Intent extension: no Live Activity work.
     if(!await activityCall(dismissPreviousActivity))return;
     if(closed||!CourseRefreshActivity||
        !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
