@@ -1955,6 +1955,12 @@ function createProgress(state,store,interactive){
     stampStage(state,store,message);
     if(closed||!started)return;
     const label=String(message||'');
+    if(/检查目标日历/.test(label))ui?.update?.(0.1);
+    else if(/连接教务系统|尝试读取教务课表入口|学校单点登录跳转|解析学校登录表单|注册设备指纹|提交学校认证请求/.test(label))ui?.update?.(0.25);
+    else if(/^(认证完成后读取课表页面|读取学期|请求学期)/.test(label))ui?.update?.(0.5);
+    else if(/^(写入学期|更新课程和考试同步时间|核对旧|扫描专用日历)/.test(label))ui?.update?.(0.75);
+    else if(/^(读取考试日程|更新考试日程)/.test(label))ui?.update?.(0.9);
+    else if(/完成本次同步/.test(label))ui?.update?.(1);
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
       setPhase('verify');

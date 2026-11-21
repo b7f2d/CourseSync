@@ -1,7 +1,7 @@
 // One native, indeterminate progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, modifiers,
+  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, modifiers, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -10,11 +10,15 @@ type ProgressSession={
   suppressed:boolean;
   shown:boolean;
   revision:number;
+  progress:number;
+  setProgress:((v:number) => void)|null;
   dismiss:(() => void)|null;
 };
 
 function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
   const dismiss=Navigation.useDismiss();
+  const [value,setValue]=useState(session.progress);
+  session.setProgress=setValue;
   // The script's synchronization still owns the task. Closing this view
   // hides status only; it never cancels a calendar transaction.
   session.dismiss=()=>dismiss();
@@ -52,7 +56,7 @@ function ProgressScreen({session,title}:{session:ProgressSession,title:string}) 
         >
           <Image systemName="calendar" font={24} foregroundStyle="#FFFFFF" />
         </VStack>
-        <ProgressView progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
+        <ProgressView value={value} total={1} progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
       </VStack>
       <Spacer/>
     </VStack>
@@ -63,14 +67,22 @@ export function createNativeProgressView(title='正在同步课程和考试'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
-    revision:0,dismiss:null,
+    revision:0,progress:0.08,setProgress:null,dismiss:null,
   };
   const closeVisible=()=>{
     const dismiss=session.dismiss;
     session.dismiss=null;
+    session.setProgress=null;
     if(dismiss)try{dismiss();}catch(_){}
   };
   return {
+    update(v:number){
+      if(session.closed)return;
+      const clamped=Math.max(session.progress,Math.min(1,Number(v)||0));
+      if(clamped<=session.progress)return;
+      session.progress=clamped;
+      if(session.setProgress)try{session.setProgress(clamped);}catch(_){}
+    },
     show(){
       if(session.closed||session.hidden||session.suppressed||session.shown)return;
       const revision=++session.revision;
@@ -118,6 +130,8 @@ export function createNativeProgressView(title='正在同步课程和考试'){
     },
     finish(){
       if(session.closed)return;
+      session.progress=1;
+      if(session.setProgress)try{session.setProgress(1);}catch(_){}
       session.closed=true;
       session.revision++;
       session.shown=false;
