@@ -42,24 +42,17 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('shortcut refresh shows one Live Activity and no progress sheet',async()=>{
+test('intent background refresh never opens a progress sheet or Live Activity',async()=>{
  const e=await env(),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>{calls.push(['sheet']);return {};};
- e.sandbox.__liveActivityFactory=()=>({
-   async start(state){calls.push(['start',state.phase]);return true;},
-   async update(state){calls.push(['update',state.phase]);},
-   async end(state,options){calls.push(['end',state.phase,options.dismissTimeInterval]);}
- });
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
+ e.sandbox.__sdk.Navigation={present:()=>{calls.push('sheet');}};
+ e.sandbox.__progressUIFactory=()=>{calls.push('progress');return {};};
+ e.sandbox.__liveActivityFactory=()=>{calls.push('activity');return {};};
  const progress=e.m.createProgress(e.state,e.store,false);
  await progress.start();
  progress('读取学期 161');
- progress('写入学期 161 的日历事件');
- await new Promise(resolve=>setImmediate(resolve));
  await progress.finish();
- await progress.finish();
- a.deepEqual(calls,[['start','connect'],['update','sync'],['end','finish',0]]);
+ a.deepEqual(calls,[]);
 });
 
 test('refresh presentation names both courses and exams without removed status UI',()=>{
@@ -75,18 +68,13 @@ test('refresh presentation names both courses and exams without removed status U
  a.match(source,/读取考试日程\|更新考试日程/);
 });
 
-test('successful refresh from Shortcuts shows completion before ending',async()=>{
+test('successful intent sync returns text without launching Live Activity',async()=>{
  const e=await env(),calls=[];
- e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?10:ms);
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
- e.sandbox.__liveActivityFactory=()=>({
-   async start(state){calls.push(['start',state.phase]);return true;},
-   async update(state){calls.push(['update',state.phase]);},
-   async end(state){calls.push(['end',state.phase]);}
- });
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{calls.push('check');return true;}};
+ e.sandbox.__liveActivityFactory=()=>{calls.push('activity');return {};};
  loggedIn(e,raw([activity()]));
  await executeDaily(e);
- a.deepEqual(calls,[['start','connect'],['update','sync'],['update','complete'],['end','complete']]);
+ a.deepEqual(calls,[]);
  a.match(e.sandbox.output,/刷新成功/);
 });
 
@@ -102,63 +90,14 @@ test('in-app refresh uses the sheet without starting a Live Activity',async()=>{
  a.deepEqual(calls,['sheet','close']);
 });
 
-test('a shortcut still refreshes when iOS denies the Live Activity',async()=>{
+test('intent sync ignores Live Activity APIs even when unavailable',async()=>{
  const e=await env(),calls=[];
- e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
- e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('start');return false;}});
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>{throw Error('unavailable');}};
+ e.sandbox.__liveActivityFactory=()=>{calls.push('activity');throw Error('should not be called');};
  loggedIn(e,raw([activity()]));
  await executeDaily(e);
- a.deepEqual(calls,['start']);
+ a.deepEqual(calls,[]);
  a.match(e.sandbox.output,/刷新成功/);
-});
-
-test('slow native startup catches up to the current phase or ends after refresh',async()=>{
- for(const finished of [false,true]){
-   const e=await env(),calls=[];
-   let resolveStart;
-   e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===1500?5:ms);
-   e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
-   e.sandbox.__liveActivityFactory=()=>({
-     start:()=>new Promise(resolve=>{resolveStart=resolve;}),
-     async update(state){calls.push(['update',state.phase]);},
-     async end(state){calls.push(['end',state.phase]);}
-   });
-   const progress=e.m.createProgress(e.state,e.store,false);
-   await progress.start();
-   progress('读取学期 161');
-   if(finished)await progress.finish();
-   resolveStart(true);
-   await new Promise(resolve=>setImmediate(resolve));
-   await progress.finish();
-   a.deepEqual(calls,finished?[['end','finish']]:[['update','sync'],['end','finish']]);
- }
-});
-
-test('a failed dismissal is retried and the next refresh recovers only the stored activity',async()=>{
- const e=await env(),calls=[];
- const key='CourseSync.RefreshActivity.Id';
- e.sandbox.__sdk.LiveActivity={
-   areActivitiesEnabled:async()=>true,
-   from(id,name){
-     calls.push([id,name]);
-     return {activityId:id,async getActivityState(){return 'stale';},async end(){calls.push('recovered');}};
-   }
- };
- e.sandbox.__liveActivityFactory=()=>({
-   activityId:'first',
-   async start(){return true;},
-   async end(){calls.push('end attempted');return false;}
- });
- let progress=e.m.createProgress(e.state,e.store,false);
- await progress.start();
- await progress.finish();
- a.equal(e.widgetRecords.get(key),'first');
- e.sandbox.__liveActivityFactory=()=>({async start(){calls.push('next');return false;}});
- progress=e.m.createProgress(e.state,e.store,false);
- await progress.start();
- await progress.finish();
- a.deepEqual(calls,['end attempted','end attempted',['first','CourseSyncRefresh'],'recovered','next']);
- a.equal(e.widgetRecords.get(key),'');
 });
 
 test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
@@ -1118,7 +1057,17 @@ test('Scripting process/module compatibility globals do not turn production star
 
 test('Scripting 3.2.1 entry parses as an ordinary script without a module async wrapper',()=>{a.doesNotThrow(()=>new vm.Script(source));});
 test('production ordinary-script entry runs even with process and module compatibility globals',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
-test('storage-constructor failures now reach startup error UI',async()=>{const e=await env(),alerts=[];e.store.release();e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(alerts.length,1);a.match(alerts[0].title,/启动失败/);a.match(alerts[0].message,/STARTUP_TYPE/);a.doesNotMatch(alerts[0].message,/private native detail/);});
+test('intent startup errors use notification and text output without a dialog',async()=>{
+ const e=await env(),alerts=[];
+ e.store.release();
+ e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
+ e.sandbox.__COURSESYNC_TEST__=false;
+ await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__COURSESYNC_LAUNCH__;})()',e.sandbox);
+ a.equal(alerts.length,0);
+ a.ok(e.notices.some(n=>/启动失败/.test(n.title)));
+ a.match(String(e.sandbox.output),/刷新失败：STARTUP_TYPE/);
+});
 test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
 test('widget has a single dedicated Scripting entry with no legacy ListWidget renderer',()=>{
