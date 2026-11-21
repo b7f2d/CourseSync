@@ -62,9 +62,9 @@ if(globalThis.__COURSESYNC_TEST__){
   ({presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm,
     presentNativeDashboard,presentNativeCalendarManager}=native);
   ({createNativeProgressView}=await import('./progress-native'));
-  // The interactive progress sheet does not need an Activity registration.
+  // Foreground refreshes never register a Live Activity.
 }
-// Shortcut intent intentionally does not import the native UI or Activity modules.
+// Shortcut intent loads the Activity renderer only when background progress starts.
 
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
 let __exitAttempted=false;
@@ -2120,7 +2120,7 @@ const COURSE_REFRESH_ACTIVITY_ID='CourseSync.RefreshActivity.Id';
 function createProgress(state,store,interactive){
   let ui=null,activity=null,closed=false,started=false,waitingForVerification=false;
   let phase='connect',updates=Promise.resolve(),finishing;
-  const liveActivity=interactive?hostAPI('LiveActivity'):null;
+  const liveActivity=!interactive?hostAPI('LiveActivity'):null;
   const activityCall=async work=>{
     try{return await bounded(Promise.resolve().then(work),1500,'LIVE_ACTIVITY_TIMEOUT');}
     catch(_){return false;}
@@ -2204,12 +2204,19 @@ function createProgress(state,store,interactive){
           await new Promise(resolve=>Timer.schedule(100,false,resolve));
         }
       }catch(_){ui=null;}
-      if(typeof liveActivity?.from==='function')await activityCall(dismissPreviousActivity);
       return;
     }
-    if(!interactive)return; // Intent extension: no Live Activity work.
+    // Defer loading the renderer until a real background sync owns the lock.
+    // Failure to import/register is a nonfatal display issue, not a sync error.
+    if(!globalThis.__COURSESYNC_TEST__){
+      try{
+        const renderer=await import('./live_activity');
+        CourseRefreshActivity=renderer.CourseRefreshActivity;
+      }catch(_){console.error('[CourseSync] Live Activity renderer unavailable');}
+    }
+    // A renderer failure still allows recovery of any previous stored activity.
     if(!await activityCall(dismissPreviousActivity))return;
-    if(closed||!CourseRefreshActivity||
+    if(closed||typeof CourseRefreshActivity!=='function'||
        !await activityCall(()=>liveActivity?.areActivitiesEnabled?.()))return;
     await activityCall(async()=>{
       const candidate=CourseRefreshActivity();
@@ -2236,14 +2243,19 @@ function createProgress(state,store,interactive){
     finishing=(async()=>{
       try{ui?.finish();}catch(_){}
       if(!activity)return;
-      await updates;
-      const finalPhase=success?'complete':'finish';
-      if(success){
-        const shown=await activityCall(async()=>
-          (await activity.update({phase:finalPhase}))!==false);
-        if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
+      try{
+        await updates;
+        const finalPhase=success?'complete':'finish';
+        if(success){
+          const shown=await activityCall(async()=>
+            (await activity.update({phase:finalPhase}))!==false);
+          if(shown)await new Promise(resolve=>Timer.schedule(2000,false,resolve));
+        }
+        if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
+      }catch(_){
+        // An Activity error may never veto Script.complete()/Intent.text().
+        console.error('[CourseSync] Live Activity finish failed');
       }
-      if(!await endActivity(activity,finalPhase))await endActivity(activity,finalPhase);
     })();
     return finishing;
   };
