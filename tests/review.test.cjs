@@ -2028,42 +2028,31 @@ test('manageManualSchedules presents calendar and handles add/edit',async()=>{
  a.ok(Array.isArray(presented.rows));
 });
 
-test('clicking synced course in manageManualSchedules shows notice and forbids editing',async()=>{
+test('manageManualSchedules hides read-only synced courses and exams',async()=>{
  const e=await env({hostEnv:'index'});
  e.state.examCalendarId=e.other.identifier;
- const start=Date.UTC(new Date().getFullYear(),5,1,2);
+ const year=new Date().getFullYear();
+ const start=Date.UTC(year,5,1,2);
  e.baseline([lesson({id:'sys-course-1',title:'高等数学',start:new Date(start).toISOString(),end:new Date(start+3600000).toISOString(),location:'教一101'})]);
+ const examStart=Date.UTC(year,5,15,1,0);
+ const examEvent=e.add({
+   title:'📝 线性代数',
+   start:new Date(examStart).toISOString(),
+   end:new Date(examStart+7200000).toISOString(),
+   location:'博远楼 202'
+ },{notes:'同步：2026-11-01 08:00'});
+ e.state.examIndex={[examEvent.identifier]:'[COURSESYNC_EXAM '+e.state.owner+'] ["线性代数","期末",'+examStart+']'};
  e.store.write(e.state);e.store.release();
 
- let editorOpened=false;
- e.sandbox.__scheduleEditor=async()=>{
-   editorOpened=true;
-   return null;
- };
-
- let noticeTitle='',noticeMessage='';
- e.sandbox.__sdk.Dialog.alert=async({title,message})=>{
-   noticeTitle=title;
-   noticeMessage=message;
- };
-
- let step=0;
+ let presented=null;
  e.sandbox.__calendarScheduleMock=async(opts)=>{
-   if(step++===0){
-     const syncedRow=opts.rows.find(r=>r.isManual===false);
-     a.ok(syncedRow);
-     a.equal(syncedRow.title,'高等数学');
-     return {action:'edit',id:syncedRow.id};
-   }
+   presented=opts;
    return null;
  };
 
  await e.m.manageManualSchedules(e.store);
- a.equal(editorOpened,false);
- a.equal(noticeTitle,'教务同步日程');
- a.equal(noticeMessage,'教务系统导入的课表由系统自动同步，不可在此编辑或删除；如需调整请在教务系统处理或添加手动日程。');
- const after=e.store.read();
- a.equal(after.semesters['161'].events[0].title,'高等数学');
+ a.ok(presented);
+ a.equal(presented.rows.length,0);
 });
 
 test('user can add manual course and manual exam via calendar view',async()=>{
@@ -2102,30 +2091,4 @@ test('user can add manual course and manual exam via calendar view',async()=>{
  await e.m.manageManualSchedules(e.store);
  a.ok(e.db.some(ev=>ev.title==='自定义课程'&&ev.calendar.identifier===e.calendar.identifier));
  a.ok(e.db.some(ev=>ev.title==='自定义考试'&&ev.calendar.identifier===e.other.identifier));
-});
-
-test('manageManualSchedules displays synced exams alongside synced courses and manual events',async()=>{
- const e=await env({hostEnv:'index'});
- const year=new Date().getFullYear();
- const examStart=Date.UTC(year,5,15,1,0);
- const examEvent=e.add({
-   title:'📝 线性代数',
-   start:new Date(examStart).toISOString(),
-   end:new Date(examStart+7200000).toISOString(),
-   location:'博远楼 202'
- },{notes:'同步：2026-11-01 08:00'});
- e.state.examIndex={[examEvent.identifier]:'[COURSESYNC_EXAM '+e.state.owner+'] ["线性代数","期末",'+examStart+']'};
- e.store.write(e.state);e.store.release();
-
- let presented=null;
- e.sandbox.__calendarScheduleMock=async(opts)=>{
-   presented=opts;
-   return null;
- };
- await e.m.manageManualSchedules(e.store);
- a.ok(presented);
- const examRow=presented.rows.find(r=>r.kind==='exam'&&r.isManual===false);
- a.ok(examRow);
- a.equal(examRow.title,'线性代数');
- a.equal(examRow.location,'博远楼 202');
 });

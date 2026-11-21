@@ -3083,17 +3083,12 @@ async function manageManualSchedules(store){
     const calendars=await manualCalendars(state);
     const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
 
-    // 1. Load manual calendar events and synced exams from calendars
-    const courseCalEvents=calendars.course?await calendarRows(start,end,calendars.course):[];
-    const examCalEvents=calendars.exam?await calendarRows(start,end,calendars.exam):[];
-    const manualEvents=[
-      ...courseCalEvents.filter(ev=>manualKind(ev)==='course'&&
+    // 1. Load manual calendar events only (read-only synced events are managed by Apple Calendar)
+    const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
+      calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
         canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
-        +ev.endDate>+ev.startDate),
-      ...examCalEvents.filter(ev=>manualKind(ev)==='exam'&&
-        canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
-        +ev.endDate>+ev.startDate),
-    ];
+        +ev.endDate>+ev.startDate):[]));
+    const manualEvents=manualGroups.flat();
 
     const manualRows=manualEvents.map(ev=>{
       const sameDay=ev.startDate.toDateString()===ev.endDate.toDateString();
@@ -3109,46 +3104,7 @@ async function manageManualSchedules(store){
       };
     });
 
-    // 2. Load synced courses from state.semesters and synced exams from bound calendar
-    const syncedRows=[];
-    for(const ev of courseCalEvents){
-      if(isExamEvent(ev,state)&&!manualKind(ev)&&!ev.isAllDay&&
-         +ev.startDate>=start&&+ev.startDate<end&&+ev.endDate>+ev.startDate){
-        syncedRows.push({
-          id:'synced-exam-'+(ev.identifier||(+ev.startDate)+'-'+ev.title),
-          kind:'exam',
-          title:String(ev.title||'').replace(/^📝\s*/,'')||ev.title,
-          start:+ev.startDate,
-          end:+ev.endDate,
-          time:format(ev.startDate,false)+'–'+format(ev.endDate,false),
-          location:ev.location||'',
-          isManual:false,
-        });
-      }
-    }
-    if(state.semesters){
-      for(const sem of Object.values(state.semesters)){
-        if(!sem?.events)continue;
-        for(const ev of sem.events){
-          const s=Date.parse(ev.start),e=Date.parse(ev.end);
-          if(s>=start&&s<end){
-            const sd=new Date(s),ed=new Date(e);
-            syncedRows.push({
-              id:'synced-'+(ev.id||s+'-'+ev.title),
-              kind:'course',
-              title:ev.title,
-              start:s,
-              end:e,
-              time:format(sd,false)+'–'+format(ed,false),
-              location:ev.location||'',
-              isManual:false,
-            });
-          }
-        }
-      }
-    }
-
-    const allRows=[...manualRows,...syncedRows].sort((a,b)=>a.start-b.start);
+    const allRows=manualRows.sort((a,b)=>a.start-b.start);
 
     const selection=await presentNativeCalendarSchedule({
       year,

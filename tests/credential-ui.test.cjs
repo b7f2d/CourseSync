@@ -168,7 +168,7 @@ test('native calendar schedule view presents a real calendar with year, month, 1
  assert.doesNotMatch(schedule,/font=\{\d+\}/);
  assert.match(schedule,/Picker[\s\S]*?title="年份"/);
  assert.match(schedule,/Picker[\s\S]*?title="月份"/);
- assert.match(schedule,/\[教务同步\]/);
+ assert.doesNotMatch(schedule,/\[教务同步\]|只读/);
  assert.match(schedule,/✎ 编辑 ›/);
  assert.match(schedule,/monospacedDigit=\{true\}/);
  assert.match(schedule,/frame=\{\{\s*height:\s*6\s*\}\}/);

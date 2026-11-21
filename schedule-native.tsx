@@ -102,7 +102,8 @@ function CalendarScheduleView({
   const [selectedDay, setSelectedDay] = useState<number>(Math.min(initialD, totalDays));
 
   const safeSelectedDay = Math.min(Math.max(selectedDay, 1), totalDays);
-  const rows: ScheduleRow[] = Array.isArray(initialRows) ? initialRows : [];
+  const rows: ScheduleRow[] = (Array.isArray(initialRows) ? initialRows : [])
+    .filter(r => r && r.isManual !== false);
 
   const prevMonth = () => {
     let nextY = year;
@@ -389,14 +390,13 @@ function CalendarScheduleView({
 
         <Section
           header={<Text>{month} 月 {safeSelectedDay} 日 ({selectedWeekday}) 日程明细</Text>}
-          footer={<Text>教务日程为只读同步，手动日程可点击编辑或删除。</Text>}
+          footer={<Text>点击日程可编辑或删除。</Text>}
         >
           {selectedDayEvents.length > 0 ? (
             selectedDayEvents.map(ev => {
-              const isManual = Boolean(ev.isManual);
               const isCourse = ev.kind === 'course';
-              const dotColor = !isManual ? '#94A3B8' : isCourse ? '#3B82F6' : '#F97316';
-              const tagLabel = !isManual ? '[教务同步]' : (isCourse ? '[手动添加 · 课程]' : '[手动添加 · 考试]');
+              const dotColor = isCourse ? '#3B82F6' : '#F97316';
+              const tagLabel = isCourse ? '课程' : '考试';
 
               return (
                 <Button
@@ -415,10 +415,7 @@ function CalendarScheduleView({
                     <VStack alignment="leading" spacing={2}>
                       <HStack spacing={6} alignment="center">
                         <Text font="headline">{ev.title}</Text>
-                        <Text
-                          font="caption2"
-                          foregroundStyle={!isManual ? 'secondaryLabel' : dotColor}
-                        >
+                        <Text font="caption2" foregroundStyle={dotColor}>
                           {tagLabel}
                         </Text>
                       </HStack>
@@ -427,22 +424,16 @@ function CalendarScheduleView({
                       </Text>
                     </VStack>
                     <Spacer />
-                    {isManual ? (
-                      <Text font="subheadline" foregroundStyle="secondaryLabel">
-                        ✎ 编辑 ›
-                      </Text>
-                    ) : (
-                      <Text font="caption1" foregroundStyle="secondaryLabel">
-                        [教务同步]
-                      </Text>
-                    )}
+                    <Text font="subheadline" foregroundStyle="secondaryLabel">
+                      ✎ 编辑 ›
+                    </Text>
                   </HStack>
                 </Button>
               );
             })
           ) : (
             <Text font="subheadline" foregroundStyle="secondaryLabel">
-              该日暂无安排的课程或考试。
+              该日暂无手动添加的课程或考试。
             </Text>
           )}
 
@@ -466,7 +457,11 @@ function CalendarScheduleView({
         </Section>
 
         <Section header={<Text>{month} 月全部日程列表（1 至 {totalDays} 号）</Text>}>
-          {Array.from({ length: totalDays }, (_, idx) => idx + 1).map(dayNum => {
+          {eventsByDay.size === 0 ? (
+            <Text font="subheadline" foregroundStyle="secondaryLabel">
+              本月暂无手动添加的日程。
+            </Text>
+          ) : Array.from({ length: totalDays }, (_, idx) => idx + 1).map(dayNum => {
             const dayEvs = getEventsForDay(dayNum);
             const wd = fullWeekdays[new Date(year, month - 1, dayNum).getDay() % 7] || '周一';
             if (dayEvs.length === 0) return null;
@@ -477,10 +472,9 @@ function CalendarScheduleView({
                   {month}月{dayNum}日 {wd}
                 </Text>
                 {dayEvs.map(ev => {
-                  const isManual = Boolean(ev.isManual);
                   const isCourse = ev.kind === 'course';
-                  const dotColor = !isManual ? '#94A3B8' : isCourse ? '#3B82F6' : '#F97316';
-                  const tagLabel = !isManual ? '[教务同步]' : (isCourse ? '[手动添加 · 课程]' : '[手动添加 · 考试]');
+                  const dotColor = isCourse ? '#3B82F6' : '#F97316';
+                  const tagLabel = isCourse ? '课程' : '考试';
 
                   return (
                     <Button
@@ -497,19 +491,12 @@ function CalendarScheduleView({
                           })}
                         />
                         <Text font="subheadline" fontWeight="medium">{ev.title}</Text>
-                        <Text
-                          font="caption2"
-                          foregroundStyle={!isManual ? 'secondaryLabel' : dotColor}
-                        >
+                        <Text font="caption2" foregroundStyle={dotColor}>
                           {tagLabel}
                         </Text>
                         <Text font="caption2" foregroundStyle="secondaryLabel">{ev.time}</Text>
                         <Spacer />
-                        {isManual ? (
-                          <Text font="caption1" foregroundStyle="secondaryLabel">✎ 编辑 ›</Text>
-                        ) : (
-                          <Text font="caption1" foregroundStyle="secondaryLabel">只读</Text>
-                        )}
+                        <Text font="caption1" foregroundStyle="secondaryLabel">✎ 编辑 ›</Text>
                       </HStack>
                     </Button>
                   );
