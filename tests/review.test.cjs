@@ -147,6 +147,39 @@ test('foreground-only refresh neither acquires keeper nor starts Live Activity',
  a.deepEqual(calls,['unlisten']);
 });
 
+test('returning to App foreground releases keeper and later background reacquires it once',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[],listeners=[];
+ e.sandbox.setTimeout=(fn,ms)=>setTimeout(fn,ms===2000?5:ms);
+ e.sandbox.__sdk.AppEvents={scenePhase:{
+   addListener(fn){listeners.push(fn);},
+   removeListener(){calls.push('unlisten');}
+ }};
+ e.sandbox.__sdk.BackgroundKeeper={
+   async keepAlive(){calls.push('keep');return true;},
+   async stopKeepAlive(){calls.push('stop');}
+ };
+ e.sandbox.__sdk.LiveActivity={areActivitiesEnabled:async()=>true};
+ e.sandbox.__liveActivityFactory=()=>({
+   activityId:'one-app-live',
+   async start(){calls.push('start');return true;},
+   async update(){return true;},
+   async end(){calls.push('end');return true;}
+ });
+ const p=e.m.createProgress(e.state,e.store,true);
+ await p.start();
+ listeners[0]('background');
+ await new Promise(resolve=>setImmediate(resolve));
+ listeners[0]('active');
+ await new Promise(resolve=>setImmediate(resolve));
+ listeners[0]('background');
+ await new Promise(resolve=>setImmediate(resolve));
+ await p.finish(true);
+ a.equal(calls.filter(x=>x==='start').length,1);
+ a.equal(calls.filter(x=>x==='keep').length,2);
+ a.equal(calls.filter(x=>x==='stop').length,2);
+ a.equal(calls.filter(x=>x==='end').length,1);
+});
+
 test('foreground-to-background Activity errors do not block completion or keeper cleanup',async()=>{
  const e=await env({hostEnv:'index'}),calls=[],listeners=[];
  e.sandbox.__sdk.AppEvents={scenePhase:{
