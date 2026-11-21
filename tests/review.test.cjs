@@ -1304,38 +1304,59 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
  a.equal(alerts.at(-1).title,'已退出登录');
+ a.equal(e.keys.get('CourseSync.Local.v1.school-reselect'),'nufe');
 });
-test('after logout, existing calendar opens normal menu rather than first-setup workflow',async()=>{
- const e=await env({hostEnv:'index'}),menus=[];
- e.state.signedOut=true;e.state.authPaused=true;
- e.store.write(e.state);e.store.release();
- e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
- await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新']);
- a.equal(e.store.read().calendarId,e.calendar.identifier);
- a.equal(e.requests.length,0);
-});
-test('re-login opens credentials for the saved school without showing the school picker',async()=>{
- for(const [id,name] of [['nufe','南京财经大学'],['usts','苏州科技大学']]){
+test('opening CourseSync after logout goes directly to the school picker and keeps the bound calendar',async()=>{
+ for(const id of ['nufe','usts']){
   const e=await env({hostEnv:'index'}),m=e.m;
   e.store.release();
   m.activateSelectedSchool(id);
   const store=new m.Store();store.acquire();
   store.write({...e.state,signedOut:true,authPaused:true});store.release();
-  e.keys.set(id==='nufe'?'CourseSync.Local.v1.school-choice':'CourseSync.Local.v1.school',id);
-  e.sandbox.__sdk.Dialog.actionSheet=async o=>o.actions.findIndex(x=>x.label==='立即刷新');
-  e.sandbox.__sdk.Navigation={present:async()=>null};
-  let schoolPrompts=0;
-  const credentialPrompts=[];
-  e.sandbox.__nativeRefreshMock=async()=>{schoolPrompts++;return null;};
-  e.sandbox.__nativeCredentialMock=async title=>{credentialPrompts.push(title);return null;};
+  e.keys.set(id==='nufe'?'CourseSync.Local.v1.school-choice':'CourseSync.Local.v1.school-reselect',id);
+  let dashboardPrompts=0,schoolPrompts=0;
+  e.sandbox.__sdk.Dialog.actionSheet=async()=>{dashboardPrompts++;return null;};
+  e.sandbox.__nativeRefreshMock=async(schools,previous,allowReuse)=>{
+    schoolPrompts++;
+    a.deepEqual(Array.from(schools,school=>school.id),['nufe','usts']);
+    a.equal(allowReuse,false);
+    return null;
+  };
   await m.run();
-  a.equal(schoolPrompts,0);
-  a.deepEqual(credentialPrompts,[name+'登录']);
-  a.equal(m.loadSelectedSchool(),id);
+  await m.run();
+  a.equal(dashboardPrompts,0);
+  a.equal(schoolPrompts,2);
   a.equal(store.read().calendarId,e.calendar.identifier);
   a.deepEqual(e.requests,[]);
  }
+});
+test('background refresh after logout does not fall back to another school',async()=>{
+ const e=await env();
+ e.store.write(e.state);e.store.release();
+ e.keys.set('CourseSync.Local.v1.school-reselect','usts');
+ let networkCalls=0;
+ e.sandbox.fetchImpl=async()=>{networkCalls++;throw Error('unexpected network');};
+ await e.m.run();
+ a.equal(networkCalls,0);
+ a.match(e.sandbox.output,/重新选择学校/);
+ a.equal(e.keys.get('CourseSync.Local.v1.school-reselect'),'usts');
+});
+test('a verified login after reselecting a school clears the logout marker',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.baseline([lesson()]);
+ e.add(lesson());
+ e.state.signedOut=true;
+ e.state.authPaused=true;
+ e.store.write(e.state);e.store.release();
+ e.keys.set('CourseSync.Local.v1.school-reselect','nufe');
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',schoolId:'nufe',username:'test-user',password:'fixture-password'});
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>{throw Error('unexpected dashboard');};
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await e.m.run();
+ a.equal(e.keys.has('CourseSync.Local.v1.school-reselect'),false);
+ a.equal(e.keys.get('CourseSync.Local.v1.school-choice'),'nufe');
+ a.equal(e.store.read().signedOut,false);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
 });
 test('successful verified synchronization clears signed-out state without changing calendar identity',async()=>{
  const e=await env();e.state.signedOut=true;e.state.authPaused=true;

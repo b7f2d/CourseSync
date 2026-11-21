@@ -47,7 +47,7 @@ test('first step uses a native dropdown for whitelisted schools, then native cre
  assert.doesNotMatch(native,/教务接口|默认接口|统一认证根地址|SSO 登录入口|课表页面|学期详情|课表数据|WebView|fetch\(|Clipboard|console\.log/);
  assert.match(index,/const SCHOOL_WHITELIST=Object\.freeze/);
  assert.match(index,/id:'nufe',name:'南京财经大学'/);
- assert.match(index,/function prepareManualRefresh\(state\)/);
+ assert.match(index,/function prepareManualRefresh\(state,forceCredentials=false\)/);
  assert.match(index,/presentNativeRefreshForm\(/);
  assert.match(index,/schoolById\(response\.schoolId\)/);
  assert.match(index,/activateSelectedSchool\(school\.id\)/);
@@ -106,9 +106,9 @@ test('routine refresh and re-login keep using the selected school',()=>{
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
  assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);
- assert.match(routine,/const selectedSchool=loadSelectedSchool\(null,true\)/);
+ assert.match(routine,/const selectedSchool=state\.signedOut\|\|reselectSchool\?null:loadSelectedSchool\(null,true\)/);
  assert.match(routine,/if\(!selectedSchool\)\{/);
- assert.match(routine,/manualAuth=await prepareManualRefresh\(state\)/);
+ assert.match(routine,/manualAuth=await prepareManualRefresh\(state,!!reselectSchool\)/);
  assert.match(routine,/else if\(!hasCredentials\)\{\s*try\{\s*const credentials=await credentialForm/);
  assert.doesNotMatch(index,/menu\.addAction\('切换学校'\)/);
 });

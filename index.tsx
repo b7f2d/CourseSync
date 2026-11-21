@@ -148,6 +148,7 @@ let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
 let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
 const SCHOOL_KEY='CourseSync.Local.v1.school';
 const SCHOOL_CHOICE_KEY='CourseSync.Local.v1.school-choice';
+const SCHOOL_RESELECT_KEY='CourseSync.Local.v1.school-reselect';
 const USTS_SITE='https://jwgl.usts.edu.cn';
 const USTS=USTS_SITE+'/jwglxt';
 const USTS_LOGIN=USTS+'/xtgl/login_slogin.html';
@@ -375,9 +376,9 @@ function termEndpoint(template,sid){
   const url=template.replace('{sid}',id);
   safeURL(url);return url;
 }
-async function prepareManualRefresh(state){
+async function prepareManualRefresh(state,forceCredentials=false){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
-  const allowReuse=!state?.signedOut&&canOfferSignOut(state);
+  const allowReuse=!forceCredentials&&!state?.signedOut&&canOfferSignOut(state);
   let response;
   try{
     response=await presentNativeRefreshForm(
@@ -388,7 +389,7 @@ async function prepareManualRefresh(state){
   const school=schoolById(response.schoolId);
   assert(school,'SCHOOL_UNSUPPORTED');
   assert(response.kind==='reuse'||response.kind==='credentials','SCHOOL_UNSUPPORTED');
-  if(response.kind==='reuse')assert(school.id===loadSelectedSchool(),'SCHOOL_UNSUPPORTED');
+  if(response.kind==='reuse')assert(!forceCredentials&&!state?.signedOut&&school.id===loadSelectedSchool(),'SCHOOL_UNSUPPORTED');
   else assert(typeof response.username==='string'&&typeof response.password==='string'&&
     response.username.trim().length>0&&response.username.length<=100&&
     response.password.length>0&&response.password.length<=512,'CREDENTIALS_INVALID');
@@ -2800,7 +2801,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   if(state.notice){state.notice=null;store.write(state);}
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
   const usts=activeSchoolId==='usts';
-  const jar=state.signedOut||(usts&&manualAuth?.kind==='credentials')?new CookieJar():readCookieJar();
+  const jar=state.signedOut||manualAuth?.kind==='credentials'?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
   let identityVerified=!usts;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
@@ -2831,10 +2832,10 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     identityVerified=true;
     saveCookies(jar.cookies);
   }else info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
-  // Only a verified school session ends the signed-out state.
-  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   const accountKey=schoolKey('CourseSync.Local.v1.person');
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
+  // Only a verified school session ends the signed-out state.
+  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   state.availableSemesters=info.semesters;store.write(state);
   let sids=selectTermIds(info,state,interactive);
   if(interrupted){
@@ -2941,6 +2942,7 @@ async function signOut(state,store){
   state.runStatus='signed_out';state.credentialCloudStatus=null;
   store.write(state);
   try{
+    Keychain.set(SCHOOL_RESELECT_KEY,activeSchoolId);
     if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
     if(Keychain.contains(SCHOOL_CHOICE_KEY))Keychain.remove(SCHOOL_CHOICE_KEY);
     if(Keychain.contains(SCHOOL_KEY))Keychain.remove(SCHOOL_KEY);
@@ -3171,18 +3173,22 @@ async function loadFreeRoomPage(isActive,onProgress){
 async function run() {
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
   migrateLegacyKeychainData();
-  activateSelectedSchool(loadSelectedSchool());
+  const reselectSchool=Keychain.contains(SCHOOL_RESELECT_KEY)?Keychain.get(SCHOOL_RESELECT_KEY):null;
+  activateSelectedSchool(reselectSchool||loadSelectedSchool());
   let store=new Store();
-  let firstSetup=false;
-  // A configured calendar stays configured even after explicitly logging out.
-  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
-  if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
   let state,locked=false,progress=null,action=0,manualAuth=null;
   try {
-    if(interactive&&!firstSetup){
+    if(!interactive&&reselectSchool){
+      if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请打开 CourseSync 重新选择学校。');
+      return;
+    }
+    if(interactive){
       state=store.read();
+    }
+    // Skip the dashboard after logout so reopening the script starts with school selection.
+    if(interactive&&state.calendarId&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const canSignOut=canOfferSignOut(state);
@@ -3246,10 +3252,10 @@ async function run() {
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(interactive&&action===0){
       const hasCredentials=!state.signedOut&&hasSavedCredentials();
-      const selectedSchool=loadSelectedSchool(null,true);
+      const selectedSchool=state.signedOut||reselectSchool?null:loadSelectedSchool(null,true);
       if(!selectedSchool){
         const previousSchool=activeSchoolId;
-        manualAuth=await prepareManualRefresh(state);
+        manualAuth=await prepareManualRefresh(state,!!reselectSchool);
         if(!manualAuth)return;
         if(previousSchool!==activeSchoolId){
           store.release();locked=false;state=null;
@@ -3297,6 +3303,7 @@ async function run() {
     await progress.start();
     progress('连接教务系统');
     const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
+    if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
     let examError=null;
     try{await syncExams(http,state,store,calendar,progress);}
     catch(error){
