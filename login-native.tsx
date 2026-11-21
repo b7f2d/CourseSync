@@ -305,8 +305,6 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
   const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : '#10B981';
   const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '';
   const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
-  const examCalTitle = state?.examCalendarTitle || (state?.examCalendarId && state.examCalendarId !== state?.calendarId ? '考试日历' : '');
-  const boundCalendarsLabel = examCalTitle ? `${calTitle} / ${examCalTitle}` : calTitle;
   const formatLastCheck = (iso?: string) => {
     if (!iso) return '暂无同步记录';
     const ms = Date.parse(iso);
@@ -363,7 +361,7 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
               <HStack alignment="center" spacing={10}>
                 <Text font="subheadline" foregroundStyle="secondaryLabel">日历</Text>
                 <Spacer />
-                <Text font="subheadline" fontWeight="medium" multilineTextAlignment="trailing">{boundCalendarsLabel}</Text>
+                <Text font="subheadline" fontWeight="medium" multilineTextAlignment="trailing">{calTitle}</Text>
               </HStack>
               <HStack alignment="center" spacing={10}>
                 <Text font="subheadline" foregroundStyle="secondaryLabel">上次刷新</Text>

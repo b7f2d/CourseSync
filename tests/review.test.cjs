@@ -549,6 +549,39 @@ test('USTS exam query writes published times and retains existing future exams w
   items=[];await sync();
   a.equal(e.db.length,0);
 });
+test('exam calendar migration verifies destination writes, retries without duplicates, and preserves unrelated events',async()=>{
+ const e=await env();
+ const {m,state,store,calendar,other}=e;
+ state.examCalendarId=other.identifier;
+ state.examCalendarTitle=other.title;
+ const historic={title:'📝 历史考试',start:'2024-12-18T01:00:00.000Z',
+   end:'2024-12-18T03:00:00.000Z',location:'旧考场'};
+ const old=e.add(historic,{cal:other,notes:'同步：2024-12-01 09:00'});
+ const key='[COURSESYNC_EXAM '+state.owner+'] '+JSON.stringify(['历史考试','期末',Date.parse(historic.start)]);
+ state.examIndex={[old.identifier]:key};
+ const personal=e.add({...historic,title:'个人日程'},{cal:other,notes:'个人'});
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
+   text:'<table id="exams"><tr class="tr-empty"><td>暂无</td></tr></table>'})};
+ const sync=()=>m.syncExams(http,state,store,calendar,()=>{},Date.parse('2026-11-16T00:00:00Z'));
+ e.setDropSave(true);
+ await a.rejects(sync,code('CALENDAR_VERIFY'));
+ a.deepEqual(e.db.map(ev=>ev.identifier),[old.identifier,personal.identifier]);
+ e.setDropSave(false);
+ e.setNoRemove(true);
+ await a.rejects(sync,code('CALENDAR_VERIFY'));
+ a.equal(e.db.filter(ev=>ev.calendar.identifier===calendar.identifier).length,1);
+ a.equal(store.read().examCalendarId,other.identifier);
+ e.setNoRemove(false);
+ await sync();
+ await sync();
+ const migrated=e.db.find(ev=>ev.calendar.identifier===calendar.identifier);
+ a.equal(migrated.title,historic.title);
+ a.equal(migrated.notes,old.notes);
+ a.equal(store.read().examIndex[migrated.identifier],key);
+ a.deepEqual(e.db.map(ev=>ev.identifier),[personal.identifier,migrated.identifier]);
+ a.equal(store.read().examCalendarId,undefined);
+});
+
 test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>null;

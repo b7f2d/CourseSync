@@ -772,6 +772,100 @@ async function ustsExamRows(http,state){
   }
   return {rows,unpublished};
 }
+async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
+  const legacyId=state.examCalendarId;
+  if(!legacyId||legacyId===calendar.identifier){
+    if(legacyId||state.examCalendarTitle){
+      delete state.examCalendarId;
+      delete state.examCalendarTitle;
+      store.write(state);
+    }
+    return;
+  }
+  const legacy=(await visibleCalendars()).find(c=>c.identifier===legacyId);
+  assert(liveCalendar(legacy),'EXAM_CALENDAR_UNAVAILABLE');
+  progress('合并考试日历');
+  const prefix=EXAM_MARKER+state.owner+'] ';
+  const index=Object.assign(Object.create(null),state.examIndex);
+  const keyOf=ev=>{
+    const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
+    return typeof key==='string'&&key.startsWith(prefix)?key:null;
+  };
+  const indexedWindows=[];
+  for(const key of new Set(Object.values(index))){
+    let start;
+    try{start=JSON.parse(key.slice(prefix.length))[2];}catch(_){continue;}
+    if(Number.isFinite(start))indexedWindows.push([start-DAY,start+DAY]);
+  }
+  const ranges=[...windows,...dedicatedWindows(state),...indexedWindows].sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  for(const [start,end] of ranges){
+    const last=merged[merged.length-1];
+    if(last&&start<=last[1])last[1]=Math.max(last[1],end);
+    else merged.push([start,end]);
+  }
+  const readOwned=async cal=>{
+    const found=new Map();
+    for(const [start,end] of merged){
+      for(let at=start;at<end;at+=90*DAY){
+        store.check();
+        for(const ev of await calendarRows(at,Math.min(at+90*DAY,end),cal)){
+          if(keyOf(ev))found.set(occurrenceKey(ev),ev);
+        }
+      }
+    }
+    return [...found.values()];
+  };
+  const old=await readOwned(legacy);
+  assert(old.every(ev=>!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&
+    !ev.recurrenceRules?.length&&!ev.attendees?.length),'MANAGED_SERIES');
+  if(old.length){
+    const existing=new Map((await readOwned(calendar)).map(ev=>[keyOf(ev),ev]));
+    for(const ev of old){
+      const key=keyOf(ev),start=+ev.startDate,end=+ev.endDate;
+      let destination=existing.get(key);
+      if(!destination){
+        store.check();
+        const copy=new CalendarEvent();
+        copy.calendar=calendar;copy.title=ev.title;copy.location=ev.location||'';
+        copy.startDate=new Date(start);copy.endDate=new Date(end);
+        copy.timeZone=ev.timeZone||'Asia/Shanghai';copy.notes=key;
+        if(ev.url)copy.url=ev.url;
+        for(const alarm of ev.alarms||[])copy.addAlarm(alarm);
+        await copy.save();
+        destination=(await calendarRows(start,end,calendar)).find(item=>
+          keyOf(item)===key&&item.title===ev.title&&+item.startDate===start&&+item.endDate===end&&
+          (item.location||'')===(ev.location||''));
+        assert(destination,'CALENDAR_VERIFY');
+        existing.set(key,destination);
+      }
+      index[destination.identifier]=key;
+      state.examIndex=index;
+      store.write(state);
+      if(destination.notes===key){
+        const destinationId=destination.identifier;
+        const note=ev.notes&&!String(ev.notes).startsWith(prefix)?ev.notes:readableNotes(null,new Date().toISOString());
+        destination.notes=note;
+        await destination.save();
+        assert((await calendarRows(+destination.startDate,+destination.endDate,calendar)).some(item=>
+          item.identifier===destination.identifier&&item.notes===note),'CALENDAR_VERIFY');
+        if(destination.identifier!==destinationId){
+          delete index[destinationId];
+          index[destination.identifier]=key;
+          store.write(state);
+        }
+      }
+      store.check();
+      await ev.remove();
+      assert(!(await calendarRows(start,end,legacy)).some(item=>occurrenceKey(item)===occurrenceKey(ev)),'CALENDAR_VERIFY');
+      delete index[ev.identifier];
+      store.write(state);
+    }
+  }
+  delete state.examCalendarId;
+  delete state.examCalendarTitle;
+  store.write(state);
+}
 async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   progress('读取考试日程');
   const end=now+366*DAY;
@@ -797,6 +891,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   const historical=new Set([...target.values()].filter(exam=>exam.start<now)
     .map(exam=>Math.floor(exam.start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
+  await migrateLegacyExamCalendar(state,store,calendar,windows,progress);
   const index=Object.assign(Object.create(null),state.examIndex);
   const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
   const read=async()=>{
@@ -1872,6 +1967,7 @@ const ERROR_GUIDE={
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
   CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','从主菜单「立即刷新」重新指定原日历；不要删除旧日历。'],
   CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
+  EXAM_CALENDAR_UNAVAILABLE:['旧考试日历当前不可写或不可见，暂时无法合并。','确认 Apple 日历仍能访问旧考试日历，再点击「立即刷新」。'],
   CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
   CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
   BUSY:['同步锁显示可能有另一项同步正在进行，也可能是上次异常退出留下的锁。','避免同时运行两个任务；异常退出留下的正常锁在 20 分钟后会自动过期。'],
@@ -3063,16 +3159,8 @@ async function run() {
       let selected=-1;
       const nav=hostAPI('Navigation');
       if(typeof nav?.present==='function'){
-        let dashboardState=state;
-        if(state.examCalendarId&&state.examCalendarId!==state.calendarId&&!state.examCalendarTitle){
-          try{
-            const cals=await visibleCalendars();
-            const examCal=cals.find(c=>c&&c.identifier===state.examCalendarId);
-            if(examCal?.title)dashboardState={...state,examCalendarTitle:examCal.title};
-          }catch(_){}
-        }
         selected=await presentNativeDashboard({
-          state:dashboardState,schoolName,canSignOut,statusMessage,
+          state,schoolName,canSignOut,statusMessage,
           loadFreeRooms:canFreeRooms?loadFreeRoomPage:undefined
         });
       }
