@@ -70,7 +70,7 @@ const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutpu
   if(__exitAttempted)return;
   if(typeof HostScript.exit!=='function'||typeof __intent?.text!=='function')
     throw new Error('Intent text/Script exit unavailable');
-  const result=__intent.text(__shortcutOutput??'处理完成');
+  const result=__intent.text(__shortcutOutput||'处理完成');
   __exitAttempted=true;
   HostScript.exit(result);
 }};
@@ -3335,5 +3335,13 @@ else await run();
 
   }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
-// The Promise is exposed solely for local entry-point regression tests, never credentials.
-globalThis.__COURSESYNC_LAUNCH__=__NUFE_START();
+export function launchCourseSync() {
+  const launch = __NUFE_START();
+  globalThis.__COURSESYNC_LAUNCH__ = launch;
+  return launch;
+}
+
+const __bootScript = Scripting.Script ?? globalThis.Script;
+if (!globalThis.__COURSESYNC_TEST__ && __bootScript?.env !== 'intent') {
+  launchCourseSync();
+}
