@@ -1826,7 +1826,7 @@ const ERROR_GUIDE={
   PARTIAL_SYNC:['部分学期读取或同步失败，不能报告整次刷新成功。','查看状态中的学期错误。'],
   NOTIFICATION_FAILED:['课表写入已核验，但课程提醒提交失败。','检查 Scripting 通知权限。'],
 
-  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请在运行状态中记录错误代码并联系维护者处理；不要删除课表日历。'],
+  COOKIE_STORAGE:['本机 Cookie 存储损坏或格式异常，未尝试发送。','请记录错误代码并联系维护者处理；不要删除课表日历。'],
   BACKUP_FAILED:['同步或核对前的本地备份无法写入或校验，已停止写入。','检查存储空间，保留现有状态。'],
   CALENDAR_TIMEOUT:['读取 Apple 日历超过 20 秒，未继续写入。','解锁设备，在前台检查日历权限和 iCloud 同步后重试。'],
   CALENDAR_VERIFY:['写后重新扫描尚未确认目标结果，事务已保留，不能报告成功。','等待 iCloud 更新后再运行；会按相同标记恢复，勿手动重复导入 ICS。'],
@@ -1835,9 +1835,9 @@ const ERROR_GUIDE={
 
   COOKIE_DOMAIN:['学校响应包含与当前认证域名不匹配的 Cookie，安全校验拒绝接收；它可能是学校配置问题，也可能是旧脚本解析兼容问题。','更新脚本以安全跳过无效 Cookie，同时保留域名验证。不要关闭域名校验或分享 Cookie 内容。'],
   COOKIE_FORMAT:['学校响应包含格式异常的 Cookie，无法安全解析。','保留最近阶段记录供适配；不要上传含 Cookie 值的网络请求日志。'],
-  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留「运行状态」中的错误代码，不要反复提交密码。'],
-  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
-  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
+  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留错误代码，不要反复提交密码。'],
+  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留错误代码供适配。'],
+  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录错误代码供适配。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
   AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','点击「立即刷新」通过原生界面重新登录，学校确认认证成功后才会自动保存账号密码。'],
   AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
@@ -1880,7 +1880,7 @@ const ERROR_GUIDE={
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
   CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
   CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先检查可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -3083,12 +3083,17 @@ async function manageManualSchedules(store){
     const calendars=await manualCalendars(state);
     const start=+new Date(year,0,1),end=+new Date(year+1,0,1);
 
-    // 1. Load manual calendar events
-    const manualGroups=await Promise.all(Object.entries(calendars).map(async ([kind,calendar])=>
-      calendar?(await calendarRows(start,end,calendar)).filter(ev=>manualKind(ev)===kind&&
+    // 1. Load manual calendar events and synced exams from calendars
+    const courseCalEvents=calendars.course?await calendarRows(start,end,calendars.course):[];
+    const examCalEvents=calendars.exam?await calendarRows(start,end,calendars.exam):[];
+    const manualEvents=[
+      ...courseCalEvents.filter(ev=>manualKind(ev)==='course'&&
         canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
-        +ev.endDate>+ev.startDate):[]));
-    const manualEvents=manualGroups.flat();
+        +ev.endDate>+ev.startDate),
+      ...examCalEvents.filter(ev=>manualKind(ev)==='exam'&&
+        canEditSingleEvent(ev)&&!ev.isAllDay&&+ev.startDate>=start&&+ev.startDate<end&&
+        +ev.endDate>+ev.startDate),
+    ];
 
     const manualRows=manualEvents.map(ev=>{
       const sameDay=ev.startDate.toDateString()===ev.endDate.toDateString();
@@ -3098,14 +3103,29 @@ async function manageManualSchedules(store){
         title:ev.title,
         start:+ev.startDate,
         end:+ev.endDate,
-        time:format(ev.startDate,true)+'–'+format(ev.endDate,!sameDay),
+        time:format(ev.startDate,!sameDay)+'–'+format(ev.endDate,!sameDay),
         location:ev.location||'',
         isManual:true,
       };
     });
 
-    // 2. Load synced courses from state.semesters
+    // 2. Load synced courses from state.semesters and synced exams from bound calendar
     const syncedRows=[];
+    for(const ev of courseCalEvents){
+      if(isExamEvent(ev,state)&&!manualKind(ev)&&!ev.isAllDay&&
+         +ev.startDate>=start&&+ev.startDate<end&&+ev.endDate>+ev.startDate){
+        syncedRows.push({
+          id:'synced-exam-'+(ev.identifier||(+ev.startDate)+'-'+ev.title),
+          kind:'exam',
+          title:String(ev.title||'').replace(/^📝\s*/,'')||ev.title,
+          start:+ev.startDate,
+          end:+ev.endDate,
+          time:format(ev.startDate,false)+'–'+format(ev.endDate,false),
+          location:ev.location||'',
+          isManual:false,
+        });
+      }
+    }
     if(state.semesters){
       for(const sem of Object.values(state.semesters)){
         if(!sem?.events)continue;
@@ -3148,12 +3168,15 @@ async function manageManualSchedules(store){
 
     if(selection.action==='add'){
       const kind=selection.kind||'course';
+      const initialStart=selection.start||+new Date(year,month-1,selection.day||1,8,0);
+      year=new Date(initialStart).getFullYear();
+      month=new Date(initialStart).getMonth()+1;
+      selectedDay=new Date(initialStart).getDate();
       const calendar=calendars[kind]||calendars.course;
       if(!calendar){
         await notice('未找到可用日历','请先在系统设置中配置或绑定课表日历。');
         continue;
       }
-      const initialStart=selection.start||+new Date(year,month-1,selection.day||1,8,0);
       const result=await presentScheduleEditor(kind,{
         title:'',
         location:'',
@@ -3162,6 +3185,9 @@ async function manageManualSchedules(store){
       });
       if(result?.action==='save'){
         await changeManualSchedule(store,kind,calendar.identifier,result);
+        year=new Date(result.start).getFullYear();
+        month=new Date(result.start).getMonth()+1;
+        selectedDay=new Date(result.start).getDate();
         await notice('已添加'+scheduleName(kind),'已保存到「'+calendar.title+'」。');
       }
       continue;
@@ -3170,6 +3196,11 @@ async function manageManualSchedules(store){
     if(selection.action==='edit'){
       const ev=allRows.find(r=>r.id===selection.id);
       if(!ev)continue;
+      if(Number.isFinite(ev.start)){
+        year=new Date(ev.start).getFullYear();
+        month=new Date(ev.start).getMonth()+1;
+        selectedDay=new Date(ev.start).getDate();
+      }
       if(!ev.isManual){
         await notice('教务同步日程','教务系统导入的课表由系统自动同步，不可在此编辑或删除；如需调整请在教务系统处理或添加手动日程。');
         continue;
@@ -3231,7 +3262,7 @@ async function run() {
       if(selected<0){
         const menu=new Alert();menu.title='CourseSync';
         menu.message=statusMessage;
-        menu.addAction('立即刷新');menu.addAction('运行状态');
+        menu.addAction('立即刷新');
         if(canFreeRooms)menu.addAction('空闲教室');
         if(canSignOut)menu.addDestructiveAction('退出登录');
         menu.addCancelAction('关闭');
@@ -3245,13 +3276,7 @@ async function run() {
         }
         return;
       }else{
-        if(selected===1){
-          const recovery=await showRunStatus(state,store);
-          if(!recovery)return;
-          if(recovery==='cookie')action=5;
-          else {await applyRecovery(recovery,state,store);return;}
-        }
-        if(canFreeRooms&&selected===2){
+        if(canFreeRooms&&selected===1){
           let progress=null;
           try{
             if(interactive&&typeof hostAPI('Navigation')?.present==='function'){
@@ -3269,7 +3294,7 @@ async function run() {
           }
           return;
         }
-        if(canSignOut&&selected===(canFreeRooms?3:2))action=13;
+        if(canSignOut&&selected===(canFreeRooms?2:1))action=13;
       }
     }
     const slot=await acquireSyncSlot(store,interactive);
@@ -3384,14 +3409,12 @@ async function run() {
     progress('连接教务系统');
     const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
     let examError=null;
-    if(interactive){
-      try{await syncExams(http,state,store,calendar,progress);}
-      catch(error){
-        if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
-        examError=diagnosticCode(error);
-      }
-      state.lastExamError=examError;
+    try{await syncExams(http,state,store,calendar,progress);}
+    catch(error){
+      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
+      examError=diagnosticCode(error);
     }
+    state.lastExamError=examError;
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
@@ -3405,10 +3428,10 @@ async function run() {
     store.write(state);
     if(progress)await progress.finish(state.runStatus==='success');
     if(state.termErrors?.length){
-      if(interactive)await notice('部分学期未同步','请在「运行状态」查看学期和原因。');
+      if(interactive)await notice('部分学期未同步','部分历史学期未能完成同步，当前学期课表已保留，可稍后重新刷新。');
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
-    if(examError)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
+    if(examError&&interactive)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
     if(config.runsWithSiri)Script.setShortcutOutput(examError?'部分完成：考试日程未更新完成。':state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);

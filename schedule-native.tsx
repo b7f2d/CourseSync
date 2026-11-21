@@ -114,7 +114,9 @@ function CalendarScheduleView({
     setYear(nextY);
     setMonth(nextM);
     setSelectedDay(1);
-    dismiss({ action: 'changeMonth', year: nextY, month: nextM });
+    if (nextY !== year) {
+      dismiss({ action: 'changeMonth', year: nextY, month: nextM });
+    }
   };
 
   const nextMonth = () => {
@@ -127,15 +129,25 @@ function CalendarScheduleView({
     setYear(nextY);
     setMonth(nextM);
     setSelectedDay(1);
-    dismiss({ action: 'changeMonth', year: nextY, month: nextM });
+    if (nextY !== year) {
+      dismiss({ action: 'changeMonth', year: nextY, month: nextM });
+    }
   };
 
+  const eventsByDay = new Map<number, ScheduleRow[]>();
+  for (const r of rows) {
+    if (!r || !Number.isFinite(r.start)) continue;
+    const d = new Date(r.start);
+    if (d.getFullYear() === year && (d.getMonth() + 1) === month) {
+      const dayNum = d.getDate();
+      const list = eventsByDay.get(dayNum);
+      if (list) list.push(r);
+      else eventsByDay.set(dayNum, [r]);
+    }
+  }
+
   const getEventsForDay = (dayNum: number) => {
-    return rows.filter(r => {
-      if (!r || !Number.isFinite(r.start)) return false;
-      const d = new Date(r.start);
-      return d.getFullYear() === year && (d.getMonth() + 1) === month && d.getDate() === dayNum;
-    });
+    return eventsByDay.get(dayNum) || [];
   };
 
   const selectedDayEvents = getEventsForDay(safeSelectedDay);
@@ -226,7 +238,6 @@ function CalendarScheduleView({
                 if (Number.isFinite(m) && m >= 1 && m <= 12 && m !== month) {
                   setMonth(m);
                   setSelectedDay(1);
-                  dismiss({ action: 'changeMonth', year, month: m });
                 }
               }}
             >
@@ -239,20 +250,22 @@ function CalendarScheduleView({
 
         <Section header={<Text>月历视图</Text>}>
           <VStack spacing={4} padding={{ top: 6, bottom: 6 }}>
-            <HStack alignment="center" spacing={0} padding={{ bottom: 8 }}>
+            <HStack alignment="center" spacing={0} padding={{ bottom: 6 }}>
               {weekdays.map((w, i) => (
                 <VStack
                   key={w}
-                  frame={{ minWidth: 0, maxWidth: 'infinity', height: 20 }}
+                  frame={{ minWidth: 0, maxWidth: 'infinity', height: 24 }}
                   alignment="center"
                 >
-                  <Text
-                    font="caption1"
-                    fontWeight="bold"
-                    foregroundStyle={i >= 5 ? 'secondaryLabel' : 'label'}
-                  >
-                    {w}
-                  </Text>
+                  <VStack frame={{ width: 36, height: 20 }} alignment="center">
+                    <Text
+                      font="caption1"
+                      fontWeight="bold"
+                      foregroundStyle={i >= 5 ? 'secondaryLabel' : 'label'}
+                    >
+                      {w}
+                    </Text>
+                  </VStack>
                 </VStack>
               ))}
             </HStack>
@@ -272,7 +285,23 @@ function CalendarScheduleView({
                         frame={{ minWidth: 0, maxWidth: 'infinity', height: 42 }}
                         alignment="center"
                       >
-                        <VStack frame={{ width: 36, height: 38 }} />
+                        <Button buttonStyle="plain" disabled={true} action={() => {}}>
+                          <VStack
+                            alignment="center"
+                            spacing={2}
+                            frame={{ width: 36, height: 38 }}
+                            modifiers={modifiers().frame({ width: 36, height: 38 })}
+                          >
+                            <VStack frame={{ width: 36, height: 22 }} alignment="center">
+                              <Text font="subheadline" foregroundStyle="clear">
+                                0
+                              </Text>
+                            </VStack>
+                            <HStack spacing={2} alignment="center" frame={{ width: 36, height: 6 }}>
+                              <VStack frame={{ width: 4, height: 4 }} />
+                            </HStack>
+                          </VStack>
+                        </Button>
                       </VStack>
                     );
                   }
@@ -298,28 +327,35 @@ function CalendarScheduleView({
                           frame={{ width: 36, height: 38 }}
                           modifiers={
                             isSelected
-                              ? modifiers().background({
-                                  style: { light: '#2563EB', dark: '#1D4ED8' },
-                                  shape: { type: 'rect', cornerRadius: 8 }
-                                })
+                              ? modifiers()
+                                  .frame({ width: 36, height: 38 })
+                                  .background({
+                                    style: { light: '#2563EB', dark: '#1D4ED8' },
+                                    shape: { type: 'rect', cornerRadius: 8 }
+                                  })
                               : isToday
-                              ? modifiers().background({
-                                  style: { light: '#EFF6FF', dark: '#1E293B' },
-                                  shape: { type: 'rect', cornerRadius: 8 }
-                                })
-                              : modifiers()
+                              ? modifiers()
+                                  .frame({ width: 36, height: 38 })
+                                  .background({
+                                    style: { light: '#EFF6FF', dark: '#1E293B' },
+                                    shape: { type: 'rect', cornerRadius: 8 }
+                                  })
+                              : modifiers().frame({ width: 36, height: 38 })
                           }
                         >
-                          <Text
-                            font="subheadline"
-                            fontWeight={isSelected || isToday ? 'bold' : 'regular'}
-                            foregroundStyle={
-                              isSelected ? '#FFFFFF' : isToday ? '#2563EB' : 'label'
-                            }
-                          >
-                            {d}
-                          </Text>
-                          <HStack spacing={2} alignment="center">
+                          <VStack frame={{ width: 36, height: 22 }} alignment="center">
+                            <Text
+                              font="subheadline"
+                              fontWeight={isSelected || isToday ? 'bold' : 'regular'}
+                              monospacedDigit={true}
+                              foregroundStyle={
+                                isSelected ? '#FFFFFF' : isToday ? '#2563EB' : 'label'
+                              }
+                            >
+                              {d}
+                            </Text>
+                          </VStack>
+                          <HStack spacing={2} alignment="center" frame={{ width: 36, height: 6 }}>
                             {hasCourse ? (
                               <VStack
                                 frame={{ width: 4, height: 4 }}
@@ -337,6 +373,9 @@ function CalendarScheduleView({
                                   shape: { type: 'circle' }
                                 })}
                               />
+                            ) : null}
+                            {!hasCourse && !hasExam ? (
+                              <VStack frame={{ width: 4, height: 4 }} />
                             ) : null}
                           </HStack>
                         </VStack>

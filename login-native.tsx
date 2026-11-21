@@ -363,14 +363,14 @@ function DashboardView({ state, schoolName, canFreeRooms, canSignOut, statusMess
           {canFreeRooms ? (
             <Button
               title="🏫 查询空闲教室"
-              action={() => dismiss(2)}
+              action={() => dismiss(1)}
             />
           ) : null}
           {canSignOut ? (
             <Button
               title="🚪 退出当前登录"
               role="destructive"
-              action={() => dismiss(canFreeRooms ? 3 : 2)}
+              action={() => dismiss(canFreeRooms ? 2 : 1)}
             />
           ) : null}
         </Section>
@@ -430,6 +430,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
 
   const renderCalendarRow = (cal: ManagedCalendarItem, index: number) => {
     const isSelected = cal.identifier === currentCalendarId;
+    const isReadOnly = cal.allowsContentModifications === false;
     const color = cal.color || CALENDAR_PALETTE[index % CALENDAR_PALETTE.length];
     return (
       <HStack key={cal.identifier} alignment="center" spacing={12} padding={{ top: 4, bottom: 4 }}>
@@ -445,7 +446,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
             {cal.title}
           </Text>
           <Text font="caption2" foregroundStyle="secondaryLabel">
-            {cal.sourceTitle || '日历'} {cal.allowsContentModifications === false ? '· 只读' : ''}
+            {cal.sourceTitle || '日历'} {isReadOnly ? '· 只读' : ''}
           </Text>
         </VStack>
         <Spacer />
@@ -457,7 +458,11 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         ) : (
           <Button
             title="设为课表"
-            action={() => dismiss({ action: 'select', calendarId: cal.identifier, calendarTitle: cal.title })}
+            disabled={isReadOnly}
+            action={() => {
+              if (isReadOnly) return;
+              dismiss({ action: 'select', calendarId: cal.identifier, calendarTitle: cal.title });
+            }}
           />
         )}
       </HStack>

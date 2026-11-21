@@ -861,14 +861,14 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.length,0);});
-test('main menu keeps refresh, status and available sign-out',async()=>{
+test('main menu keeps refresh and available sign-out without removed status entry',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','空闲教室','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
 });
 test('an upgraded NUFE installation confirms school once, reuses credentials and preserves exam history',async()=>{
@@ -1213,7 +1213,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -1228,7 +1228,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -1277,7 +1277,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','空闲教室','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','空闲教室','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -2000,7 +2000,7 @@ test('main menu offers 空闲教室 for NUFE, presents progress sheet, removes e
    };
  };
  await e.m.run();
- a.equal(actionSheetLabels.join(','),'立即刷新,运行状态,空闲教室,退出登录');
+ a.equal(actionSheetLabels.join(','),'立即刷新,空闲教室,退出登录');
  a.equal(progressShown,1);
  a.equal(progressClosed,1);
  a.equal(progressClosedWhenNotice,true);
@@ -2102,4 +2102,30 @@ test('user can add manual course and manual exam via calendar view',async()=>{
  await e.m.manageManualSchedules(e.store);
  a.ok(e.db.some(ev=>ev.title==='自定义课程'&&ev.calendar.identifier===e.calendar.identifier));
  a.ok(e.db.some(ev=>ev.title==='自定义考试'&&ev.calendar.identifier===e.other.identifier));
+});
+
+test('manageManualSchedules displays synced exams alongside synced courses and manual events',async()=>{
+ const e=await env({hostEnv:'index'});
+ const year=new Date().getFullYear();
+ const examStart=Date.UTC(year,5,15,1,0);
+ const examEvent=e.add({
+   title:'📝 线性代数',
+   start:new Date(examStart).toISOString(),
+   end:new Date(examStart+7200000).toISOString(),
+   location:'博远楼 202'
+ },{notes:'同步：2026-11-01 08:00'});
+ e.state.examIndex={[examEvent.identifier]:'[COURSESYNC_EXAM '+e.state.owner+'] ["线性代数","期末",'+examStart+']'};
+ e.store.write(e.state);e.store.release();
+
+ let presented=null;
+ e.sandbox.__calendarScheduleMock=async(opts)=>{
+   presented=opts;
+   return null;
+ };
+ await e.m.manageManualSchedules(e.store);
+ a.ok(presented);
+ const examRow=presented.rows.find(r=>r.kind==='exam'&&r.isManual===false);
+ a.ok(examRow);
+ a.equal(examRow.title,'线性代数');
+ a.equal(examRow.location,'博远楼 202');
 });
