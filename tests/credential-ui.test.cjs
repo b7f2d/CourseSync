@@ -171,7 +171,8 @@ test('native calendar schedule view presents a real calendar with year, month, 1
  assert.match(schedule,/\[教务同步\]/);
  assert.match(schedule,/✎ 编辑 ›/);
  assert.match(schedule,/monospacedDigit=\{true\}/);
- assert.match(schedule,/frame=\{\{\s*width:\s*36,\s*height:\s*6\s*\}\}/);
+ assert.match(schedule,/frame=\{\{\s*height:\s*6\s*\}\}/);
+ assert.match(schedule,/maxWidth:\s*'infinity',\s*minHeight:\s*40,\s*maxHeight:\s*40/);
 });
 
 
