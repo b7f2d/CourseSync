@@ -230,10 +230,10 @@ function SmallPanel({model}){
 
 function EmptyPanel({kind='empty',code=''}) {
   const failure=kind==='invalid';
-  const label=failure?'缓存读取失败':'尚无课表缓存';
+  const label=failure?'缓存读取失败':'尚无课程和考试缓存';
   const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 CourseSync，自动建立组件缓存':
-    failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
-    '打开 CourseSync 完成首次课表同步';
+    failure?'请反馈下方代码以便定位；课程和考试及登录信息未被修改':
+    '打开 CourseSync 完成首次课程和考试同步';
   return <VStack spacing={0}
     widgetBackground={COLORS.canvas}
     background={{style:COLORS.canvas}}

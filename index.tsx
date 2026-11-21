@@ -1652,7 +1652,7 @@ async function scanLegacyDuplicates(calendar,state,progress=()=>{}){
   // Dedupe by identifier AND occurrence time, never by identifier alone.
   // Otherwise every week except one silently disappears from the cleanup scan.
   for(let t=low-DAY;t<high+DAY;t+=45*DAY){
-    progress('检查旧课程：'+localDateTime(new Date(t).toISOString()).slice(0,10));
+    progress('检查旧课程和考试：'+localDateTime(new Date(t).toISOString()).slice(0,10));
     const data=await calendarRows(t,Math.min(high+DAY,t+45*DAY),calendar);
     for(const e of data){
       if(!e||!e.identifier||!e.startDate||!e.endDate)continue;
@@ -2874,7 +2874,7 @@ function offlineAgenda(state,now=Date.now()) {
     if(lines.length===20)break;
   }
   return (state.lastCheck?'上次同步：'+localDateTime(state.lastCheck)+'\n\n':'')+
-    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程和考试，请刷新后查看。')+'\n\n显示最近20节课程；考试请在系统日历查看。';
+    (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程和考试，请刷新后查看。')+'\n\n显示最近20节课程和考试。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});

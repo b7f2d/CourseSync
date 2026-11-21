@@ -452,12 +452,12 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         <Spacer />
         {isSelected ? (
           <HStack spacing={4} alignment="center">
-            <Text font="caption1" fontWeight="semibold" foregroundStyle="#007AFF">当前课表</Text>
+            <Text font="caption1" fontWeight="semibold" foregroundStyle="#007AFF">当前同步日历</Text>
             <Text font="body" fontWeight="bold" foregroundStyle="#007AFF">✓</Text>
           </HStack>
         ) : (
           <Button
-            title="设为课表"
+            title="设为同步日历"
             disabled={isReadOnly}
             action={() => {
               if (isReadOnly) return;
@@ -478,7 +478,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
           cancellationAction: <Button title="完成" action={() => dismiss(null)} />
         }}
       >
-        <Section header={<Text>添加新日历</Text>} footer={<Text>在 iCloud 创建独立课表日历，与私人日程隔离。</Text>}>
+        <Section header={<Text>添加新日历</Text>} footer={<Text>在 iCloud 创建独立课程和考试日历，与私人日程隔离。</Text>}>
           <TextField
             title="日历名称"
             prompt="例如：南财课表、大学课表"
@@ -496,7 +496,7 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
         </Section>
 
         {icloudCalendars.length > 0 ? (
-          <Section header={<Text>iCloud 日历</Text>} footer={<Text>点击「设为课表」切换同步目标。</Text>}>
+          <Section header={<Text>iCloud 日历</Text>} footer={<Text>点击「设为同步日历」切换同步目标。</Text>}>
             {icloudCalendars.map((c, idx) => renderCalendarRow(c, idx))}
           </Section>
         ) : null}
