@@ -525,7 +525,7 @@ test('USTS sync resolves current and known historical dates automatically and sk
   a.equal(logins,1);
   store.release();
 });
-test('USTS exam query writes published times and retains existing future exams while times are hidden',async()=>{
+test('USTS successful exam query replaces unpublished future records',async()=>{
   const e=await env(),m=e.m;
   m.activateSelectedSchool('usts');
   const state={...e.state,availableSemesters:[{id:202603}]};
@@ -584,10 +584,10 @@ test('successful empty exam response clears all historical and future exams',asy
  const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',
    text:'<table id="exams"><tr class="tr-empty"><td>暂无</td></tr></table>'})};
  await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
- a.deepEqual(e.state.exams,[]);
+ a.equal(e.state.exams.length,0);
  a.deepEqual(e.db,[]);
  await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
- a.deepEqual(e.state.exams,[]);
+ a.equal(e.state.exams.length,0);
 });
 test('successful partial exam list replaces historical exam cache and calendar',async()=>{
  const e=await env();
@@ -983,7 +983,7 @@ test('main menu keeps refresh and available sign-out without removed status entr
  a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,true]);
  a.equal(e.requests.length,0);
 });
-test('an upgraded NUFE installation reuses credentials and preserves exam history',async()=>{
+test('an upgraded NUFE installation replaces exams on successful empty response',async()=>{
  const e=await env({hostEnv:'index'}),alerts=[];
  const day=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
  let body='<tr data-finished="false"><td><div class="time">'+day+' 08:00~10:00</div><div><span>教学楼</span><span>101</span></div></td><td><div>测试 &amp; 统计</div><div>期末</div></td><td>未结束</td></tr>'+
