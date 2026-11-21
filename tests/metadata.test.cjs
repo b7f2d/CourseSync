@@ -80,6 +80,8 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.equal(index.includes("from './live_activity'"),false);
   assert.ok(index.includes("await import('./login-native')"));
   assert.ok(index.includes("await import('./progress-native')"));
-  assert.ok(read('intent.tsx').includes('import "./index"'));
+  const intent=read('intent.tsx');
+  assert.ok(intent.includes('import "./index"'));
+  assert.match(intent,/await globalThis\.__COURSESYNC_LAUNCH__;/);
   assert.ok(read('intent-probe.tsx').includes('CourseSync intent ok'));
 });
