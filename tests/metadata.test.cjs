@@ -75,9 +75,11 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
   const index=read('index.tsx');
-  assert.doesNotMatch(index,/^import .*from ['"]\\.\\/(?:login-native|progress-native|live_activity)['"]/m);
-  assert.match(index,/await import\\('\\.\\/login-native'\\)/);
-  assert.match(index,/await import\\('\\.\\/progress-native'\\)/);
-  assert.match(read('intent.tsx'),/import ["']\\.\\/index["']/);
-  assert.match(read('intent-probe.tsx'),/CourseSync intent ok/);
+  assert.equal(index.includes("from './login-native'"),false);
+  assert.equal(index.includes("from './progress-native'"),false);
+  assert.equal(index.includes("from './live_activity'"),false);
+  assert.ok(index.includes("await import('./login-native')"));
+  assert.ok(index.includes("await import('./progress-native')"));
+  assert.ok(read('intent.tsx').includes('import "./index"'));
+  assert.ok(read('intent-probe.tsx').includes('CourseSync intent ok'));
 });
