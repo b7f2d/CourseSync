@@ -254,11 +254,12 @@ export type DashboardOptions = {
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
 
-function DashboardAction({title, systemImage, action, role}: {
+function DashboardAction({title, systemImage, action, role, iconOffsetX = 0}: {
   title: string;
   systemImage: string;
   action: () => void;
   role?: 'destructive';
+  iconOffsetX?: number;
 }) {
   return <Button
     action={action}
@@ -266,16 +267,12 @@ function DashboardAction({title, systemImage, action, role}: {
     listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
   >
     <HStack alignment="center" spacing={10}>
-      <VStack
-        alignment="center"
-        frame={{width:24,height:24}}
-        modifiers={modifiers().background({
-          style: { light: '#EDF1F5', dark: '#27313F' },
-          shape: { type: 'circle' },
-        })}
-      >
-        <Image systemName={systemImage} font={14} />
-      </VStack>
+      <Image
+        systemName={systemImage}
+        font="body"
+        frame={{width:24,alignment:'center'}}
+        offset={{x:iconOffsetX,y:0}}
+      />
       <Text>{title}</Text>
       <Spacer />
     </HStack>
@@ -385,15 +382,18 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
         </Section>
 
         <Section>
+          {/* Align the visible edges of symbols with different intrinsic widths. */}
           <DashboardAction
             title="立即刷新"
             systemImage="arrow.clockwise"
+            iconOffsetX={-2}
             action={() => dismiss(0)}
           />
           {loadFreeRooms ? (
             <DashboardAction
               title="查询空闲教室"
               systemImage="building.columns"
+              iconOffsetX={-1 / 3}
               action={openFreeRooms}
             />
           ) : null}
