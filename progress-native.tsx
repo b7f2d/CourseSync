@@ -32,16 +32,14 @@ export function NativeProgressContent({title,value}:{title:string;value:number})
           foregroundStyle="systemBlue"
           frame={{width:iconWidth,height:iconWidth}}
         />
-        {title==='正在登录账号'
-          ? <ProgressView tint="systemBlue" />
-          : <ProgressView
-              value={value}
-              total={1}
-              progressViewStyle="linear"
-              tint="systemBlue"
-              frame={{width:barWidth}}
-              scaleEffect={{x:1,y:1.8}}
-            />}
+        <ProgressView
+          value={value}
+          total={1}
+          progressViewStyle="linear"
+          tint="systemBlue"
+          frame={{width:barWidth}}
+          scaleEffect={{x:1,y:1.8}}
+        />
       </VStack>;
     }}
   </GeometryReader>;
@@ -89,6 +87,10 @@ export function createNativeProgressView(title='正在同步课程和考试'){
       if(session.setProgress)try{session.setProgress(clamped);}catch(_){}
     },
     setTitle(value:string){
+      if(session.title!==value){
+        session.progress=0.08;
+        if(session.setProgress)session.setProgress(session.progress);
+      }
       session.title=value;
       if(session.setTitle)session.setTitle(value);
     },
