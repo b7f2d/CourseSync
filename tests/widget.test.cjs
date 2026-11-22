@@ -335,7 +335,7 @@ test('medium and large widgets draw the same seven days with status colors and c
  a.match(ui,/day\.dateLabel/);
  a.doesNotMatch(ui,/\+\{hidden\} 项/);
  a.match(ui,/current\?COLORS.white:COLORS.dark/);
- a.match(ui,/\.padding\(compact\?3:4\)[\s\S]*?\.frame\(\{width,height,alignment:'topLeading'\}\)[\s\S]*?\.background/);
+ a.match(ui,/\.padding\(compact\?3:4\)[\s\S]*?\.frame\(\{width,alignment:'topLeading'\}\)[\s\S]*?\.background/);
  a.match(ui, /!compact&&course\.location/);
  a.match(ui,/exam\?'考 ':'/);
  a.doesNotMatch(ui,/近日课表|自动更新|昨天|明天/);
@@ -419,6 +419,7 @@ test('weekly columns use all available height and retain every course',()=>{
  }
  const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function DayColumn('));
  const day=ui.slice(ui.indexOf('function DayColumn('),ui.indexOf('function weeklyLayout('));
+ a.doesNotMatch(card,/frame\(\{width,height,/);
  a.match(card,/fixedSize=\{\{horizontal:false,vertical:true\}\}/);
  a.doesNotMatch(card,/lineLimit=\{compact\?2:3\}/);
  a.match(day,/courses\.map\(course=>/);

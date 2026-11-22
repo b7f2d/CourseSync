@@ -35,7 +35,7 @@ function CourseCard({course,width,height,compact,stackTimes}){
   const titleFont=Math.max(5,Math.min(compact?10:11,
     Math.floor(Math.sqrt(availableWidth*availableHeight/Math.max(1,chars)*0.8))));
   const cardStyle=modifiers().padding(compact?3:4)
-    .frame({width,height,alignment:'topLeading'})
+    .frame({width,alignment:'topLeading'})
     .background({style:bg,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="leading" spacing={2} modifiers={cardStyle}>
     <Text font={titleFont} fontWeight="semibold" fixedSize={{horizontal:false,vertical:true}}
