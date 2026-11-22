@@ -136,7 +136,8 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
  assert.match(freeRoom,/<ScrollView>[\s\S]*minHeight:proxy\.size\.height,alignment:'center'/);
  assert.match(progress,/<NativeProgressContent title=\{title\} value=\{value\}/);
- assert.match(progress,/<NativeProgressCard value=\{value\}/);
+ assert.match(progress,/<GeometryReader navigationTitle=\{title\}[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
+ assert.match(progress,/const iconWidth=barWidth\/2/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
