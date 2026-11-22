@@ -16,8 +16,8 @@ type ProgressSession={
 };
 
 export function NativeProgressCard({value}:{value:number}) {
-  return <VStack alignment="center" spacing={24} padding={{top:20,bottom:20}}>
-    <Image systemName="calendar" font={42} foregroundStyle="systemBlue" />
+  return <VStack alignment="center" spacing={18} padding={{top:20,bottom:20}}>
+    <Image systemName="calendar" font={72} foregroundStyle="systemBlue" />
     <ProgressView
       value={value}
       total={1}
