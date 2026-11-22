@@ -78,7 +78,7 @@ test('only school slider verification retains ephemeral, isolated WebKit',()=>{
 });
 
 test('native progress replaces the HTML view with one stable system sheet',()=>{
- assert.match(progress,/progressViewStyle="linear"/);
+ assert.doesNotMatch(progress,/<ProgressView|progressViewStyle/);
  assert.match(progress,/Navigation\.present\(\{/);
  assert.match(progress,/session\.suppressed=true/);
  assert.match(progress,/session\.revision\+\+/);
@@ -132,12 +132,12 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
  assert.match(native,/navigationDestination=\{\{/);
  assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
- assert.match(native,/if \(page\.kind === 'loading'\) \{\s*return <NativeProgressContent title="正在查询空闲教室" value=\{page\.progress\} \/>;\s*\}\s*return <GeometryReader/);
+ assert.match(native,/if \(page\.kind === 'loading'\) \{\s*return <NativeProgressContent title="正在查询空闲教室" \/>;\s*\}\s*return <GeometryReader/);
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
  assert.match(freeRoom,/<ScrollView>[\s\S]*minHeight:proxy\.size\.height,alignment:'center'/);
- assert.match(progress,/<NativeProgressContent title=\{title\} value=\{value\}/);
+ assert.match(progress,/<NativeProgressContent title=\{title\}/);
  assert.match(progress,/<GeometryReader navigationTitle=\{title\}[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
- assert.match(progress,/const iconWidth=barWidth\/2/);
+ assert.match(progress,/const iconWidth=Math\.max\(0,Math\.min\(220,width-48,height-48\)\)/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 

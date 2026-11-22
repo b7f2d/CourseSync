@@ -2225,20 +2225,6 @@ function createProgress(state,store,interactive,activityLoader){
     stampStage(state,store,message,interactive);
     if(closed||!started||!interactive)return;
     const label=String(message||'');
-    if(initialTitle==='正在登录账号'){
-      if(/连接教务系统|尝试读取教务课表入口/.test(label))ui?.update?.(0.15);
-      else if(/学校单点登录跳转|解析学校登录表单/.test(label))ui?.update?.(0.3);
-      else if(/注册设备指纹|查询是否需要验证码/.test(label))ui?.update?.(0.45);
-      else if(/提交学校认证请求/.test(label))ui?.update?.(0.65);
-      else if(/认证完成后读取课表页面/.test(label))ui?.update?.(0.85);
-      else if(label==='登录验证完成')ui?.update?.(1);
-    }else{
-      if(/检查目标日历/.test(label))ui?.update?.(0.1);
-      else if(/^(读取学期|请求学期)/.test(label))ui?.update?.(0.5);
-      else if(/^(写入学期|更新课程和考试同步时间|核对旧|扫描专用日历)/.test(label))ui?.update?.(0.75);
-      else if(/^(读取考试日程|更新考试日程)/.test(label))ui?.update?.(0.9);
-      else if(/完成本次同步/.test(label))ui?.update?.(1);
-    }
     if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
       waitingForVerification=true;
       return ui?.pause();
@@ -2263,7 +2249,6 @@ function createProgress(state,store,interactive,activityLoader){
       if(typeof hostAPI('Navigation')?.present==='function'){
         ui=initialTitle?createNativeProgressView(initialTitle):createNativeProgressView();
         ui.show();
-        await new Promise(resolve=>Timer.schedule(100,false,resolve));
       }
     }catch(_){ui=null;}
   };

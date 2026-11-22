@@ -150,11 +150,11 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false)
 type FreeRoomResult =
   | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
   | {kind: 'error'; message: string};
-type FreeRoomPage = FreeRoomResult | {kind: 'loading'; progress: number};
+type FreeRoomPage = FreeRoomResult | {kind: 'loading'};
 
 function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
   if (page.kind === 'loading') {
-    return <NativeProgressContent title="正在查询空闲教室" value={page.progress} />;
+    return <NativeProgressContent title="正在查询空闲教室" />;
   }
   return <GeometryReader navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
     {proxy=>(
@@ -220,23 +220,18 @@ function DashboardAction({title, systemImage, action, role}: {
 function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
-  const roomQuery = useRef({visible: false, pending: false, progress: 0.08, revision: 0});
+  const roomQuery = useRef({visible: false, pending: false, revision: 0});
   const openFreeRooms = async () => {
     if (!loadFreeRooms) return;
     const query = roomQuery.current;
-    if (!query.visible || !query.pending) query.progress = 0.08;
     query.visible = true;
-    setFreeRoomPage({kind: 'loading', progress: query.progress});
+    setFreeRoomPage({kind: 'loading'});
     if (query.pending) return;
     query.pending = true;
     const revision=query.revision;
     const isActive=()=>query.visible&&query.revision===revision;
     try {
-      const result = await loadFreeRooms(isActive, progress => {
-        if (!isActive()) return;
-        query.progress = progress;
-        setFreeRoomPage({kind: 'loading', progress});
-      });
+      const result = await loadFreeRooms(isActive, () => {});
       if (isActive()) setFreeRoomPage(result);
     } catch (_) {
       if (isActive()) setFreeRoomPage({kind: 'error', message: '查询失败，请稍后重试。'});

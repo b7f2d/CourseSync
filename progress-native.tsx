@@ -1,7 +1,7 @@
 // One native progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  GeometryReader, Image, Navigation, NavigationStack, ProgressView, VStack, useState,
+  GeometryReader, Image, Navigation, NavigationStack, VStack, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -10,21 +10,17 @@ type ProgressSession={
   suppressed:boolean;
   shown:boolean;
   revision:number;
-  progress:number;
   title:string;
   setTitle:((v:string) => void)|null;
-  setProgress:((v:number) => void)|null;
   dismiss:(() => void)|null;
 };
 
-export function NativeProgressContent({title,value}:{title:string;value:number}) {
+export function NativeProgressContent({title}:{title:string}) {
   return <GeometryReader navigationTitle={title} navigationBarTitleDisplayMode="inline">
     {proxy=>{
       const {width,height}=proxy.size;
-      const gap=Math.min(34,height/6);
-      const barWidth=Math.max(0,Math.min(300,width-48,2*(height-gap-24)));
-      const iconWidth=barWidth/2;
-      return <VStack alignment="center" spacing={gap} frame={{width,height,alignment:'center'}}>
+      const iconWidth=Math.max(0,Math.min(220,width-48,height-48));
+      return <VStack alignment="center" spacing={0} frame={{width,height,alignment:'center'}}>
         <Image
           systemName="calendar"
           resizable={true}
@@ -32,14 +28,7 @@ export function NativeProgressContent({title,value}:{title:string;value:number})
           foregroundStyle="systemBlue"
           frame={{width:iconWidth,height:iconWidth}}
         />
-        <ProgressView
-          value={value}
-          total={1}
-          progressViewStyle="linear"
-          tint="systemBlue"
-          frame={{width:barWidth}}
-          scaleEffect={{x:1,y:1.8}}
-        />
+
       </VStack>;
     }}
   </GeometryReader>;
@@ -47,10 +36,8 @@ export function NativeProgressContent({title,value}:{title:string;value:number})
 
 function ProgressScreen({session}:{session:ProgressSession}) {
   const dismiss=Navigation.useDismiss();
-  const [value,setValue]=useState(session.progress);
   const [title,setTitle]=useState(session.title);
   session.setTitle=setTitle;
-  session.setProgress=setValue;
   // The script's synchronization still owns the task. Closing this view
   // hides status only; it never cancels a calendar transaction.
   session.dismiss=()=>dismiss();
@@ -61,7 +48,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
     });
   }
   return <NavigationStack>
-    <NativeProgressContent title={title} value={value} />
+    <NativeProgressContent title={title} />
   </NavigationStack>;
 }
 
@@ -69,28 +56,16 @@ export function createNativeProgressView(title='正在同步课程和考试'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
-    revision:0,progress:0.08,title,setTitle:null,setProgress:null,dismiss:null,
+    revision:0,title,setTitle:null,dismiss:null,
   };
   const closeVisible=()=>{
     const dismiss=session.dismiss;
     session.dismiss=null;
-    session.setProgress=null;
     session.setTitle=null;
     if(dismiss)try{dismiss();}catch(_){}
   };
   return {
-    update(v:number){
-      if(session.closed)return;
-      const clamped=Math.max(session.progress,Math.min(1,Number(v)||0));
-      if(clamped<=session.progress)return;
-      session.progress=clamped;
-      if(session.setProgress)try{session.setProgress(clamped);}catch(_){}
-    },
     setTitle(value:string){
-      if(session.title!==value){
-        session.progress=0.08;
-        if(session.setProgress)session.setProgress(session.progress);
-      }
       session.title=value;
       if(session.setTitle)session.setTitle(value);
     },
