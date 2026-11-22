@@ -95,7 +95,7 @@ test('routine refresh and re-login keep using the selected school',()=>{
  const start=index.indexOf('if(signOutRequested)');
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
- assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);
+ assert.match(routine,/const hasCredentials=!state\.signedOut&&\(hasSavedCredentials\(\)\|\|Keychain\.contains\(schoolKey\(KEY\)\)\)/);
  assert.match(routine,/const selectedSchool=state\.signedOut\|\|reselectSchool\?null:loadSelectedSchool\(null,true\)/);
  assert.match(routine,/if\(!selectedSchool\)\{/);
  assert.match(routine,/manualAuth=await prepareManualRefresh\(state,!!reselectSchool\)/);

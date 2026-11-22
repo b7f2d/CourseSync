@@ -2287,7 +2287,11 @@ async function visibleCalendars(){
 // Preserve the bound calendar identifier; do not create a replacement calendar.
 async function alignBoundCalendarName(calendar,state,store){
   // Calendar names belong to their owners. Track changes, never rename them.
-  if(state.calendarTitle!==calendar.title){state.calendarTitle=calendar.title;store.write(state);}
+  if(state.calendarTitle!==calendar.title||state.calendarBindingPending){
+    state.calendarTitle=calendar.title;
+    delete state.calendarBindingPending;
+    store.write(state);
+  }
   return calendar;
 }
 function validCalendarName(value){
@@ -2336,7 +2340,7 @@ async function requestCalendarName(state){
   if(title==null)fail('CANCELLED');
   return validCalendarName(title);
 }
-async function pickCalendar(state,store){
+async function pickCalendar(state,store,beforePrompt){
   let all=await visibleCalendars();
   let exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
   if(exact)return await alignBoundCalendarName(exact,state,store);
@@ -2350,10 +2354,12 @@ async function pickCalendar(state,store){
     if(exact)return await alignBoundCalendarName(exact,state,store);
   }
   if(!all.length)fail('CALENDAR_PERMISSION');
+  await beforePrompt?.();
   const title=await requestCalendarName(state);
   store.check();
   const picked=await createDedicatedCalendar(title);
   state.calendarId=picked.identifier;state.calendarTitle=picked.title;
+  delete state.calendarBindingPending;
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
   store.write(state);
   return picked;
@@ -2434,7 +2440,7 @@ function statusText(state){
     state.runStatus==='success'?'上次刷新成功':
     state.runStatus==='cancelled'?'上次操作已取消':'尚未完成首次同步';
   const hasIssue=!!state.tx||state.lastError==='LOGOUT_INCOMPLETE'||(!state.signedOut&&(!!state.authPaused||['failed','partial'].includes(state.runStatus)||(state.termErrors||[]).length>0));
-  const calendar=state.calendarId?(state.calendarTitle||'已绑定（名称未记录）'):'未绑定';
+  const calendar=!state.calendarId||state.calendarBindingPending?'未绑定日历':(state.calendarTitle||'已绑定（名称未记录）');
   const last=state.lastCheck?briefTime(state.lastCheck):'尚无成功核验记录';
   const recent=state.runStatus==='failed'&&state.lastError?
     '\n最近问题：'+reasonFor(state.lastError):'';
@@ -2826,7 +2832,6 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   const deadline=backgroundDeadline===Infinity?Date.now()+(interactive?15*60000:24000):backgroundDeadline;
   let workDeadline=deadline;
   const budget=()=>{store.check();if(Date.now()>=workDeadline)fail('BUDGET');};
-  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   delete state.notice;
@@ -2868,6 +2873,8 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   // Only a verified school session ends the signed-out state.
   if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   state.availableSemesters=info.semesters;store.write(state);
+  if(typeof calendar==='function')calendar=await calendar();
+  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   delete state.historySyncCheckpoint;
   const selected=selectTermIds(info,state,interactive);
   const pendingSid=Number(interrupted?.sid);
@@ -3238,6 +3245,11 @@ async function loadFreeRoomPage(isActive,onProgress){
 }
 
 async function run() {
+  // Reopen the dashboard after the cancelled attempt has released its lock.
+  while(await runAttempt()){}
+  Script.complete();
+}
+async function runAttempt() {
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
   migrateLegacyKeychainData();
   const configuredSchool=loadSelectedSchool();
@@ -3247,7 +3259,7 @@ async function run() {
   let store=new Store();
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
-  let state,locked=false,progress=null,signOutRequested=false,manualAuth=null;
+  let state,locked=false,progress=null,signOutRequested=false,manualAuth=null,calendarCancelled=false;
   try {
     if(!interactive&&reselectSchool){
       if(config.runsWithSiri)Script.setShortcutOutput('请打开 CourseSync 登录南京财经大学账号。');
@@ -3257,7 +3269,7 @@ async function run() {
       state=store.read();
     }
     // Skip the dashboard after logout so reopening the script starts with credentials.
-    if(interactive&&state.calendarId&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
+    if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const canSignOut=canOfferSignOut(state);
@@ -3267,6 +3279,8 @@ async function run() {
         ?'退出登录未完成，请重试。'
         :state.signedOut
           ?'点击「立即刷新」重新登录。'
+          :state.calendarBindingPending
+            ?'点击「立即刷新」绑定日历。'
           :state.lastCheck
             ?'上次刷新：'+localDateTime(state.lastCheck)
             :'点击「立即刷新」开始同步。';
@@ -3282,7 +3296,7 @@ async function run() {
       if(selected==='dismiss')return;
       if(selected<0){
         const menu=new Alert();menu.title='CourseSync';
-        menu.message=statusMessage;
+        menu.message=state.calendarBindingPending?'未绑定日历\n'+statusMessage:statusMessage;
         menu.addAction('立即刷新');
         if(canSignOut)menu.addDestructiveAction('退出登录');
         menu.addCancelAction('关闭');
@@ -3316,7 +3330,7 @@ async function run() {
     if(signOutRequested){await signOut(state,store);return;}
     if(interactive){
       if(reselectSchool&&!savedReselectSchool)Keychain.set(SCHOOL_RESELECT_KEY,reselectSchool);
-      const hasCredentials=!state.signedOut&&hasSavedCredentials();
+      const hasCredentials=!state.signedOut&&(hasSavedCredentials()||Keychain.contains(schoolKey(KEY)));
       const selectedSchool=state.signedOut||reselectSchool?null:loadSelectedSchool(null,true);
       if(!selectedSchool){
         const previousSchool=activeSchoolId;
@@ -3343,16 +3357,31 @@ async function run() {
       // Manual logout is intentional and must never cause background login or warning spam.
       if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
       if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
+      if(state.calendarBindingPending){if(config.runsWithSiri)Script.setShortcutOutput('请在 Scripting 中绑定日历。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
     __COURSESYNC_BOOT_PHASE='同步运行';
-    progress=createProgress(state,store,interactive,HostScript.env==='intent'?loadActivity:null);progress('检查目标日历');
-    const calendar=await pickCalendar(state,store);
+    progress=createProgress(state,store,interactive,HostScript.env==='intent'?loadActivity:null);
+    let calendar;
+    if(!interactive){
+      progress('检查目标日历');
+      calendar=await pickCalendar(state,store);
+    }
     await progress.start();
     progress('连接教务系统');
-    const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
-    if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
+    const http=await synchronize(state,store,interactive?async()=>{
+      if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
+      progress('检查目标日历');
+      try{
+        calendar=await pickCalendar(state,store,progress.pause);
+      }catch(error){
+        calendarCancelled=error?.code==='CANCELLED';
+        throw error;
+      }
+      progress.resume();
+      return calendar;
+    }:calendar,interactive,progress,manualAuth);
     try{
       await syncExams(http,state,store,calendar,progress,Date.now(),http.before,interactive);
       state.lastExamError=null;
@@ -3397,19 +3426,31 @@ async function run() {
       if(config.runsWithSiri)Script.setShortcutOutput('本次同步已按请求停止，后续任务可以继续。');
       return;
     }
+    if(code==='CANCELLED'){
+      if(state&&locked){
+        state.runStatus='cancelled';
+        state.runCompletedAt=new Date().toISOString();
+        if(calendarCancelled){
+          state.calendarBindingPending=true;
+          state.lastError=null;
+          state.authPaused=false;
+          state.authExpiryNotifiedAt=null;
+        }
+        store.write(state);
+      }
+      return interactive&&calendarCancelled;
+    }
     if(state&&locked){
-      const at=new Date().toISOString();state.runStatus=code==='CANCELLED'?'cancelled':'failed';state.runCompletedAt=at;
-      if(!['BUSY','LOCK_LOST','CANCELLED'].includes(code)){
+      const at=new Date().toISOString();state.runStatus='failed';state.runCompletedAt=at;
+      if(!['BUSY','LOCK_LOST'].includes(code)){
         state.failures=(state.failures||0)+1;
         if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','AUTO_LOGIN_REJECTED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE','ACCOUNT_CHANGED','WEBVIEW_TIMEOUT','LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED'].includes(code))state.authPaused=true;
       }
-      if(code!=='CANCELLED'){
-        state.lastError=code;state.lastAttempt=at;state.lastFailure={at,code,stage:state.lastStage||'尚无阶段记录'};
-        state.audit=[...(state.audit||[]),{at,status:'failed',code}].slice(-50);
-      }
+      state.lastError=code;state.lastAttempt=at;state.lastFailure={at,code,stage:state.lastStage||'尚无阶段记录'};
+      state.audit=[...(state.audit||[]),{at,status:'failed',code}].slice(-50);
       try{store.write(state);}catch(_){}
     }
-    if(!interactive&&code!=='CANCELLED'){
+    if(!interactive){
       try{await reportBackgroundFailure(code,state,store);}
       catch(_){console.error('[CourseSync] background failure notification failed');}
     }
@@ -3430,8 +3471,6 @@ async function run() {
     catch(_){console.error('[CourseSync] progress cleanup failed');}
     try{if(locked)store.release();}
     catch(_){console.error('[CourseSync] sync lock release failed');}
-    // Always attempt the host exit even if every preceding cleanup failed.
-    Script.complete();
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.

@@ -1251,6 +1251,69 @@ test('calendar setup rejects existing-calendar selections for both first binding
    a.deepEqual(e.requests,[]);
  }
 });
+test('calendar cancellation returns to the dashboard with a verified login and can resume on reopening',async()=>{
+ for(const lost of [false,true]){
+   const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost});
+   const oldId=e.state.calendarId;
+   const seen=[],alerts=[];
+   let authForms=0,posts=0;
+   e.sandbox.__sdk.Navigation={present:async()=>null};
+   e.sandbox.__sdk.Dialog.alert=async alert=>alerts.push(alert);
+   const credentials={username:'student-fixture',password:'password-fixture'};
+   e.sandbox.__nativeRefreshMock=async()=>{
+     authForms++;
+     return {kind:'credentials',schoolId:'nufe',...credentials};
+   };
+   e.sandbox.__nativeCredentialMock=async()=>{authForms++;return {...credentials};};
+   loggedIn(e,raw([activity({weekIndexes:[1]})]));
+   const schoolGet=e.m.HTTP.prototype.get;
+   const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
+   const cas='https://authserver.nufe.edu.cn/authserver/login';
+   e.m.HTTP.prototype.authJSON=async()=>({isNeed:false});
+   e.m.HTTP.prototype.get=async function(url,options){
+     if(url===table&&!posts)return {url,text:'login required'};
+     if(url.endsWith('/student/sso/login'))return {
+       url:cas,text:'<form id="pwdFromId"><input name="execution" value="fixture"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
+     };
+     if(url===cas&&options?.body)posts++;
+     return await schoolGet.call(this,url);
+   };
+   e.sandbox.__nativeDashboardMock=async options=>{
+     seen.push({pending:options.state.calendarBindingPending,calendarId:options.state.calendarId,canSignOut:options.canSignOut});
+     return options.state.calendarBindingPending?'dismiss':0;
+   };
+   e.sandbox.__calendarManagerMock=async()=>{
+     seen.push({saved:e.m.readSavedCredentials()?.username,posts});
+     return null;
+   };
+   await executeDaily(e);
+   a.deepEqual(seen.slice(-2),[
+     {saved:credentials.username,posts:1},
+     {pending:true,calendarId:oldId,canSignOut:true}
+   ]);
+   a.equal(e.store.read().runStatus,'cancelled');
+   a.equal(e.store.read().lastError,null);
+   a.equal(e.store.read().failures,0);
+   a.equal(e.store.read().signedOut===true,false);
+   a.equal(h.created.length,0);
+   a.deepEqual(e.requests,[]);
+   a.deepEqual(alerts,[]);
+   e.sandbox.__nativeDashboardMock=async options=>{
+     a.equal(options.state.calendarBindingPending,true);
+     return 0;
+   };
+   e.sandbox.__calendarManagerMock=async()=>({action:'create',title:'课程和考试'});
+   await e.m.run();
+   a.equal(authForms,1);
+   a.equal(posts,1);
+   a.equal(e.store.read().calendarId,'calendar-new');
+   a.equal(e.store.read().calendarBindingPending,undefined);
+   a.equal(e.store.read().runStatus,'success');
+   a.ok(e.db.every(event=>event.calendar.identifier==='calendar-new'));
+   a.ok(e.db.length>0);
+   a.deepEqual(alerts,[]);
+ }
+});
 test('Scripting first provisioning lets user create a custom-named iCloud calendar via native manager',async()=>{
  const e=await env({hostEnv:'index'});
  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const all=[e.other];

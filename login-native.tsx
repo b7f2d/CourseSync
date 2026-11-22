@@ -250,8 +250,9 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
   const isSuccess = state?.runStatus === 'success';
   const isPartial = state?.runStatus === 'partial';
   const statusColor = isSignedOut || isPartial ? 'systemOrange' : isFailed ? 'systemRed' : 'systemGreen';
-  const statusBadge = isSignedOut ? '未登录' : isFailed ? '刷新失败' : isPartial ? '部分完成' : isSuccess ? '已同步' : '';
-  const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
+  const statusBadge = isSignedOut ? '未登录' : isFailed ? '刷新失败' : isPartial ? '部分完成' : isSuccess ? '已同步' : state?.calendarBindingPending && canSignOut ? '已登录' : '';
+  const calTitle = state?.calendarBindingPending || !state?.calendarId
+    ? '未绑定日历' : (state.calendarTitle || '专用课程和考试日历');
   const formatLastCheck = (iso?: string) => {
     if (!iso) return '暂无同步记录';
     const ms = Date.parse(iso);
