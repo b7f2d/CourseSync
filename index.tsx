@@ -44,7 +44,7 @@ const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu'
 let __shortcutOutput=null;
 const __webviews=new Set();
 // Leave time after the Intent's work budget for the result and cleanup.
-const backgroundDeadline=HostScript.env==='intent'?Date.now()+20000:Infinity;
+const backgroundDeadline=HostScript.env==='intent'?Date.now()+26000:Infinity;
 const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
 let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
@@ -2822,7 +2822,7 @@ async function verifyUnchangedTerm(adapter,sid,anchor,events){
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null,syncPriorityExams=null) {
   // Reserve time for releasing the lock and returning the Shortcuts result.
-  const deadline=Math.min(backgroundDeadline,Date.now()+(interactive?15*60000:24000));
+  const deadline=backgroundDeadline===Infinity?Date.now()+(interactive?15*60000:24000):backgroundDeadline;
   const budget=()=>{store.check();if(Date.now()>=deadline)fail('BUDGET');};
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.

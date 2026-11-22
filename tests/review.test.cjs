@@ -887,6 +887,13 @@ test('a held lock returns a Shortcut result before starting any wait or network 
 test('an unresponsive school request and notification still release the lock and exit the Intent',async()=>{
  const e=await env();
  const timers=[];
+ let elapsed=0;
+ e.sandbox.Date=class extends Date{static now(){return Date.now()+elapsed;}};
+ const readCalendars=e.sandbox.__sdk.Calendar.forEvents;
+ e.sandbox.__sdk.Calendar.forEvents=()=>{
+   elapsed=4000;
+   return readCalendars();
+ };
  e.sandbox.setTimeout=(callback,ms)=>{
    timers.push(ms);
    return setTimeout(callback,1);
@@ -895,8 +902,9 @@ test('an unresponsive school request and notification still release the lock and
  e.sandbox.__sdk.Notification.schedule=()=>new Promise(()=>{});
  e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  await executeDaily(e);
- a.ok(timers.some(ms=>ms>1000&&ms<=20000),'network uses the remaining Intent budget');
- a.ok(!timers.some(ms=>ms>20000),'no operation receives the old per-request timeout');
+ const [calendarTimeout,requestTimeout]=timers.filter(ms=>ms>1000);
+ a.ok(calendarTimeout>24000&&calendarTimeout<=26000,'calendar setup shares the new 26-second budget');
+ a.ok(requestTimeout>20000&&requestTimeout<=22000,'network uses the remainder after calendar setup');
  a.equal(timers.at(-1),1000,'notification delivery has a separate short timeout');
  a.equal(e.store.read().lastError,'BUDGET');
  a.equal(e.store.read().resultNoticeError,'NOTIFICATION_FAILED');
