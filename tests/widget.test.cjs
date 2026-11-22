@@ -336,7 +336,7 @@ test('medium and large widgets draw the same seven days with status colors and c
  a.doesNotMatch(ui,/\+\{hidden\} 项/);
  a.match(ui,/current\?COLORS.white:COLORS.dark/);
  a.match(ui,/\.padding\(compact\?3:4\)[\s\S]*?\.frame\(\{width,alignment:'topLeading'\}\)[\s\S]*?\.background/);
- a.match(ui, /!compact&&course\.location/);
+ a.match(ui,/course\.location\?<Text font=\{8\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
  a.match(ui,/exam\?'考 ':'/);
  a.doesNotMatch(ui,/近日课表|自动更新|昨天|明天/);
 });

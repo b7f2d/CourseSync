@@ -31,7 +31,9 @@ function CourseCard({course,width,height,compact,stackTimes}){
   const time=compact?start:start+(stackTimes?'\n':'–')+course.endLabel;
   const chars=Array.from(title).length;
   const availableWidth=Math.max(1,width-(compact?6:8));
-  const availableHeight=Math.max(1,height-(compact?20:stackTimes?34:25));
+  const locationLines=course.location
+    ?Math.ceil(Array.from(course.location).length/Math.max(1,Math.floor(availableWidth/8))):0;
+  const availableHeight=Math.max(1,height-(stackTimes?30:20)-locationLines*10);
   const titleFont=Math.max(5,Math.min(compact?10:11,
     Math.floor(Math.sqrt(availableWidth*availableHeight/Math.max(1,chars)*0.8))));
   const cardStyle=modifiers().padding(compact?3:4)
@@ -42,8 +44,8 @@ function CourseCard({course,width,height,compact,stackTimes}){
       multilineTextAlignment="leading" foregroundStyle={fg}>{title}</Text>
     <Text font={8} foregroundStyle={detail} lineLimit={stackTimes?2:1}
       minScaleFactor={0.8}>{time}</Text>
-    {!compact&&course.location?<Text font={9} lineLimit={1}
-      foregroundStyle={detail}>{course.location}</Text>:null}
+    {course.location?<Text font={8} fixedSize={{horizontal:false,vertical:true}}
+      multilineTextAlignment="leading" foregroundStyle={detail}>{course.location}</Text>:null}
   </VStack>;
 }
 
