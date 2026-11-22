@@ -1,7 +1,7 @@
 // One native progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, useState,
+  GeometryReader, Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -16,17 +16,29 @@ type ProgressSession={
 };
 
 export function NativeProgressCard({value}:{value:number}) {
-  return <VStack alignment="center" spacing={18} padding={{top:20,bottom:20}}>
-    <Image systemName="calendar" font={72} foregroundStyle="systemBlue" />
-    <ProgressView
-      value={value}
-      total={1}
-      progressViewStyle="linear"
-      tint="systemBlue"
-      frame={{maxWidth:300}}
-      scaleEffect={{x:1,y:1.8}}
-    />
-  </VStack>;
+  return <GeometryReader frame={{height:208}}>
+    {proxy=>{
+      const barWidth=Math.min(300,proxy.size.width);
+      const iconWidth=barWidth/2;
+      return <VStack alignment="center" spacing={34} frame={{maxWidth:'infinity',maxHeight:'infinity'}}>
+        <Image
+          systemName="calendar"
+          resizable={true}
+          scaleToFit={true}
+          foregroundStyle="systemBlue"
+          frame={{width:iconWidth,height:iconWidth}}
+        />
+        <ProgressView
+          value={value}
+          total={1}
+          progressViewStyle="linear"
+          tint="systemBlue"
+          frame={{width:barWidth}}
+          scaleEffect={{x:1,y:1.8}}
+        />
+      </VStack>;
+    }}
+  </GeometryReader>;
 }
 
 function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
