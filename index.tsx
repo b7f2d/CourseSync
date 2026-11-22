@@ -3381,7 +3381,6 @@ async function runAttempt() {
     progress('连接教务系统');
     const http=await synchronize(state,store,interactive?async()=>{
       if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
-      await new Promise(resolve=>Timer.schedule(1200,false,resolve));
       progress('检查目标日历');
       try{
         calendar=await pickCalendar(state,store,progress.pause);
