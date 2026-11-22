@@ -810,6 +810,7 @@ function examRows(html) {
     .find(m=>attributes(m[1]).id==='exams');
   assert(table,'EXAM_SCHEMA');
   const text=markup=>htmlAttributeValue(markup.replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
+  const examLocation=raw=>raw.replace(/^(?:(?:仙林|福建路|桥头)(?:校区)?|\S+校区)(?:\s+|$)/,'').trim();
   const rows=[];
   let empty=false;
   for(const row of table[2].matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr\s*>/gi)){
@@ -825,7 +826,7 @@ function examRows(html) {
     const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
     assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
     rows.push({title:text(title[1]),time:text(time[2]),kind:text(cells[1].replace(title[0],'')),
-      location:text(cells[0].replace(time[0],''))});
+      location:examLocation(text(cells[0].replace(time[0],'')))});
   }
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
