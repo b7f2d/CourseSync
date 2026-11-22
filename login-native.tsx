@@ -372,100 +372,29 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
   }
 }
 
-// Native Calendar Manager: displays existing calendars with colors, source, and allows adding new calendars.
-export type ManagedCalendarItem = {
-  identifier: string;
-  title: string;
-  color?: string;
-  sourceTitle?: string;
-  allowsContentModifications?: boolean;
-};
+type CalendarManageOptions = { warning: string };
+type CalendarManageResult = { action: 'create'; title: string } | null;
 
-export type CalendarManageOptions = {
-  calendars: ManagedCalendarItem[];
-  currentCalendarId: string | null;
-};
-
-export type CalendarManageResult =
-  | { action: 'select'; calendarId: string; calendarTitle: string }
-  | { action: 'create'; title: string }
-  | null;
-
-const CALENDAR_PALETTE = [
-  '#007AFF', // Blue
-  '#34C759', // Green
-  '#FF9500', // Orange
-  '#FF3B30', // Red
-  '#AF52DE', // Purple
-  '#5856D6', // Indigo
-  '#FF2D55', // Pink
-  '#5AC8FA', // Teal
-  '#A2845E', // Brown
-];
-
-function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOptions) {
+function CalendarManageView({ warning }: CalendarManageOptions) {
   const dismiss = Navigation.useDismiss();
   const [newTitle, setNewTitle] = useState('');
-  const trimmed = newTitle.trim();
-  const validTitle = trimmed.length >= 1 && trimmed.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(trimmed);
-
-  const icloudCalendars = calendars.filter(c => (c.sourceTitle || '').toLowerCase().includes('icloud'));
-  const otherCalendars = calendars.filter(c => !(c.sourceTitle || '').toLowerCase().includes('icloud'));
-
-  const renderCalendarRow = (cal: ManagedCalendarItem, index: number) => {
-    const isSelected = cal.identifier === currentCalendarId;
-    const isReadOnly = cal.allowsContentModifications === false;
-    const color = cal.color || CALENDAR_PALETTE[index % CALENDAR_PALETTE.length];
-    return (
-      <HStack key={cal.identifier} alignment="center" spacing={12} padding={{ top: 4, bottom: 4 }}>
-        <VStack
-          frame={{ width: 14, height: 14 }}
-          modifiers={modifiers().background({
-            style: color,
-            shape: { type: 'circle' }
-          })}
-        />
-        <VStack alignment="leading" spacing={2}>
-          <Text font="body" fontWeight={isSelected ? 'bold' : 'regular'}>
-            {cal.title}
-          </Text>
-          <Text font="caption2" foregroundStyle="secondaryLabel">
-            {cal.sourceTitle || '日历'} {isReadOnly ? '· 只读' : ''}
-          </Text>
-        </VStack>
-        <Spacer />
-        {isSelected ? (
-          <Text font="caption1" fontWeight="semibold" foregroundStyle="#007AFF">当前同步日历</Text>
-        ) : (
-          <Button
-            title="设为同步日历"
-            disabled={isReadOnly}
-            action={() => {
-              if (isReadOnly) return;
-              dismiss({ action: 'select', calendarId: cal.identifier, calendarTitle: cal.title });
-            }}
-          />
-        )}
-      </HStack>
-    );
-  };
+  const title = newTitle.trim();
+  const validTitle = title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title);
 
   return (
     <NavigationStack>
       <List
-        navigationTitle="管理日历"
+        navigationTitle="新建 iCloud 日历"
         navigationBarTitleDisplayMode="inline"
         toolbar={{
           cancellationAction: <Button title="取消" action={() => dismiss(null)} />
         }}
       >
         <Section header={<Text>⚠️ 绑定前请确认</Text>}>
-          <Text font="subheadline">
-            同步可能删除所选日历中原有的个人日程。建议新建专用日历。
-          </Text>
+          <Text font="subheadline">{warning}</Text>
         </Section>
 
-        <Section header={<Text>添加新日历</Text>}>
+        <Section>
           <TextField
             title="日历名称"
             prompt="例如：课程和考试"
@@ -473,34 +402,13 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
             onChanged={setNewTitle}
           />
           <Button
-            title="创建并绑定新 iCloud 日历"
+            title="创建并绑定"
             disabled={!validTitle}
             action={() => {
-              if (!validTitle) return;
-              dismiss({ action: 'create', title: trimmed });
+              if (validTitle) dismiss({ action: 'create', title });
             }}
           />
         </Section>
-
-        {icloudCalendars.length > 0 ? (
-          <Section header={<Text>iCloud 日历</Text>}>
-            {icloudCalendars.map((c, idx) => renderCalendarRow(c, idx))}
-          </Section>
-        ) : null}
-
-        {otherCalendars.length > 0 ? (
-          <Section header={<Text>其他日历账户</Text>}>
-            {otherCalendars.map((c, idx) => renderCalendarRow(c, idx + icloudCalendars.length))}
-          </Section>
-        ) : null}
-
-        {calendars.length === 0 ? (
-          <Section>
-            <Text font="subheadline" foregroundStyle="secondaryLabel">
-              未检测到可用日历，请在上方创建新日历或在 iOS 设置中允许 Scripting 访问系统日历。
-            </Text>
-          </Section>
-        ) : null}
       </List>
     </NavigationStack>
   );
@@ -514,4 +422,3 @@ export async function presentNativeCalendarManager(options: CalendarManageOption
   if (!result || typeof result !== 'object') return null;
   return result as CalendarManageResult;
 }
-

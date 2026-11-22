@@ -111,7 +111,7 @@ const CloudKeychain={
 };
 const UUID=hostAPI('UUID');
 const Timer={schedule:(ms,repeats,callback)=>{const id=repeats?setInterval(callback,ms):setTimeout(callback,ms);return {invalidate:()=>repeats?clearInterval(id):clearTimeout(id)};}};
-const Calendar={forEvents:()=>HostCalendar.forEvents(),presentPicker:multiple=>HostCalendar.presentChooser(multiple),create:options=>HostCalendar.create(options)};
+const Calendar={forEvents:()=>HostCalendar.forEvents(),create:options=>HostCalendar.create(options)};
 function CalendarEvent(){return new HostEvent();}
 CalendarEvent.between=(from,to,calendars)=>HostEvent.getAll(from,to,calendars);
 class Alert{
@@ -2115,7 +2115,7 @@ function ics(events,stamp=new Date().toISOString()) {
   }
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程和考试由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程和考试缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程和考试。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程和考试变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程和考试在新日历中不可见。为避免重复课程和考试，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程和考试，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程和考试身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程和考试由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程和考试缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程和考试。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程和考试变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在 Scripting 内点「立即刷新」，按提示新建专用 iCloud 日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'原日历仍有未完成的同步，请恢复该日历并完成同步后再试。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程和考试，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程和考试身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -2164,16 +2164,16 @@ const ERROR_GUIDE={
   HTTP_429:['学校服务返回请求过于频繁（429）。','暂停手动刷新，等待学校解除限流后再尝试。'],
   TOO_LARGE:['学校返回的数据超过脚本安全处理上限，未继续解析或覆盖课表。','保留当前课表和错误代码，等待检查接口返回内容。'],
   CRYPTO:['学校密码加密所需参数无效，未提交登录密码。','检查认证页面是否发生变化，保留错误代码供适配。'],
-  CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','从主菜单「立即刷新」重新指定原日历；不要直接删除旧日历。'],
-  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程和考试。','请在 Apple 日历确认新建日历的账户来源，必要时手工创建 iCloud 日历。由于 Scripting 不支持指定精确账户，请保留现有日历，避免重复创建。'],
+  CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','先检查原日历和 Scripting 的日历访问权限，再点「立即刷新」。'],
+  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程和考试。','请在 Apple 日历确认账户来源，并检查 iCloud 日历是否启用。'],
   CALENDAR_NAME:['日历名称为空、过长或包含不支持的字符。','请输入 1～60 字符的自定义日历名称。'],
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
-  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','从主菜单「立即刷新」重新指定原日历；不要删除旧日历。'],
+  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','从主菜单「立即刷新」进入，按提示新建专用 iCloud 日历。'],
   CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
   EXAM_CALENDAR_UNAVAILABLE:['旧考试日历当前不可写或不可见，暂时无法合并。','确认 Apple 日历仍能访问旧考试日历，再点击「立即刷新」。'],
-  CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
+  CALENDAR_CREATE_FAILED:['无法新建专用 iCloud 日历。','检查 iCloud 日历是否启用，并确认 Scripting 拥有日历「完全访问」权限后重试。'],
   CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
   BUSY:['同步锁显示可能有另一项同步正在进行，也可能是上次异常退出留下的锁。','避免同时运行两个任务；异常退出留下的正常锁在 20 分钟后会自动过期。'],
   LOCK_LOST:['运行过程中同步锁失效，程序为防止重复写入主动停止。','检查是否存在多个并发任务；停止自动化后稍候重新同步。'],
@@ -2186,7 +2186,7 @@ const ERROR_GUIDE={
   HTTP_502:['学校服务网关返回 502。','等学校服务恢复再同步。'],
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
-  CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程和考试。','不要删除旧日历；先检查以前同步的课程和考试所在日历。'],
+  CALENDAR_REBIND_UNSAFE:['原日历仍有未完成的写入。','恢复原日历后，在 Scripting 内点「立即刷新」完成上次同步。'],
   CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程和考试，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程和考试。'],
   CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程和考试。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
   CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程和考试，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先检查可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
@@ -2284,16 +2284,6 @@ async function visibleCalendars(){
   }catch(error){if(error?.code==='BUDGET')throw error;fail('CALENDAR_PERMISSION');}
   assert(Array.isArray(all),'CALENDAR_PERMISSION');return all;
 }
-async function containsManagedEvent(calendar,state){
-  const examples=Object.values(state.semesters||{}).flatMap(s=>s.events||[]).slice(0,3);
-  if(!examples.length)return true;
-  for(const e of examples){
-    const lo=new Date(Date.parse(e.start)-DAY),hi=new Date(Date.parse(e.end)+DAY);
-    const list=await CalendarEvent.between(lo,hi,[calendar]);
-    if(list.some(ev=>!!eventRecord(ev,state.owner,storedEventIndex(state))))return true;
-  }
-  return false;
-}
 // Preserve the bound calendar identifier; do not create a replacement calendar.
 async function alignBoundCalendarName(calendar,state,store){
   // Calendar names belong to their owners. Track changes, never rename them.
@@ -2326,14 +2316,25 @@ async function createDedicatedCalendar(title){
      !['calDAV','mobileMe'].includes(source.type))fail('CALENDAR_NOT_ICLOUD');
   return found;
 }
-async function offerDedicatedCalendar(state,store){
-  assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
-  const previous=!!state.calendarId;
-  if(previous&&!await confirm('原日历不可见',
-    '未找到之前绑定的日历。如新建日历，旧日历恢复后可能出现重复课程和考试。确定要新建一份独立的 iCloud 日历？'))fail('CANCELLED');
-  const title=validCalendarName(await input('创建 iCloud 日历','请输入自定义日历名称'));
-  store.check(); // Do not create a calendar if a waiting task superseded this run.
-  return await createDedicatedCalendar(title);
+async function requestCalendarName(state){
+  const warning='此日历仅用于同步课程和考试。刷新可能清理其中手动添加的个人日程。';
+  const message=state.calendarId
+    ?'原日历不可见。如果原日历恢复显示，同步的课程和考试可能会重复。\n'+warning
+    :warning;
+  let result;
+  if(typeof hostAPI('Navigation')?.present==='function'){
+    try{result=await presentNativeCalendarManager({warning:message});}catch(_){}
+  }
+  if(result!==undefined){
+    if(result?.action!=='create')fail('CANCELLED');
+    return validCalendarName(result.title);
+  }
+  const title=await HostDialog.prompt({
+    title:'新建 iCloud 日历',message:'⚠️ '+message,placeholder:'日历名称',
+    cancelLabel:'取消',confirmLabel:'创建并绑定'
+  });
+  if(title==null)fail('CANCELLED');
+  return validCalendarName(title);
 }
 async function pickCalendar(state,store){
   let all=await visibleCalendars();
@@ -2349,73 +2350,9 @@ async function pickCalendar(state,store){
     if(exact)return await alignBoundCalendarName(exact,state,store);
   }
   if(!all.length)fail('CALENDAR_PERMISSION');
-  let picked,created=false;
-  if(!state.calendarId){
-    // New installs let the user choose an existing writable calendar or create a named iCloud calendar.
-    const nav=hostAPI('Navigation');
-    let managerPresented=false;
-    let res=null;
-    if(typeof nav?.present==='function'){
-      const calItems=all.map(c=>({
-        identifier:c.identifier,
-        title:c.title,
-        color:c.color,
-        sourceTitle:c.source?.title,
-        allowsContentModifications:c.allowsContentModifications
-      }));
-      try{
-        res=await presentNativeCalendarManager({
-          calendars:calItems,
-          currentCalendarId:state.calendarId
-        });
-        managerPresented=true;
-      }catch(_){}
-    }
-    if(managerPresented){
-      if(!res)fail('CANCELLED');
-      if(res.action==='create'){
-        const title=validCalendarName(res.title);
-        store.check();
-        picked=await createDedicatedCalendar(title);created=true;
-      }else if(res.action==='select'){
-        picked=all.find(c=>c.identifier===res.calendarId);
-        assert(picked&&liveCalendar(picked),'CALENDAR_READONLY');
-        const consent=await HostDialog.confirm({
-          title:'⚠️ 绑定已有日历',
-          message:'同步可能删除「'+picked.title+'」中原有的日程，包括你手动添加的个人日程。请确认这是专用日历。若其中有个人日程，请取消并新建日历。',
-          cancelLabel:'取消',
-          confirmLabel:'仍然绑定'
-        });
-        if(consent!==true)fail('CANCELLED');
-        store.check();
-      }else{
-        fail('CANCELLED');
-      }
-    }else{
-      picked=await offerDedicatedCalendar(state,store);created=true;
-    }
-  }else{
-    const dialog=new Alert();dialog.title='原日历不可见';
-    dialog.message='请选择原来的专用日历，或创建新的 iCloud 日历。更换目标可能让已同步课程和考试重复；不得选择包含私人活动的日历。';
-    dialog.addAction('指定已有日历');dialog.addAction('创建新 iCloud 日历');dialog.addCancelAction('取消');
-    const choice=await dialog.presentSheet();
-    if(choice<0)fail('CANCELLED');
-    if(choice===1){picked=await offerDedicatedCalendar(state,store);created=true;}
-    else{
-      const selected=await Calendar.presentPicker(false);
-      picked=Array.isArray(selected)?selected[0]:null;
-      assert(picked&&liveCalendar(picked)&&all.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
-      if(!await confirm('确认目标日历',
-        '已选择「'+picked.title+'」。此日历只能用于 CourseSync，不能混放私人活动；后续同步可能清理其中的旧内容。是否确认？'))fail('CANCELLED');
-      store.check();
-      // A different existing calendar must prove ownership before adoption.
-      // Never infer ownership from name or course titles alone.
-      // Without a verified owned baseline, never adopt a pre-existing
-      // calendar that may contain personal events. Create a new one instead.
-      assert(Object.values(state.semesters||{}).some(t=>(t.events||[]).length>0),'CALENDAR_REBIND_UNSAFE');
-      assert(await containsManagedEvent(picked,state),'CALENDAR_REBIND_UNSAFE');
-    }
-  }
+  const title=await requestCalendarName(state);
+  store.check();
+  const picked=await createDedicatedCalendar(title);
   state.calendarId=picked.identifier;state.calendarTitle=picked.title;
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
   store.write(state);

@@ -1236,42 +1236,20 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
 });
-test('Scripting first provisioning warns before binding an existing calendar',async()=>{
- const e=await env({hostEnv:'index'});
- e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;
- let prompted=false;
- const warnings=[];
- e.sandbox.__sdk.Navigation={present:async()=>null};
- e.sandbox.__sdk.Dialog.prompt=async()=>{prompted=true;return 'Fallback';};
- e.sandbox.__sdk.Dialog.confirm=async warning=>{
-   warnings.push(warning);
-   a.equal(e.store.read().calendarId,null);
-   a.equal(e.db.length,0);
-   return true;
- };
- e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier,calendarTitle:e.other.title});
- loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
- a.equal(prompted,false);
- a.equal(warnings.length,1);
- a.match(warnings[0].message,/「个人」.*删除|删除「个人」/);
- a.match(warnings[0].message,/个人日程/);
- a.equal(warnings[0].confirmLabel,'仍然绑定');
- a.equal(e.store.read().calendarId,e.other.identifier);
- a.equal(e.store.read().calendarTitle,e.other.title);
-});
-test('cancelling the first binding warning leaves the calendar and binding untouched',async()=>{
- const e=await env({hostEnv:'index'});
- e.state.calendarId=null;
- e.store.write(e.state);
- e.sandbox.__sdk.Navigation={present:async()=>null};
- e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier});
- e.sandbox.__sdk.Dialog.confirm=async()=>false;
- const personal=e.add(lesson({title:'个人日程'}),{cal:e.other,notes:''});
- await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
- a.equal(e.state.calendarId,null);
- a.equal(e.store.read().calendarId,null);
- a.deepEqual(e.db,[personal]);
- a.deepEqual(e.requests,[]);
+test('calendar setup rejects existing-calendar selections for both first binding and recovery',async()=>{
+ for(const lost of [false,true]){
+   const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost});
+   const oldId=e.state.calendarId;
+   e.store.write(e.state);
+   e.sandbox.__sdk.Navigation={present:async()=>null};
+   e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier});
+   const personal=e.add(lesson({title:'个人日程'}),{cal:e.other,notes:''});
+   await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
+   a.equal(e.store.read().calendarId,oldId);
+   a.deepEqual(e.db,[personal]);
+   a.equal(h.created.length,0);
+   a.deepEqual(e.requests,[]);
+ }
 });
 test('Scripting first provisioning lets user create a custom-named iCloud calendar via native manager',async()=>{
  const e=await env({hostEnv:'index'});
@@ -1279,7 +1257,12 @@ test('Scripting first provisioning lets user create a custom-named iCloud calend
  e.sandbox.__sdk.Navigation={present:async()=>null};
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'custom-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
- e.sandbox.__calendarManagerMock=async()=>({action:'create',title:'我的课表'});
+ e.sandbox.__calendarManagerMock=async options=>{
+   a.match(options.warning,/个人日程/);
+   a.doesNotMatch(options.warning,/原日历不可见/);
+   a.equal(options.calendars,undefined);
+   return {action:'create',title:'我的课表'};
+ };
  loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
  a.equal(e.store.read().calendarId,'custom-icloud');
  a.equal(e.store.read().calendarTitle,'我的课表');
@@ -1529,7 +1512,6 @@ function missingCalendar(e,{lost=false}={}){
  e.state.calendarId=lost?'calendar-gone':null;
  return {list,created};
 }
-const setConfirm=(e,answer)=>{const asked=[];e.sandbox.__sdk.Dialog.confirm=async o=>{asked.push(o);return answer;};return asked;};
 const setName=(e,name='Custom lessons')=>{const asked=[];e.sandbox.__sdk.Dialog.prompt=async o=>{asked.push(o);return name;};return asked;};
 test('first setup creates a custom-named iCloud calendar and binds its ID',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e),prompt=setName(e,'Semester ✨');
@@ -1566,40 +1548,33 @@ test('empty calendar list reports permission instead of creating',async()=>{
  await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
  a.equal(h.created.length,0);
 });
-test('missing former calendar permits choosing a matching owned calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
- e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
- e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.calendar];
- h.list.push(e.calendar);
- const rec=lesson();e.baseline([rec]);e.add(rec);e.state.calendarId='calendar-gone';
- const picked=await e.m.pickCalendar(e.state,e.store);
- a.equal(picked.identifier,e.calendar.identifier);
- a.equal(e.store.read().calendarId,e.calendar.identifier);
-});
-test('an existing calendar cannot be rebound when there is no owned baseline',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
- e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
- e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.other];
- await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
- a.equal(e.state.calendarId,'calendar-gone');
-});
-test('missing former calendar blocks rebinding a personal calendar without owned lessons',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
- e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
- e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.other];
- e.baseline([lesson()]);
- await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
- a.equal(e.state.calendarId,'calendar-gone');
-});
-test('missing calendar can create a replacement after a duplicate warning',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);setName(e,'Replacement');
- e.sandbox.__sdk.Dialog.actionSheet=async()=>1;
+test('missing calendar opens the same creation screen with a duplicate warning',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__calendarManagerMock=async options=>{
+   a.match(options.warning,/原日历不可见.*重复/);
+   a.match(options.warning,/个人日程/);
+   a.equal(options.calendars,undefined);
+   return {action:'create',title:'Replacement'};
+ };
+ const personal=e.add(lesson({title:'个人日程'}),{cal:e.other,notes:''});
  const picked=await e.m.pickCalendar(e.state,e.store);
  a.equal(picked.title,'Replacement');
- a.equal(asked.length,1);a.match(asked[0].message,/重复/);
- a.equal(e.state.calendarId,'calendar-new');
+ a.equal(e.store.read().calendarId,'calendar-new');
+ a.equal(h.created.length,1);
+ a.deepEqual(e.db,[personal]);
+ a.deepEqual(e.requests,[]);
 });
-test('pending transaction blocks selection or creation of a different calendar',async()=>{
+test('fallback creation prompt includes the same warning when the original calendar is missing',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setName(e,null);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
+ a.equal(asked.length,1);
+ a.equal(asked[0].confirmLabel,'创建并绑定');
+ a.match(asked[0].message,/原日历不可见.*重复/);
+ a.equal(e.state.calendarId,'calendar-gone');
+ a.equal(h.created.length,0);
+});
+test('pending transaction blocks creation of a replacement calendar',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setName(e);
  e.state.tx=tx([],[]);
  await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
