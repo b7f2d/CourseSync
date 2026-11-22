@@ -765,7 +765,7 @@ test('unverified legacy deletion reports failure, never success',async()=>{const
 test('legacy snapshot includes all observed occurrences before removal',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());for(let i=0;i<2;i++)e.add(lesson(),{id:'old-series',notes:'old recurring',offset:i*7*86400000});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);const backup=e.files.get(e.store.path(e.state.lastLegacyReportName));a.equal(JSON.parse(backup).events.length,3);a.match(JSON.parse(backup).limitation,/series deletion/);});
 test('legacy invitation is preserved, preventing outbound cancellation',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());const ev=e.add(lesson(),{notes:'meeting invitation'});ev.attendees=[{name:'someone'}];await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('LEGACY_INVITATION'));a.ok(e.db.some(x=>x.identifier===ev.identifier));});
 test('unbound calendar cannot be purged',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());await a.rejects(()=>e.m.replaceDedicatedLegacy(e.other,e.state,e.store),code('CALENDAR_READONLY'));a.equal(e.requests.length,0);});
-test('ICS output escapes text and folds at 75 UTF8 bytes',async()=>{const {m}=await env();const text=m.ics([lesson({title:'中文'.repeat(80)+'\nX;,'})]);a.match(text,/\\nX\\;\\,/);for(const line of text.split('\r\n'))a.ok(Buffer.byteLength(line)<=75);a.match(text,/DTSTART:20260907T000000Z/);});
+test('ICS output escapes text and folds at 75 UTF8 bytes',async()=>{const {m}=await env();const text=m.ics([lesson({title:'中文'.repeat(80)+'\nX;,'})]);a.match(text,/\\nX\\;\\,/);for(const line of text.split('\r\n'))a.ok(Buffer.byteLength(line)<=75);a.match(text,/DTSTART:20260907T000000Z/);a.doesNotMatch(text,/教师|张老师/);});
 test('diagnostics never expose native raw error contents',async()=>{const {m}=await env();a.doesNotMatch(m.errorMessage(Error('password=VERY_SECRET'),{lastStage:'测试阶段'}),/VERY_SECRET/);});
 test('bounded work rejects hung WebView and clears timer',async()=>{const {m}=await env();await a.rejects(()=>m.bounded(new Promise(()=>{}),10,'WEBVIEW_TIMEOUT'),code('WEBVIEW_TIMEOUT'));});
 test('paused background authentication sends one actionable notification, never daily repeats',async()=>{
@@ -1466,7 +1466,7 @@ test('notes migration keeps the same native event ID',async()=>{
   await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
   a.equal(e.db.length,1);
   a.match(e.db[0].notes,/^同步：/);
-   a.equal(e.db[0].title,'高等数学（张老师）');
+  a.equal(e.db[0].title,'高等数学');
   a.doesNotMatch(e.db[0].notes,/教师|NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
   a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,rec.id);
 });
@@ -1931,27 +1931,26 @@ test('slider only accepts plausible bounded, manually-dragged trajectories',asyn
  a.equal(validate({...valid,tracks:[{a:0,b:0,c:0},{a:'100',b:0,c:10}]}),false);
  a.equal(validate({...valid,tracks:new Array(1001).fill({a:2,b:0,c:20})}),false);
 });
-test('calendar title appends all teachers once and does not invent unknown teacher',async()=>{
- const {m}=await env();
- a.equal(m.calendarTitle(lesson()),'高等数学（张老师）');
- a.equal(m.calendarTitle(lesson({teachers:['张老师','李老师','张老师']})),'高等数学（张老师、李老师）');
- a.equal(m.calendarTitle(lesson({teachers:[]})),'高等数学');
-});
-test('old school title and new teacher suffix both map to the same canonical course',async()=>{
- const e=await env(),rec=lesson(),old=e.add(rec),indexed=e.m.storedEventIndex(e.state);
- a.equal(e.m.eventRecord(old,e.state.owner,indexed).title,'高等数学');
+test('calendar titles with a legacy teacher suffix map to the canonical course',async()=>{
+ const e=await env(),rec=lesson();
+ const old=e.add(rec,{notes:'[NUFE_LOCAL_V1 '+e.state.owner+' '+rec.id+']\n'+JSON.stringify({sid:rec.sid,id:rec.id,week:rec.week,su:rec.su,eu:rec.eu,teachers:rec.teachers})});
+ a.equal(e.m.eventRecord(old,e.state.owner).title,'高等数学');
  old.title='高等数学（张老师）';
- a.equal(e.m.eventRecord(old,e.state.owner,indexed).title,'高等数学');
+ a.equal(e.m.eventRecord(old,e.state.owner).title,'高等数学');
  a.equal(e.m.matchesOldCourse(old,rec),true);
 });
 test('a newly written marked event recovers the base title without an index',async()=>{
  const e=await env(),rec=lesson();
  await new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store).save(rec,null,'2026-11-02T03:00:00Z');
  a.equal(e.db.length,1);
- a.equal(e.db[0].title,'高等数学（张老师）');
- a.equal(e.m.eventRecord(e.db[0],e.state.owner).title,'高等数学');
+ a.equal(e.db[0].title,'高等数学');
+ a.doesNotMatch(e.db[0].notes,/张老师|teachers/);
+ const adapter=new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store);
+ const index=await e.m.applyTransaction(tx([], [rec]),adapter);
+ a.equal(index[rec.id],e.db[0].identifier);
+ a.deepEqual(e.requests.map(x=>x[0]),['save']);
 });
-test('teacher change keeps logical identity and updates the same native event',async()=>{
+test('teacher changes preserve logical identity without rewriting the native event',async()=>{
  const e=await env(),rec=lesson(),after=lesson({teachers:['李老师']});
  e.add(rec);
  const native=e.db[0].identifier;
@@ -1960,7 +1959,8 @@ test('teacher change keeps logical identity and updates the same native event',a
  await e.m.applyTransaction(tx([rec],[after]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,native);
- a.equal(e.db[0].title,'高等数学（李老师）');
+ a.equal(e.db[0].title,'高等数学');
+ a.deepEqual(e.requests,[]);
 });
 test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec,{notes:'教师：张老师\\n同步：2026-11-02 01:22'.replace('\\n','\n')});
@@ -1970,17 +1970,33 @@ test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
  e.store.write(e.state);
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.equal(e.db.length,1);a.equal(e.db[0].identifier,before);
- a.equal(e.db[0].title,'高等数学（张老师）');
+ a.equal(e.db[0].title,'高等数学');
  a.match(e.db[0].notes,/^同步：/);
  a.doesNotMatch(e.db[0].notes,/教师：/);
  a.equal(e.state.semesters['161'].notesFormat,3);
 });
 
-test('full teacher names from the school remain intact in calendar titles',async()=>{
- const {m}=await env();
- const rec=m.expand(raw([activity({courseName:'中国税制',teachers:[{name:'高玉胭(001)'}]})]),161,'2026-09-07').events[0];
- a.equal(rec.teachers[0],'高玉胭');
- a.equal(m.calendarTitle(rec),'中国税制（高玉胭）');
+test('automatic refresh removes a legacy teacher suffix from an indexed course in place',async()=>{
+ const e=await env();
+ const source=raw([activity({courseName:'中国税制（双语）',teachers:[{name:'高玉胭(001)'}],weekIndexes:[1]})]);
+ loggedIn(e,source);
+ const rec={...e.m.expand(source,161,'2026-09-07').events[0],id:'tax-course'};
+ const ev=e.add(rec,{notes:'同步：2026-11-02 08:35'});
+ ev.title='中国税制（双语）（高玉胭）';
+ e.baseline([rec]);
+ const term=e.state.semesters['161'];
+ term.index={[rec.id]:ev.identifier};
+ term.notesFormat=3;
+ term.legacyMatchedCleanAt=term.lastSuccess;
+ await executeDaily(e);
+ a.match(e.sandbox.output,/刷新成功/);
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,ev.identifier);
+ a.equal(e.db[0].title,'中国税制（双语）');
+ a.match(e.db[0].notes,/^同步：[^\n]+$/);
+ a.equal(e.db[0].location,ev.location);
+ a.equal(+e.db[0].startDate,+ev.startDate);
+ a.equal(e.store.read().semesters['161'].events[0].teachers[0],'高玉胭');
 });
 
 test('credential status identifies legacy-only and synchronized item read-back',async()=>{
@@ -2022,14 +2038,14 @@ test('v3 notes refresh after another successful unchanged-term sync',async()=>{
  term.index={[rec.id]:ev.identifier};
  term.notesFormat=3;
  term.lastSuccess='2026-11-02T00:35:00.000Z';
- ev.title=e.m.calendarTitle(rec);ev.notes='同步：2026-11-02 08:35';
+ ev.notes='同步：2026-11-02 08:35';
  e.store.write(e.state);
  const original=ev.identifier;
  const beforeWrites=e.requests.filter(x=>x[0]==='save').length;
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,original);
- a.equal(e.db[0].title,'高等数学（张老师）');
+ a.equal(e.db[0].title,'高等数学');
  a.equal(e.db[0].notes,'同步：2026-11-02 08:35');
  a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites);
  term.lastSuccess='2026-11-02T01:07:00.000Z';
