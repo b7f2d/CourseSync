@@ -772,7 +772,7 @@ test('successful background refresh skips notifications even when delivery is un
  e.sandbox.__sdk.Notification.schedule=async()=>{deliveryAttempts++;throw Error('notification denied');};
  await executeDaily(e);
  const s=e.store.read();a.equal(s.runStatus,'success');a.equal(s.lastError,null);
- a.equal(s.failures,0);a.equal(s.nextAttempt,0);a.equal(deliveryAttempts,0);
+ a.equal(s.failures,0);a.equal(s.nextAttempt,undefined);a.equal(deliveryAttempts,0);
  a.match(e.sandbox.output,/刷新成功/);a.equal(e.db.length,1);
 });
 test('a held lock returns a Shortcut result before starting any wait or network work',async()=>{
@@ -854,8 +854,28 @@ test('compact status shows outcome and hides technical diagnostics',async()=>{
  a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
 });
 
-test('retry deadline explicitly waits for a future automation trigger',async()=>{
- const {m}=await env();a.match(m.automaticRetryText({nextAttempt:Date.now()+60000}),/等待自动化触发/);
+test('a saved cooldown and consecutive network failures never delay the next Shortcut run',async()=>{
+ const e=await env();
+ e.state.nextAttempt=Date.now()+60*60000;
+ let attempts=0;
+ e.m.HTTP.prototype.get=async()=>{
+   attempts++;
+   throw Object.assign(new Error('offline'),{code:'NETWORK'});
+ };
+ await executeDaily(e);
+ a.equal(attempts,1);
+ a.match(e.sandbox.output,/刷新失败/);
+ a.equal(e.notices.length,1);
+ await e.m.run();
+ a.equal(attempts,2);
+ a.equal(e.notices.length,2);
+ a.equal(e.store.read().failures,2);
+ a.equal(e.store.read().nextAttempt,e.state.nextAttempt);
+ a.doesNotMatch(e.m.statusText(e.store.read()),/下次自动尝试/);
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await e.m.run();
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.store.read().lastError,null);
 });
 test('first unattended authentication failure delivers one specific alert and records it',async()=>{
  const e=await env();
@@ -885,16 +905,6 @@ test('notification denial records a safe status without throwing or deleting cal
  a.equal(e.state.authNoticeError,'NOTIFICATION_FAILED');
  a.equal(e.state.authExpiryNotifiedAt,undefined);
  a.equal(e.db.length,0);
-});
-test('retry guidance shows a concrete Beijing-time estimate without changing schedule',async()=>{
- const e=await env();
- const now=Date.parse('2026-11-02T00:00:00.000Z');
- e.state.nextAttempt=now+90*60000;
- a.match(e.m.automaticRetryText(e.state,now),/2026-11-02 09:30/);
- e.state.nextAttempt=Date.now()+90*60000;
- a.match(e.m.statusText(e.state),/下次自动尝试：/);
- e.state.authPaused=true;
- a.match(e.m.automaticRetryText(e.state,now),/手动处理/);
 });
 test('unclassified HTTP throttling and oversized replies have actionable explanations',async()=>{
  const e=await env();
@@ -1997,13 +2007,12 @@ test('a malformed Cookie storage error offers only local session reset',async()=
  a.equal(r.kind,'cookie');a.equal(r.label,'清除异常 Cookie');
  e.keys.set('CourseSync.Local.v1.cookies','local-bad-cookie');
  e.keys.set('CourseSync.v1.icloud-credentials',JSON.stringify({version:1,username:'sample',password:'fake'}));
- e.state.authPaused=true;e.state.nextAttempt=Date.now()+100000;e.state.lastError='COOKIE_STORAGE';
+ e.state.authPaused=true;e.state.lastError='COOKIE_STORAGE';
  e.store.write(e.state);e.sandbox.__sdk.Dialog.alert=async()=>{};
  await e.m.applyRecovery('cookie',e.state,e.store);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),true);
  a.equal(e.state.authPaused,false);
- a.equal(e.state.nextAttempt,0);
  a.equal(e.state.lastError,null);
 });
 test('status offers self-check with recovery only on a matching failure and never offers detailed logs',async()=>{

@@ -2349,7 +2349,7 @@ function availableRecovery(code,state,store){
 async function clearBrokenCookies(state,store){
   if(Keychain.contains(schoolKey(KEY)))Keychain.remove(schoolKey(KEY));
   // A credential-based automatic login can be attempted on the next refresh.
-  state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;
+  state.authPaused=false;state.authExpiryNotifiedAt=null;
   state.lastError=null;store.write(state);
   await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程和考试日历均已保留，下次刷新将重新认证。');
 }
@@ -2398,11 +2398,6 @@ async function showFailureRecovery(error,state,store){
   a.addAction(recovery.label);a.addCancelAction('关闭');
   if(await a.presentAlert()===0)return applyRecovery(recovery.kind,state,store);
 }
-function automaticRetryText(state,now=Date.now()){
-  if(state.authPaused)return '需手动处理登录（定时任务暂停尝试）';
-  const next=Number(state.nextAttempt);
-  return Number.isFinite(next)&&next>now?'最早于 '+localDateTime(new Date(next).toISOString())+'（北京时间）后，等待自动化触发':'可在下次自动化触发时尝试';
-}
 // The overview is intentionally small. It describes recorded results, not a
 // real-time guarantee that the school schedule or calendar has not changed.
 function statusText(state){
@@ -2433,7 +2428,6 @@ function statusText(state){
     '\n课表日历：'+calendar+
     (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
-    (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+termDetails+noticeWarning+
     (hasIssue?'\n建议：打开「环境自检」定位问题':'');
 }
@@ -2918,7 +2912,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     stage('全部学期核验完成后清理专用日历旧内容');
     await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
   }
-  state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.nextAttempt=0;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
+  state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
   await refreshReminders(state,store);
   return http;
 }
@@ -2957,7 +2951,7 @@ async function signOut(state,store){
   // Persist a fail-closed marker before touching the Keychain, so scheduled
   // refreshes cannot silently sign back in even if deletion partially fails.
   state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
-  state.nextAttempt=0;state.failures=0;state.lastError=null;
+  state.failures=0;state.lastError=null;
   state.runStatus='signed_out';state.credentialCloudStatus=null;
   store.write(state);
   try{
@@ -3300,7 +3294,6 @@ async function run() {
       // Manual logout is intentional and must never cause background login or warning spam.
       if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
       if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
-      if(state.nextAttempt&&Date.now()<state.nextAttempt){if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
@@ -3355,7 +3348,7 @@ async function run() {
     if(state&&locked){
       const at=new Date().toISOString();state.runStatus=code==='CANCELLED'?'cancelled':'failed';state.runCompletedAt=at;
       if(!['BUSY','LOCK_LOST','CANCELLED'].includes(code)){
-        state.failures=(state.failures||0)+1;state.nextAttempt=Date.now()+Math.min(DAY,30*60000*2**Math.min(state.failures-1,6));
+        state.failures=(state.failures||0)+1;
         if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','AUTO_LOGIN_REJECTED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE','ACCOUNT_CHANGED','WEBVIEW_TIMEOUT','LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED'].includes(code))state.authPaused=true;
       }
       if(code!=='CANCELLED'){
@@ -3390,7 +3383,7 @@ async function run() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
