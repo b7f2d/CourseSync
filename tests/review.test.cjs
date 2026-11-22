@@ -825,7 +825,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  };
  queried.length=0;e.requests.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','exams','159','160']);
+ a.deepEqual(queried,['161','160','159','exams']);
  a.deepEqual(e.requests,[]);
  a.equal(courseReads.length,new Set(courseReads).size,'overlapping course windows are read once');
  a.ok(courseReads.length<15,'the three course terms use fewer native reads than separate scans');
@@ -843,28 +843,22 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
 
  const readTerm=e.m.HTTP.prototype.json;
  e.m.HTTP.prototype.json=async url=>{
-   if(new URL(url).searchParams.get('semesterId')==='160')throw Object.assign(new Error('budget'),{code:'BUDGET'});
+   if(new URL(url).searchParams.get('semesterId')==='159')throw Object.assign(new Error('budget'),{code:'BUDGET'});
    return readTerm(url);
  };
  await e.m.run();
  const partial=e.store.read();
  a.equal(partial.runStatus,'partial');
  a.equal(partial.lastExamError,null);
- a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['160','BUDGET']]);
- a.deepEqual(Array.from(partial.historySyncCheckpoint.completed),[159]);
+ a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['159','BUDGET']]);
  a.equal(partial.exams.length,1);
- a.match(e.notices.at(-1).body,/2025-2026-1（BUDGET）.*下次触发/);
+ a.match(e.notices.at(-1).body,/2025-2026-2（BUDGET）.*预留时间/);
 
  e.m.HTTP.prototype.json=readTerm;
  queried.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','exams','160']);
+ a.deepEqual(queried,['161','160','159','exams']);
  a.equal(e.store.read().runStatus,'success');
- a.equal(e.store.read().historySyncCheckpoint,undefined);
-
- queried.length=0;
- await e.m.run();
- a.deepEqual(queried,['161','exams','159','160']);
 });
 test('an unreadable exam response reports the reason and stops after one exam request',async()=>{
  const e=await env();
@@ -1351,12 +1345,13 @@ test('widget has a single dedicated Scripting entry with no legacy ListWidget re
 });
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('each refresh fetches all terms and retries failed terms on the next refresh',async()=>{
+test('App refresh always fetches all courses; scheduled sync rotates two earlier terms',async()=>{
  const e=await env(),fetched=[];
  e.m.HTTP.prototype.get=async()=>({
    url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
-   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="160">2025-2026-2</option><option value="159">2025-2026-1</option><option value="161">2026-2027-1</option></select>'
+   text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="160">2025-2026-2</option><option value="159">2025-2026-1</option><option value="158">2024-2025-2</option><option value="157">2024-2025-1</option><option value="161">2026-2027-1</option><option value="162">2026-2027-2</option></select>'
  });
+ e.state.anchors['162']='2027-03-01';
  let failHistorical=false;
  e.m.HTTP.prototype.json=async url=>{
    const sid=Number(new URL(url).searchParams.get('semesterId'));
@@ -1365,19 +1360,23 @@ test('each refresh fetches all terms and retries failed terms on the next refres
    return raw([activity({weekIndexes:[1]})]);
  };
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched.splice(0),[161,159,160]);
+ a.deepEqual(fetched.splice(0),[161,157,158,159,160,162]);
  failHistorical=true;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,159,160]);
+ a.deepEqual(fetched.splice(0),[161,160,159]);
  a.equal(e.state.termErrors[0].sid,'159');
  failHistorical=false;
+ await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
+ a.deepEqual(fetched.splice(0),[161,158,157]);
+ await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
+ a.deepEqual(fetched.splice(0),[161,160,159]);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched.splice(0),[161,159,160]);
+ a.deepEqual(fetched.splice(0),[161,157,158,159,160,162]);
  const pending=e.state.semesters['160'];
  e.state.tx={...tx(pending.events,pending.events),sid:'160',anchor:pending.anchor};
  e.store.write(e.state);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
- a.deepEqual(fetched,[160,161,159]);
+ a.deepEqual(fetched,[160,161,157,158,159,162]);
  a.equal(e.state.termErrors.length,0);
 });
 
