@@ -1321,8 +1321,6 @@ test('Scripting first provisioning lets user create a custom-named iCloud calend
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'custom-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
  e.sandbox.__calendarManagerMock=async options=>{
-   a.match(options.warning,/个人日程/);
-   a.doesNotMatch(options.warning,/原日历不可见/);
    a.equal(options.calendars,undefined);
    return {action:'create',title:'我的课表'};
  };
@@ -1615,8 +1613,6 @@ test('missing calendar opens the same creation screen with a duplicate warning',
  const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});
  e.sandbox.__sdk.Navigation={present:async()=>null};
  e.sandbox.__calendarManagerMock=async options=>{
-   a.match(options.warning,/原日历不可见.*重复/);
-   a.match(options.warning,/个人日程/);
    a.equal(options.calendars,undefined);
    return {action:'create',title:'Replacement'};
  };
@@ -1633,7 +1629,7 @@ test('fallback creation prompt includes the same warning when the original calen
  await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
  a.equal(asked.length,1);
  a.equal(asked[0].confirmLabel,'创建并绑定');
- a.match(asked[0].message,/原日历不可见.*重复/);
+ a.equal(asked[0].placeholder,'日历名称');
  a.equal(e.state.calendarId,'calendar-gone');
  a.equal(h.created.length,0);
 });

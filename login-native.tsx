@@ -373,10 +373,10 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
   }
 }
 
-type CalendarManageOptions = { warning: string };
+type CalendarManageOptions = Record<string, never>;
 type CalendarManageResult = { action: 'create'; title: string } | null;
 
-function CalendarManageView({ warning }: CalendarManageOptions) {
+function CalendarManageView(_options: CalendarManageOptions) {
   const dismiss = Navigation.useDismiss();
   const [newTitle, setNewTitle] = useState('');
   const title = newTitle.trim();
@@ -391,14 +391,10 @@ function CalendarManageView({ warning }: CalendarManageOptions) {
           cancellationAction: <Button title="取消" action={() => dismiss(null)} />
         }}
       >
-        <Section header={<Text>⚠️ 绑定前请确认</Text>}>
-          <Text font="subheadline">{warning}</Text>
-        </Section>
-
         <Section>
           <TextField
             title="日历名称"
-            prompt="例如：课程和考试"
+            prompt="日历名称"
             value={newTitle}
             onChanged={setNewTitle}
           />

@@ -2321,20 +2321,16 @@ async function createDedicatedCalendar(title){
   return found;
 }
 async function requestCalendarName(state){
-  const warning='此日历仅用于同步课程和考试。刷新可能清理其中手动添加的个人日程。';
-  const message=state.calendarId
-    ?'原日历不可见。如果原日历恢复显示，同步的课程和考试可能会重复。\n'+warning
-    :warning;
   let result;
   if(typeof hostAPI('Navigation')?.present==='function'){
-    try{result=await presentNativeCalendarManager({warning:message});}catch(_){}
+    try{result=await presentNativeCalendarManager({});}catch(_){}
   }
   if(result!==undefined){
     if(result?.action!=='create')fail('CANCELLED');
     return validCalendarName(result.title);
   }
   const title=await HostDialog.prompt({
-    title:'新建 iCloud 日历',message:'⚠️ '+message,placeholder:'日历名称',
+    title:'新建 iCloud 日历',placeholder:'日历名称',
     cancelLabel:'取消',confirmLabel:'创建并绑定'
   });
   if(title==null)fail('CANCELLED');
@@ -3368,18 +3364,18 @@ async function runAttempt() {
       progress('检查目标日历');
       calendar=await pickCalendar(state,store);
     }
-    await progress.start();
+    if(!interactive)await progress.start();
     progress('连接教务系统');
     const http=await synchronize(state,store,interactive?async()=>{
       if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
       progress('检查目标日历');
       try{
-        calendar=await pickCalendar(state,store,progress.pause);
+        calendar=await pickCalendar(state,store);
       }catch(error){
         calendarCancelled=error?.code==='CANCELLED';
         throw error;
       }
-      progress.resume();
+      await progress.start();
       return calendar;
     }:calendar,interactive,progress,manualAuth);
     try{
