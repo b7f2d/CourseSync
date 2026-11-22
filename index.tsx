@@ -43,6 +43,9 @@ let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')
 const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu':'sync')).trim().toLowerCase()==='menu'?'menu':'sync';
 let __shortcutOutput=null;
 const __webviews=new Set();
+// Leave time after the Intent's work budget for the result and cleanup.
+const backgroundDeadline=HostScript.env==='intent'?Date.now()+20000:Infinity;
+const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
 let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
 let presentNativeDashboard,presentNativeCalendarManager,createNativeProgressView;
@@ -158,10 +161,10 @@ class Notification{
      if(Trigger)options.trigger=new Trigger({timeInterval:diff,repeats:false});
      else options.triggerDate=this.triggerDate;
    }
-   return HostNotification.schedule(options);
+   return awaitNotification(HostNotification.schedule(options));
  }
- static async allPending(){const rows=await HostNotification.getAllPendingsOfCurrentScript();return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:r.trigger?.date||null}));}
- static async removePending(ids){if(ids.length)await HostNotification.removePendings(ids);}
+ static async allPending(){const rows=await awaitNotification(HostNotification.getAllPendingsOfCurrentScript());return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:r.trigger?.date||null}));}
+ static async removePending(ids){if(ids.length)await awaitNotification(HostNotification.removePendings(ids));}
 }
 const Data=hostAPI('Data'),Image={fromData:data=>hostAPI('UIImage').fromData(data)};
 const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
@@ -654,7 +657,9 @@ function networkErrorCode(error) {
   return 'NETWORK';
 }
 class HTTP {
-  constructor(jar,persist=()=>{},before=()=>{},trace=()=>{}) {this.jar=jar;this.persist=persist;this.before=before;this.trace=trace;this.last=0;}
+  constructor(jar,persist=()=>{},before=()=>{},trace=()=>{},deadline=Infinity) {
+    this.jar=jar;this.persist=persist;this.before=before;this.trace=trace;this.deadline=deadline;this.last=0;
+  }
   async get(url,opt={}) {
     let method=opt.body?'POST':'GET',body=opt.body||null;
     const started=Date.now(),chainLimit=75000;
@@ -662,7 +667,11 @@ class HTTP {
       if(Date.now()-started>=chainLimit)fail('NETWORK_CHAIN_TIMEOUT');
       safeURL(url);this.before();this.trace('发送 '+method+' '+requestLabel(url));
       const wait=1050-(Date.now()-this.last);
-      if(wait>0)await bounded(new Promise(r=>Timer.schedule(wait,false,r)),Math.min(3000,chainLimit-(Date.now()-started)),'NETWORK_CHAIN_TIMEOUT');
+      if(wait>0){
+        if(this.deadline-Date.now()<=wait)fail('BUDGET');
+        await bounded(new Promise(r=>Timer.schedule(wait,false,r)),Math.min(3000,chainLimit-(Date.now()-started)),'NETWORK_CHAIN_TIMEOUT');
+        this.before();
+      }
       this.last=Date.now();
       const req=new Request(url);req.method=method;req.timeoutInterval=15;req.allowInsecureRequest=false;
       req.headers={Accept:opt.binary?'image/*':'application/json, text/html;q=0.9, */*;q=0.8',Cookie:this.jar.header(url)};
@@ -674,10 +683,15 @@ class HTTP {
       if(opt.ajax)req.headers['X-Requested-With']='XMLHttpRequest';
       if(body){req.body=body;req.headers['Content-Type']=opt.json?'application/json':'application/x-www-form-urlencoded';}
       let redirect=null;req.onRedirect=r=>{redirect=r.url;return null;};
-      const remaining=chainLimit-(Date.now()-started);
+      const now=Date.now(),remaining=chainLimit-(now-started),runRemaining=this.deadline-now;
+      if(runRemaining<=0)fail('BUDGET');
       if(remaining<=0)fail('NETWORK_CHAIN_TIMEOUT');
-      let value;try{value=await bounded(opt.binary?req.load():req.loadString(),Math.min(25000,remaining),'NETWORK_TIMEOUT');}
-      catch(e){if(e.code==='NETWORK_TIMEOUT')fail(remaining<=25000?'NETWORK_CHAIN_TIMEOUT':'NETWORK_TIMEOUT');fail(networkErrorCode(e));}
+      const requestLimit=Math.min(25000,remaining);
+      const timeoutCode=runRemaining<=requestLimit?'BUDGET':remaining<=25000?'NETWORK_CHAIN_TIMEOUT':'NETWORK_TIMEOUT';
+      let value;
+      try{value=await bounded(opt.binary?req.load():req.loadString(),Math.min(requestLimit,runRemaining),timeoutCode);}
+      catch(e){fail(e?.code===timeoutCode?timeoutCode:networkErrorCode(e));}
+      this.before();
       const res=req.response;assert(res,'NETWORK');this.trace('收到 HTTP '+res.statusCode+' '+requestLabel(url));const cookieStatus=this.jar.ingest(url,res.headers||{},res.cookies||[]);if(cookieStatus.rejected)this.trace('已安全忽略 '+cookieStatus.rejected+' 条不符合域名或格式规则的 Cookie（内容未记录）');this.persist(this.jar.cookies);
       if(res.statusCode>=300&&res.statusCode<400){
         const k=Object.keys(res.headers||{}).find(k=>k.toLowerCase()==='location');
@@ -829,7 +843,7 @@ function indexedExamWindows(index,prefix){
   }
   return ranges;
 }
-async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
+async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint){
   const legacyId=state.examCalendarId;
   if(!legacyId||legacyId===calendar.identifier){
     if(legacyId||state.examCalendarTitle){
@@ -859,7 +873,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
     const found=new Map();
     for(const [start,end] of merged){
       for(let at=start;at<end;at+=90*DAY){
-        store.check();
+        checkpoint();
         for(const ev of await calendarRows(at,Math.min(at+90*DAY,end),cal)){
           if(keyOf(ev))found.set(occurrenceKey(ev),ev);
         }
@@ -876,7 +890,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
       const key=keyOf(ev),start=+ev.startDate,end=+ev.endDate;
       let destination=existing.get(key);
       if(!destination){
-        store.check();
+        checkpoint();
         const copy=new CalendarEvent();
         copy.calendar=calendar;copy.title=examTitle(ev.title);copy.location=ev.location||'';
         copy.startDate=new Date(start);copy.endDate=new Date(end);
@@ -906,7 +920,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
           store.write(state);
         }
       }
-      store.check();
+      checkpoint();
       await ev.remove();
       assert(!(await calendarRows(start,end,legacy)).some(item=>occurrenceKey(item)===occurrenceKey(ev)),'CALENDAR_VERIFY');
       delete index[ev.identifier];
@@ -917,11 +931,11 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress){
   delete state.examCalendarTitle;
   store.write(state);
 }
-async function upgradeExamTitles(state,store,calendar,index,prefix,windows){
+async function upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint){
   if(state.examTitleFormat==='prefix')return;
   for(const [start,end] of [...windows,...indexedExamWindows(index,prefix)]){
     for(let at=start;at<end;at+=90*DAY){
-      store.check();
+      checkpoint();
       for(const ev of await calendarRows(at,Math.min(at+90*DAY,end),calendar)){
         const previous=String(ev.title||'');
         if(!previous.startsWith(LEGACY_EXAM_ICON)&&!previous.endsWith(EXAM_LABEL))continue;
@@ -931,7 +945,7 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows){
         if(!key?.startsWith(prefix))continue;
         assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&
           !ev.recurrenceRules?.length&&!ev.attendees?.length,'MANAGED_SERIES');
-        store.check();
+        checkpoint();
         const oldId=ev.identifier;
         ev.title=title;
         await ev.save();
@@ -949,7 +963,7 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows){
   state.examTitleFormat='prefix';
   store.write(state);
 }
-async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
+async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check()) {
   progress('读取考试日程');
   const end=now+366*DAY;
   const prefix=EXAM_MARKER+state.owner+'] ';
@@ -985,14 +999,15 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
     .concat(storedStarts,priorStarts).filter(start=>Number.isFinite(start)&&start<now)
     .map(start=>Math.floor(start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
-  await migrateLegacyExamCalendar(state,store,calendar,windows,progress);
+  checkpoint();
+  await migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint);
   const index=Object.assign(Object.create(null),state.examIndex);
-  await upgradeExamTitles(state,store,calendar,index,prefix,windows);
+  await upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint);
   const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
   const read=async()=>{
     const owned=new Map();
     for(const [start,stop] of windows){
-      store.check();
+      checkpoint();
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
         if(typeof key==='string'&&key.startsWith(prefix)){
@@ -1000,7 +1015,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
         }
       }
     }
-    store.check();return [...owned.values()];
+    checkpoint();return [...owned.values()];
   };
   const rows=await read();
   if(!rows.length&&!target.size){
@@ -1021,7 +1036,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   for(const [key,exam] of target){
     const existing=current.get(key);
     if(existing&&matches(existing,exam))continue;
-    store.check();
+    checkpoint();
     const ev=existing||new CalendarEvent();
     ev.calendar=calendar;ev.title=exam.title;ev.notes=key;ev.location=exam.location;
     ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(exam.start);ev.endDate=new Date(exam.stop);
@@ -1033,7 +1048,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   for(const ev of written){
     const key=keyOf(ev),exam=target.get(key);
     if(exam&&matches(ev,exam)&&!kept.has(key)){kept.add(key);continue;}
-    store.check();
+    checkpoint();
     assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
       !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
@@ -1056,7 +1071,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now()) {
   const expectedNotes=readableNotes(null,new Date().toISOString());
   for(const ev of final){
     if(ev.notes===expectedNotes)continue;
-    store.check();
+    checkpoint();
     const oldId=ev.identifier,key=keyOf(ev);
     ev.notes=expectedNotes;
     await ev.save();
@@ -1649,7 +1664,10 @@ function readCookieJar(){
 }
 function occurrenceKey(ev){return String(ev.identifier)+'\0'+(+ev.startDate)+'\0'+(+ev.endDate);}
 async function calendarRows(start,end,calendar){
-  const rows=await bounded(CalendarEvent.between(new Date(start),new Date(end),[calendar]),20000,'CALENDAR_TIMEOUT');
+  const remaining=backgroundDeadline-Date.now();
+  if(remaining<=0)fail('BUDGET');
+  const rows=await bounded(CalendarEvent.between(new Date(start),new Date(end),[calendar]),
+    Math.min(20000,remaining),remaining<=20000?'BUDGET':'CALENDAR_TIMEOUT');
   assert(Array.isArray(rows),'CALENDAR_PERMISSION');
   // Defend even if a bridge returns events outside its requested calendar.
   return rows.filter(e=>e&&e.calendar&&e.calendar.identifier===calendar.identifier);
@@ -1764,8 +1782,17 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
     }
   }
   budget();const after=await adapter.scan(tx.anchor,[...tx.before,...tx.target]),index={};
-  for(const e of tx.target){const rows=after.filter(x=>x.rec.sid===tx.sid&&x.rec.id===e.id);assert(rows.length===1&&same(rows[0].rec,e),'CALENDAR_VERIFY');index[e.id]=rows[0].ev.identifier;}
-  assert(!after.some(x=>x.rec.sid===tx.sid&&removed.has(x.rec.id)),'CALENDAR_VERIFY');
+  const verified=new Map();
+  for(const row of after){
+    if(row.rec.sid!==tx.sid)continue;
+    assert(!removed.has(row.rec.id)&&!verified.has(row.rec.id),'CALENDAR_VERIFY');
+    verified.set(row.rec.id,row);
+  }
+  for(const e of tx.target){
+    const row=verified.get(e.id);
+    assert(row&&same(row.rec,e),'CALENDAR_VERIFY');
+    index[e.id]=row.ev.identifier;
+  }
   return index;
 }
 
@@ -2163,7 +2190,12 @@ function createProgress(state,store,interactive){
 const LEGACY_CALENDAR_TITLE='\u5357\u8d22\u8bfe\u8868';
 function liveCalendar(c){return c&&c.allowsContentModifications&&!c.isSubscribed;}
 async function visibleCalendars(){
-  let all;try{all=await Calendar.forEvents();}catch(_){fail('CALENDAR_PERMISSION');}
+  const remaining=backgroundDeadline-Date.now();
+  if(remaining<=0)fail('BUDGET');
+  let all;
+  try{
+    all=remaining===Infinity?await Calendar.forEvents():await bounded(Calendar.forEvents(),remaining,'BUDGET');
+  }catch(error){if(error?.code==='BUDGET')throw error;fail('CALENDAR_PERMISSION');}
   assert(Array.isArray(all),'CALENDAR_PERMISSION');return all;
 }
 async function containsManagedEvent(calendar,state){
@@ -2723,8 +2755,8 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
 }
 async function finishTx(state,store,adapter,budget) {
   const tx=state.tx;
-  const live=await adapter.scan(tx.anchor,[...tx.before,...tx.target]);
   if(!tx.backupName){
+    const live=await adapter.scan(tx.anchor,[...tx.before,...tx.target]);
     const name='同步前快照-'+tx.id+'.json';
     writeVerified(store,name,JSON.stringify({version:1,calendarId:adapter.calendar.identifier,before:tx.before,target:tx.target,visible:live.map(x=>({record:x.rec,notes:x.ev.notes||''})),stamp:tx.stamp},null,2));
     tx.backupName=name;state.lastSyncBackupName=name;store.write(state);
@@ -2747,7 +2779,6 @@ async function finishTx(state,store,adapter,budget) {
   state.tx=null;store.write(state);
   await polishTermNotes(adapter.calendar,state,store,tx.sid,budget);
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
-  await refreshReminders(state,store);
 }
 function selectTermIds(info){
   const available=[...new Set(info.semesters.map(s=>s.id))];
@@ -2755,10 +2786,9 @@ function selectTermIds(info){
   return [info.current,...available.filter(sid=>sid!==info.current).sort((a,b)=>a-b)];
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
-  // Intent extensions may have a much shorter watchdog than foreground runs.
-  // Abort at a checkpoint instead of continuing a long all-semester refresh.
-  const begun=Date.now(),limit=interactive?15*60000:24000;
-  const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
+  // Reserve time for releasing the lock and returning the Shortcuts result.
+  const deadline=Math.min(backgroundDeadline,Date.now()+(interactive?15*60000:24000));
+  const budget=()=>{store.check();if(Date.now()>=deadline)fail('BUDGET');};
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
@@ -2769,7 +2799,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   const stage=progress||((message)=>stampStage(state,store,message));
   let identityVerified=!usts;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
-  const http=new HTTP(jar,saveCookies,budget,stage);
+  const http=new HTTP(jar,saveCookies,budget,stage,interactive?Infinity:deadline);
   let info,ustsCurrent,ustsHome;
   if(usts){
     let login;
@@ -2943,9 +2973,8 @@ async function reportBackgroundFailure(code,state,store){
   }
 }
 // Foreground: offer a choice only when a competing task is detected.
-// Background: bounded waiting, then a clean skip; iOS may terminate a waiting
-// shortcut and must never be asked to wait indefinitely.
-async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgroundWait=45000,poll=750}={}){
+// A scheduled run skips a held lock so it can exit within the Intent window.
+async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgroundWait=0,poll=750}={}){
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
@@ -3251,7 +3280,7 @@ async function run() {
     const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
     if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
     let examError=null;
-    try{await syncExams(http,state,store,calendar,progress);}
+    try{await syncExams(http,state,store,calendar,progress,Date.now(),http.before);}
     catch(error){
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
       examError=diagnosticCode(error);
@@ -3261,10 +3290,11 @@ async function run() {
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
     // are best effort and must never turn a successful sync into a failure.
-    try{const widgets=hostAPI('Widget');if(widgets){
-      if(typeof widgets.reloadUserWidgets==='function')widgets.reloadUserWidgets();
-      else if(typeof widgets.reloadAll==='function')widgets.reloadAll();
-    }}catch(_){}
+    try{
+      const widgets=hostAPI('Widget');
+      const reload=typeof widgets?.reloadUserWidgets==='function'?widgets.reloadUserWidgets:widgets?.reloadAll;
+      if(typeof reload==='function')Promise.resolve(reload.call(widgets)).catch(()=>{});
+    }catch(_){}
     progress('完成本次同步');state.runStatus=state.termErrors?.length||examError?'partial':'success';state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
     store.write(state);

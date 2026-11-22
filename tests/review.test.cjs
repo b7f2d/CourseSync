@@ -737,6 +737,58 @@ test('successful background refresh skips notifications even when delivery is un
  a.equal(s.failures,0);a.equal(s.nextAttempt,0);a.equal(deliveryAttempts,0);
  a.match(e.sandbox.output,/刷新成功/);a.equal(e.db.length,1);
 });
+test('a held lock returns a Shortcut result before starting any wait or network work',async()=>{
+ const e=await env();
+ e.store.write(e.state);
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
+ e.sandbox.setTimeout=()=>{a.fail('a busy background run must not wait');};
+ e.sandbox.fetchImpl=()=>{a.fail('a busy background run must not fetch');};
+ await e.m.run();
+ a.equal(e.sandbox.output.type,'text');
+ a.match(e.sandbox.output.value,/前一任务仍在同步/);
+ a.equal(e.notices.length,0);
+ a.doesNotThrow(()=>e.store.check());
+ e.store.release();
+});
+
+test('an unresponsive school request and notification still release the lock and exit the Intent',async()=>{
+ const e=await env();
+ const timers=[];
+ e.sandbox.setTimeout=(callback,ms)=>{
+   timers.push(ms);
+   return setTimeout(callback,1);
+ };
+ e.sandbox.fetchImpl=()=>new Promise(()=>{});
+ e.sandbox.__sdk.Notification.schedule=()=>new Promise(()=>{});
+ e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
+ await executeDaily(e);
+ a.ok(timers.some(ms=>ms>1000&&ms<=20000),'network uses the remaining Intent budget');
+ a.ok(!timers.some(ms=>ms>20000),'no operation receives the old per-request timeout');
+ a.equal(timers.at(-1),1000,'notification delivery has a separate short timeout');
+ a.equal(e.store.read().lastError,'BUDGET');
+ a.equal(e.store.read().resultNoticeError,'NOTIFICATION_FAILED');
+ a.equal(e.sandbox.output.type,'text');
+ a.match(e.sandbox.output.value,/刷新失败/);
+ a.doesNotThrow(()=>e.store.acquire());
+ e.store.release();
+});
+
+test('a rejected widget reload does not interrupt a successful background sync',async()=>{
+ const e=await env();
+ let receiver;
+ const widget={async reloadUserWidgets(){
+   receiver=this;
+   throw Error('WidgetKit unavailable');
+ }};
+ e.sandbox.__sdk.Widget=widget;
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ a.equal(receiver,widget);
+ a.equal(e.store.read().runStatus,'success');
+ a.match(e.sandbox.output,/刷新成功/);
+ a.equal(e.notices.length,0);
+});
+
 test('failure notification errors preserve the original network failure',async()=>{
  const e=await env();e.m.HTTP.prototype.get=async()=>{const error=Error('offline');error.code='NETWORK';throw error;};
  e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('notification denied');};
