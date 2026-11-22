@@ -810,7 +810,10 @@ function examRows(html) {
     .find(m=>attributes(m[1]).id==='exams');
   assert(table,'EXAM_SCHEMA');
   const text=markup=>htmlAttributeValue(markup.replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
-  const examLocation=raw=>raw.replace(/^(?:(?:仙林|福建路|桥头)(?:校区)?|\S+校区)(?:\s+|$)/,'').trim();
+  const examLocation=raw=>{
+    const parts=raw.replace(/^(?:(?:仙林|福建路|桥头)(?:校区)?|\S+校区)(?:\s+|$)/,'').trim().split(/\s+/).filter(Boolean);
+    return parts.filter((part,idx)=>idx===parts.length-1||!parts[idx+1].startsWith(part)).join(' ');
+  };
   const rows=[];
   let empty=false;
   for(const row of table[2].matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr\s*>/gi)){
