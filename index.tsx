@@ -2331,7 +2331,7 @@ async function requestCalendarName(state){
     return validCalendarName(result.title);
   }
   const title=await HostDialog.prompt({
-    title:'新建 iCloud 日历',placeholder:'日历名称',
+    title:'新建 iCloud 日历',placeholder:'日历名称',defaultValue:'CourseSync',
     cancelLabel:'取消',confirmLabel:'创建并绑定'
   });
   if(title==null)fail('CANCELLED');

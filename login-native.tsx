@@ -378,7 +378,7 @@ type CalendarManageResult = { action: 'create'; title: string } | null;
 
 function CalendarManageView(_options: CalendarManageOptions) {
   const dismiss = Navigation.useDismiss();
-  const [newTitle, setNewTitle] = useState('');
+  const [newTitle, setNewTitle] = useState('CourseSync');
   const title = newTitle.trim();
   const validTitle = title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title);
 
