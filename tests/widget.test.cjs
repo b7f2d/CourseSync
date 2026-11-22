@@ -1,4 +1,4 @@
-// Regression tests for the native Scripting three-day timetable data projection.
+// Regression tests for the native Scripting weekly timetable data projection.
 const {test}=require('node:test');
 const a=require('node:assert/strict');
 const fs=require('node:fs');
@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,buildRollingDays,selectVisibleCourses,selectTodayPair,selectTodayColumns,buildWidgetModel,widgetReloadDate})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,selectVisibleCourses,selectTodayCourse,buildWidgetModel,widgetReloadDate})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -27,15 +27,15 @@ test('the shared-file fallback includes exams alongside courses',()=>{
   a.deepEqual(Array.from(model.days[1].courses,event=>event.title),['当天课程','（考试）统计学']);
 });
 
-test('three-day timetable correctly fades only ended classes',()=>{
+test('weekly timetable correctly fades only ended classes',()=>{
   const now=date('2026-11-03T06:10:00Z'); // Tuesday 14:10 Beijing
   const state=make([
     ev('a','已上课程','2026-11-03T02:00:00Z','2026-11-03T04:15:00Z'),
     ev('b','正在上课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
     ev('c','稍后上课','2026-11-03T07:10:00Z','2026-11-03T08:35:00Z')
   ]);
-  const m=core.buildRollingDays(state,now),tue=m.days[1];
-  a.equal(m.days.length,3);
+  const m=core.buildWidgetModel(state,now),tue=m.days[1];
+  a.equal(m.days.length,7);
   a.equal(tue.today,true);
   a.deepEqual(Array.from(tue.courses,c=>c.status),['done','current','upcoming']);
   a.deepEqual(Array.from(tue.courses,c=>c.startLabel),['10:00','13:30','15:10']);
@@ -44,41 +44,41 @@ test('three-day timetable correctly fades only ended classes',()=>{
 
 test('ongoing class remains colored until its actual END, not the next start',()=>{
   const e=ev('x','两节课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z');
-  a.equal(core.buildRollingDays(make([e]),date('2026-11-03T06:54:59Z')).days[1].courses[0].status,'current');
-  a.equal(core.buildRollingDays(make([e]),date('2026-11-03T06:55:00Z')).days[1].courses[0].status,'done');
+  a.equal(core.buildWidgetModel(make([e]),date('2026-11-03T06:54:59Z')).days[1].courses[0].status,'current');
+  a.equal(core.buildWidgetModel(make([e]),date('2026-11-03T06:55:00Z')).days[1].courses[0].status,'done');
 });
 
-test('rolling calendar uses school Beijing time regardless of iPhone timezone',()=>{
+test('week calendar uses school Beijing time regardless of iPhone timezone',()=>{
   const mon=date('2026-11-01T16:30:00Z'); // Monday Nov 2, 00:30 Beijing
-  const m=core.buildRollingDays(make([ev('z','周一课程','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z')]),mon);
-  a.equal(new Date(m.start).toISOString(),'2026-10-31T16:00:00.000Z');
-  a.equal(m.days[1].number,2);
-  a.equal(m.days[1].courses[0].title,'周一课程');
+  const m=core.buildWidgetModel(make([ev('z','周一课程','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z')]),mon);
+  a.equal(new Date(m.start).toISOString(),'2026-11-01T16:00:00.000Z');
+  a.equal(m.days[0].number,2);
+  a.equal(m.days[0].courses[0].title,'周一课程');
 });
 
-test('rolling timetable includes weekend classes',()=>{
-  const m=core.buildRollingDays(make([
+test('weekly timetable includes weekend classes',()=>{
+  const m=core.buildWidgetModel(make([
     ev('s','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
     ev('u','周日课','2026-11-08T05:00:00Z','2026-11-08T06:00:00Z')
   ]),date('2026-11-07T00:00:00Z'));
-  a.equal(m.days.length,3);
-  a.equal(m.days[1].courses[0].title,'周六课');
-  a.equal(m.days[2].courses[0].title,'周日课');
+  a.equal(m.days.length,7);
+  a.equal(m.days[5].courses[0].title,'周六课');
+  a.equal(m.days[6].courses[0].title,'周日课');
 });
 
-test('events outside the three-day window are excluded, and malformed records are ignored',()=>{
-  const m=core.buildRollingDays(make([
+test('events outside the current week are excluded, and malformed records are ignored',()=>{
+  const m=core.buildWidgetModel(make([
     ev('old','上周','2026-10-27T01:00:00Z','2026-10-27T02:00:00Z'),
     ev('next','下周','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z'),
     ev('bad','无效','x','y'),
     ev('ok','本周','2026-11-05T01:00:00Z','2026-11-05T02:00:00Z')
   ]),date('2026-11-04T00:00:00Z'));
   a.equal(m.courses.length,1);
-  a.equal(m.days[2].courses[0].title,'本周');
+  a.equal(m.days[3].courses[0].title,'本周');
 });
 
 test('widget asks for a refresh at the next class boundary without polling every minute',()=>{
-  const m=core.buildRollingDays(make([ev('a','上课','2026-11-03T02:00:00Z','2026-11-03T04:00:00Z')]),
+  const m=core.buildWidgetModel(make([ev('a','上课','2026-11-03T02:00:00Z','2026-11-03T04:00:00Z')]),
     date('2026-11-03T01:00:00Z'));
   a.equal(core.widgetReloadDate(m).getTime(),date('2026-11-03T02:00:01Z'));
 });
@@ -145,7 +145,7 @@ test('private widget Storage mirror works even when FileManager has no App Group
  const result=core.loadBestWidgetState(files,storage);
  a.equal(result.kind,'ready');
  a.equal(result.state.semesters.widget.events[0].title,'今天上课');
- const model=core.buildRollingDays(result.state,date('2026-11-03T06:10:00Z'));
+ const model=core.buildWidgetModel(result.state,date('2026-11-03T06:10:00Z'));
  a.equal(model.days[1].courses[0].status,'current');
 });
 test('missing private mirror explains opening the main project once',()=>{
@@ -168,100 +168,73 @@ test('broken Storage mirror never discloses data and can fall back to verified f
  a.equal(fallback.kind,'ready');
  a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
 });
-test('three-day timetable displays yesterday today tomorrow without day-after courses',()=>{
- const now=date('2026-11-03T06:10:00Z');
- const m=core.buildRollingDays(make([
-  ev('y','昨天','2026-11-02T02:00:00Z','2026-11-02T04:00:00Z'),
-  ev('t','今天','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
-  ev('n','明天','2026-11-04T02:00:00Z','2026-11-04T03:00:00Z'),
-  ev('a','后天不应显示','2026-11-05T02:00:00Z','2026-11-05T03:00:00Z')
- ]),now);
- a.equal(m.days.length,3);
- a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天']);
- a.deepEqual(Array.from(m.days,d=>d.weekday),['周一','周二','周三']);
- a.deepEqual(Array.from(m.days,d=>d.dateLabel),['11/2','11/3','11/4']);
- a.deepEqual(Array.from(m.days,d=>d.courses[0].status),['done','current','upcoming']);
- a.equal(m.days[1].today,true);
- a.equal(m.courses.length,3);
- a.ok(m.courses.every(c=>c.title!=='后天不应显示'));
- a.equal(m.nextAt,date('2026-11-03T06:55:00Z'));
-});
-test('Monday three-day view includes Sunday and Tuesday, not Wednesday',()=>{
- const m=core.buildRollingDays(make([
-  ev('sun','周日课','2026-11-01T05:00:00Z','2026-11-01T06:00:00Z'),
-  ev('mon','周一课','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
-  ev('tue','周二课','2026-11-03T01:00:00Z','2026-11-03T02:00:00Z'),
-  ev('wed','周三课','2026-11-04T01:00:00Z','2026-11-04T02:00:00Z')
- ]),date('2026-11-01T17:00:00Z'));
- a.deepEqual(Array.from(m.days,d=>d.weekday),['周日','周一','周二']);
- a.deepEqual(Array.from(m.days,d=>d.courses[0].title),['周日课','周一课','周二课']);
- a.equal(m.courses.length,3);
-});
-test('Sunday three-day view crosses weeks and excludes Tuesday',()=>{
- const m=core.buildRollingDays(make([
-  ev('sat','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
-  ev('mon','下周一','2026-11-09T01:00:00Z','2026-11-09T02:00:00Z'),
-  ev('tue','下周二不显示','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z')
- ]),date('2026-11-08T10:00:00Z'));
- a.deepEqual(Array.from(m.days,d=>d.weekday),['周六','周日','周一']);
- a.equal(m.days[2].courses[0].title,'下周一');
- a.equal(m.courses.length,2);
-});
-test('three-day view crosses the new year with accurate date labels',()=>{
- const m=core.buildRollingDays(make([
-  ev('new-year','元旦课','2027-01-01T01:00:00Z','2027-01-01T02:00:00Z')
- ]),date('2026-12-31T08:00:00Z'));
- a.deepEqual(Array.from(m.days,d=>d.dateLabel),['12/30','12/31','1/1']);
- a.equal(m.days[2].courses[0].title,'元旦课');
-});
-test('rolling view only greys classes after end time and changes at exact boundary',()=>{
- const course=ev('active','中国税制','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z');
- let m=core.buildRollingDays(make([course]),date('2026-11-02T11:37:00Z'));
- a.equal(m.days[1].courses[0].status,'current');
- a.equal(core.widgetReloadDate(m).getTime(),date('2026-11-02T12:50:01Z'));
- m=core.buildRollingDays(make([course]),date('2026-11-02T12:50:00Z'));
- a.equal(m.days[1].courses[0].status,'done');
+test('the full week stays visible from Monday through Sunday, including empty days',()=>{
+ const state=make([
+   ev('mon','周一课程','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
+   ev('fri','周五课程','2026-11-06T01:00:00Z','2026-11-06T02:00:00Z'),
+   ev('sun','周日课程','2026-11-08T01:00:00Z','2026-11-08T02:00:00Z')
+ ]);
+ const expected=['周一','周二','周三','周四','周五','周六','周日'];
+ for(const [today,at] of [[0,'2026-11-02T05:00:00Z'],[2,'2026-11-04T05:00:00Z'],[6,'2026-11-08T05:00:00Z']]){
+   const model=core.buildWidgetModel(state,date(at));
+   a.deepEqual(Array.from(model.days,d=>d.label),expected);
+   a.deepEqual(Array.from(model.days,d=>d.courses.length),[1,0,0,0,1,0,1]);
+   a.equal(model.today,today);
+   a.deepEqual(Array.from(model.days.filter(d=>d.today),d=>d.label),[expected[today]]);
+ }
+ a.deepEqual(Array.from(core.buildWidgetModel(make([]),date('2026-11-03T00:00:00Z')).days,d=>d.label),expected);
 });
 
-test('widget UI renders only three day headings and keeps full course details',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/buildWidgetModel\(snapshot\.state/);
- a.match(ui,/const days=model\.days\.slice\(0,3\)/);
- a.match(ui,/\{days\.map\(day=>/);
- a.match(ui,/lineLimit=\{tight\?3:smallText\?4:5\}/);
- a.match(ui,/day\.weekday/);
- a.match(ui,/day\.dateLabel/);
- a.match(ui,/course\.location/);
- a.doesNotMatch(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)/);
- a.doesNotMatch(ui,/WeeklyPanel/);
+test('Sunday midnight in Beijing rolls over to the next week and excludes the previous Sunday',()=>{
+ const state=make([
+   ev('sun','周日课程','2026-11-08T01:00:00Z','2026-11-08T02:00:00Z'),
+   ev('mon','周一课程','2026-11-08T16:00:00Z','2026-11-08T17:00:00Z')
+ ]);
+ const sunday=core.buildWidgetModel(state,date('2026-11-08T15:59:59Z'));
+ a.deepEqual(Array.from(sunday.courses,c=>c.title),['周日课程']);
+ a.equal(sunday.nextAt,date('2026-11-08T16:00:00Z'));
+ const monday=core.buildWidgetModel(state,date('2026-11-08T16:00:00Z'));
+ a.deepEqual(Array.from(monday.courses,c=>c.title),['周一课程']);
+ a.equal(monday.days[0].dateLabel,'11/9');
+ a.equal(monday.days[0].courses[0].status,'current');
 });
-test('course overflow stays chronological and reports remaining count',()=>{
+
+test('a school week crosses the new year with accurate date labels',()=>{
+ const model=core.buildWidgetModel(make([
+   ev('old','周四课','2026-12-31T01:00:00Z','2026-12-31T02:00:00Z'),
+   ev('new','周六课','2027-01-02T01:00:00Z','2027-01-02T02:00:00Z')
+ ]),date('2027-01-01T00:00:00Z'));
+ a.deepEqual(Array.from(model.days,d=>d.dateLabel),['12/28','12/29','12/30','12/31','1/1','1/2','1/3']);
+ a.equal(model.days[3].courses[0].title,'周四课');
+ a.equal(model.days[5].courses[0].title,'周六课');
+});
+test('overflow keeps courses chronological and shows today’s active course',()=>{
  const courses=['早课','第二节','第三节','第四节'].map((title,i)=>({
    title,status:i<2?'done':i===2?'current':'upcoming'
  }));
- for(const index of [0,1,2,3]){
-   const day={index,today:index===1,courses};
-   const one=core.selectVisibleCourses(day,1);
-   a.equal(one.courses[0].title,'早课');
-   a.equal(one.hiddenAfter,3);
-   const two=core.selectVisibleCourses(day,2);
-   a.deepEqual(Array.from(two.courses,c=>c.title),['早课','第二节']);
-   a.equal(two.hiddenAfter,2);
-   const all=core.selectVisibleCourses(day,5);
-   a.equal(all.courses.length,4);a.equal(all.hiddenAfter,0);
- }
- a.equal(core.selectVisibleCourses({courses:[]},1).hiddenAfter,0);
+ const today={today:true,courses};
+ const otherDay={today:false,courses};
+ const titles=result=>Array.from(result.courses,course=>course.title);
+ a.deepEqual(titles(core.selectVisibleCourses(otherDay,2)),['早课','第二节']);
+ a.deepEqual(titles(core.selectVisibleCourses(today,1)),['第三节']);
+ const two=core.selectVisibleCourses(today,2);
+ a.deepEqual(titles(two),['第二节','第三节']);
+ a.equal(two.hidden,2);
+ const all=core.selectVisibleCourses(today,5);
+ a.equal(all.courses.length,4);
+ a.equal(all.hidden,0);
+ a.equal(core.selectVisibleCourses({courses:[]},1).hidden,0);
 });
 test('widget has an adaptive canvas and simple plus-N remaining classes',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
- a.match(ui,/\+\{window\.hiddenAfter\} 项/);
+ a.match(ui,/\+\{hidden\} 项/);
  a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
 });
 test('teacher names appear from new mirror or older semester cache',()=>{
  const base=make([ev('a','新课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
  base.semesters['161'].events[0].teachers=['张老师','李老师'];
- let m=core.buildRollingDays(base,date('2026-11-03T06:10:00Z'));
+ let m=core.buildWidgetModel(base,date('2026-11-03T06:10:00Z'));
  a.equal(m.days[1].courses[0].teacher,'张老师、李老师');
  const cached={version:1,lastCheck:'2026-11-03T06:00:00Z',events:[{
    id:'t',title:'统计学',location:'A101',teacher:'高老师',
@@ -269,7 +242,7 @@ test('teacher names appear from new mirror or older semester cache',()=>{
  }]};
  const read=core.loadBestWidgetState({appGroupDocumentsDirectory:undefined},{get:()=>cached});
  a.equal(read.kind,'ready');
- m=core.buildRollingDays(read.state,date('2026-11-03T06:10:00Z'));
+ m=core.buildWidgetModel(read.state,date('2026-11-03T06:10:00Z'));
  a.equal(m.days[1].courses[0].teacher,'高老师');
  const legacy={...cached,events:[Object.fromEntries(Object.entries(cached.events[0]).filter(([k])=>k!=='teacher'))]};
  a.equal(core.readWidgetMirror({get:()=>legacy}).kind,'ready');
@@ -295,110 +268,36 @@ test('production widget maps actual synced courses without invented timetable',(
     ev('wed1','周三原课程','2026-11-04T00:30:00Z','2026-11-04T02:05:00Z')
   ]);
   const model=core.buildWidgetModel(state,now);
-  a.deepEqual(Array.from(model.days,d=>d.label),['昨天','今天','明天']);
-  a.deepEqual(Array.from(model.days,d=>d.courses.length),[1,4,1]);
+  a.deepEqual(Array.from(model.days,d=>d.label),['周一','周二','周三','周四','周五','周六','周日']);
+  a.deepEqual(Array.from(model.days,d=>d.courses.length),[1,4,1,0,0,0,0]);
   a.equal(model.days[0].courses[0].title,'周一原课程');
   a.equal(model.days[2].courses[0].title,'周三原课程');
   a.deepEqual(Array.from(model.days[1].courses,c=>c.status),
     ['done','current','upcoming','upcoming']);
   a.equal(model.at,now);
   a.equal(model.previewTerm,undefined);
-  const large=core.selectTodayColumns(model.days[1],3);
-  a.equal(large.focus.title,'第二节真实课程');
-  a.deepEqual(Array.from(large.future,c=>c.title),
-    ['第三节真实课程','第四节真实课程']);
-  a.equal(large.hiddenAfter,0);
-  const medium=core.selectTodayColumns(model.days[1],1);
-  a.deepEqual(Array.from(medium.future,c=>c.title),['第三节真实课程']);
-  a.equal(medium.hiddenAfter,1);
+  const focus=core.selectTodayCourse(model.days[1]);
+  a.equal(focus.course.title,'第二节真实课程');
+  a.equal(focus.remaining,2);
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.ok(ui.includes('buildWidgetModel(snapshot.state,Date.now())'));
   a.ok(!ui.includes('SHOW_SAMPLE_COURSES'));
   a.ok(!ui.includes('buildSamplePreview'));
 });
 
-test('today columns handle first lesson, a gap, last lesson and all finished',()=>{
-  const titles=['第一节','第二节','第三节','第四节'];
-  const courses=titles.map((title,i)=>({title,status:i===0?'current':'upcoming'}));
-  let result=core.selectTodayColumns({courses},3);
-  a.equal(result.focus.title,'第一节');
-  a.deepEqual(Array.from(result.future,c=>c.title),titles.slice(1));
-  courses[0].status='done';courses[1].status='done';
-  result=core.selectTodayColumns({courses},3);
-  a.equal(result.focus.title,'第三节');
-  a.deepEqual(Array.from(result.future,c=>c.title),['第四节']);
-  courses[2].status='done';courses[3].status='current';
-  result=core.selectTodayColumns({courses},3);
-  a.equal(result.focus.title,'第四节');
-  a.equal(result.future.length,0);
-  courses[3].status='done';
-  result=core.selectTodayColumns({courses},3);
-  a.equal(result.focus.title,'第四节');
-  a.equal(result.future.length,0);
-  a.equal(core.selectTodayColumns({courses:[]},3).focus,null);
-});
-
-test('large today layout has one focus card on the left, future stack on the right',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  a.ok(ui.includes('maxFuture={maxRows} tight={tight}'));
-  a.ok(ui.includes('selectTodayColumns(day,maxFuture)'));
-  a.ok(ui.includes('course={columns.focus}'));
-  a.ok(ui.includes('columns.future.map(c=>'));
-  a.ok(ui.includes('course={c}'));
-  a.ok(ui.includes('columns.hiddenAfter>0'));
-  a.ok(!ui.includes('course={visible[0]}'));
-  a.ok(!ui.includes('course={visible[2]}'));
-});
-
-test('single visible today lesson gets larger title and wider today column',()=>{
- const sample=core.selectTodayPair({today:true,courses:[{title:'只上一节',status:'current'}]});
- a.equal(sample.courses.length,1);
- a.equal(sample.hiddenAfter,0);
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/expanded=todayFocus\.courses\.length>1/);
- a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
- a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
- a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
- a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
- a.match(ui,/density=\{emphasize\?'single':'side'\}/);
- a.match(ui,/largeText\?\(compact\?15:17\)/);
-});
-test('only two visible today cards activate smaller pair typography',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
- a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
- a.match(ui,/density="pair"/);
- a.match(ui,/const titleSize=smallText\?\(compact\?10:11\):/);
- a.match(ui,/const detailSize=smallText\?\(compact\?9:10\):/);
- const courses=['早课','午课','晚课'].map((title,i)=>({title,status:i===2?'current':'done'}));
- const focus=core.selectTodayPair({courses});
- a.deepEqual(Array.from(focus.courses,x=>x.title),['晚课']);
- a.equal(focus.courses.length>1,false);
- courses[2].status='done';
- a.deepEqual(Array.from(core.selectTodayPair({courses}).courses,x=>x.title),['晚课']);
-});
-test('when current class is last, today shows only that current class',()=>{
- const c=['上完','正在上'].map((title,i)=>({title,status:i?'current':'done'}));
- const pick=core.selectTodayPair({today:true,courses:c});
- a.deepEqual(Array.from(pick.courses,x=>x.title),['正在上']);
- a.equal(pick.hiddenAfter,0);
-});
-test('today pair advances after each class ends and keeps upcoming classes ordered',()=>{
- const classes=['第一节','第二节','第三节'].map(title=>({title,status:'upcoming'}));
- const pick=()=>Array.from(core.selectTodayPair({courses:classes}).courses,c=>c.title);
- a.deepEqual(pick(),['第一节','第二节']);
- classes[0].status='current';
- a.deepEqual(pick(),['第一节','第二节']);
- classes[0].status='done';
- a.deepEqual(pick(),['第二节','第三节']);
- classes[1].status='current';
- a.deepEqual(pick(),['第二节','第三节']);
- classes[1].status='done';
- a.deepEqual(pick(),['第三节']);
- classes[2].status='current';
- a.deepEqual(pick(),['第三节']);
- classes[2].status='done';
- a.deepEqual(pick(),['第三节']);
+test('the small widget follows the current, next and last appointment',()=>{
+ const courses=[{title:'第一节',status:'current'},{title:'第二节',status:'upcoming'}];
+ const select=()=>core.selectTodayCourse({courses});
+ a.equal(select().course.title,'第一节');
+ a.equal(select().remaining,1);
+ courses[0].status='done';
+ a.equal(select().course.title,'第二节');
+ courses[1].status='current';
+ a.equal(select().remaining,0);
+ courses[1].status='done';
+ a.equal(select().course.title,'第二节');
+ a.equal(core.selectTodayCourse({courses:[]}).course,undefined);
+ a.equal(core.selectTodayCourse({courses:[]}).remaining,0);
 });
 test('production widget always ignores old preview payloads',()=>{
   const now=date('2026-11-03T06:10:00Z');
@@ -428,128 +327,26 @@ test('private mirror reads real events and ignores legacy preview fields',()=>{
   a.equal(Object.hasOwn(result.state,'preview'),false);
 });
 
-test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
-  a.match(ui,/font=\{compact\?16:18\}/);
-  a.match(ui,/day\.label/);
-  a.match(ui,/day\.weekday/);
-  a.match(ui,/day\.dateLabel/);
-  a.match(ui,/\+\{window\.hiddenAfter\} 项/);
-  a.match(ui,/const bg=done\?COLORS\.doneBg:active\?COLORS\.activeBg:COLORS\.nextBg/);
-  a.match(ui,/foregroundStyle=\{fg\}/);
-});
-test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  a.match(ui,/function TodayPairColumn/);
-  a.ok(ui.includes('selectTodayColumns(day,maxFuture)'));
-  a.ok(ui.includes('columns.future.map(c=>'));
-  a.match(ui,/\+\{columns\.hiddenAfter\} 项/);
-  a.match(ui,/day\.today&&expanded/);
-  a.doesNotMatch(ui,/>测试<\/Text>/);
-  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
-});
-test('card paints color after fixed-width frame so backgrounds center like headers',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- const start=ui.indexOf('const cardStyle=modifiers()');
- const end=ui.indexOf('return <VStack key={course.id}',start);
- a.ok(start>0&&end>start);
- const pipeline=ui.slice(start,end);
- a.ok(pipeline.indexOf('.padding(')<pipeline.indexOf('.frame('));
- a.ok(pipeline.indexOf('.frame(')<pipeline.indexOf('.background('));
- a.match(ui,/modifiers=\{cardStyle\}/);
- a.match(ui,/HStack key=\{c\.id\}/);
-});
-test('course card retains comfortable internal padding independent of widget outer inset',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/\.padding\(cardPadding\)/);
- a.match(ui,/safeInset=medium\?9:12/);
-});
-test('all widget families use the adaptive opaque canvas',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- const literal="widgetBackground={COLORS.canvas}";
- a.equal(ui.split(literal).length-1,3);
- a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
-});
-test('all three day sections center visible cards; expanded today remains symmetric',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal',tight=false\}\)/);
- a.match(ui,/width=\{width-8\}/);
- a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
- a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
- a.match(ui,/width=\{cardWidth\}/);
- a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
- a.match(ui,/const todayWidth=usableWidth-sideWidth\*2/);
- a.match(ui,/width=\{day\.today\?todayWidth:sideWidth\}/);
- a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
- a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
-});
-test('readable three-day widget uses larger but density-aware typography',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- const title=ui.match(/const titleSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
- const detail=ui.match(/const detailSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
- a.ok(title&&detail,'all course text variants must have explicit sizes');
- const t=title.slice(1).map(Number),d=detail.slice(1).map(Number);
- // Pair < normal < single for medium and large cards.
- for(let i=0;i<2;i++){
-   a.ok(t[i]>=10);
-   a.ok(t[i]<t[i+4]&&t[i+4]<t[i+2]);
-   a.ok(d[i]>=9);
-   a.ok(d[i]<d[i+4]&&d[i+4]<d[i+2]);
- }
- a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,1);
- a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{COLORS\.faint\}/);
- a.match(ui,/font=\{12\} foregroundStyle=\{COLORS\.muted\}>无安排/);
- a.match(ui,/<Text font=\{tight\?15:17\} fontWeight="semibold" lineLimit=\{2\}/);
- a.match(ui,/const fg=done\?COLORS\.finished:active\?COLORS\.white:COLORS\.dark/);
-});
-test('README documents the three-day UI without screenshots',()=>{
- const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
- a.match(readme,/## 项目介绍/);
- a.match(readme,/## 用户指南/);
- a.match(readme,/昨天、今天、明天/);
- a.match(readme,/今天一节可见课程/);
- a.match(readme,/今天有多节课程/);
- a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
- a.equal(readme.includes('docs/images/'),false);
- a.equal(readme.includes('<img'),false);
- a.equal(readme.includes('!['),false);
- a.match(readme,/github\.com\/b7f2d\/CourseSync\/tree\/main/);
- a.match(readme,/退出登录/);
- a.match(readme,/不需要重新导入项目|不需要重新创建/);
-});
-test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
-test('narrow yesterday and tomorrow cards preserve full course names',()=>{
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  const start=ui.indexOf('function formatSideTitle(title,maxChars=4){');
-  const end=ui.indexOf('\n}\n',start);
-  a.ok(start>=0&&end>start,'side title formatter should exist');
-  const wrap=vm.runInNewContext(ui.slice(start,end+2)+'\nformatSideTitle',
-    {Array,String,Math});
-  a.equal(wrap('微观经济学'),'微观经\n济学');
-  a.equal(wrap('管理学原理'),'管理学\n原理');
-  a.equal(wrap('证券投资学'),'证券投\n资学');
-  a.equal(wrap('Financial Markets'),'Financial Markets');
-  a.ok(ui.includes('isSide?formatSideTitle(course.title,sideTitleWidth):course.title'));
-  a.ok(ui.includes("course.startLabel+'–'+course.endLabel"));
-  a.ok(ui.includes('lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}'));
-  a.ok(!ui.includes("course.startLabel+'\\n'+course.endLabel"),
-    'side card time range should not be forced into two lines');
-  a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
-  a.ok(!ui.includes('course.teacher&&!isSide'));
-  a.doesNotMatch(ui,/\{course\.teacher\}/);
+test('medium and large widgets draw the same seven days with status colors and chronological overflow',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const panel=ui.slice(ui.indexOf('function WeeklyPanel('),ui.indexOf('function SmallPanel('));
+ a.match(panel,/model\.days\.map\(day=><DayColumn/);
+ a.match(ui,/day\.label/);
+ a.match(ui,/day\.dateLabel/);
+ a.match(ui,/\+\{hidden\} 项/);
+ a.match(ui,/current\?COLORS.white:COLORS.dark/);
+ a.match(ui,/\.padding\(compact\?3:4\)[\s\S]*?\.frame\(\{width,height,alignment:'topLeading'\}\)[\s\S]*?\.background/);
+ a.match(ui, /!compact&&course\.location/);
+ a.match(ui,/exam\?'考 ':'/);
+ a.doesNotMatch(ui,/近日课表|自动更新|昨天|明天/);
 });
 
-test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/safeInset=medium\?9:12/);
- a.match(ui,/padding=\{safeInset\}/);
- a.match(ui,/width-2\*safeInset/);
- a.match(ui,/doneBg:\{light:'#E5E7EB',dark:'#343D4C'\}/);
- a.match(ui,/nextBg:\{light:'#EBF4FF',dark:'#243449'\}/);
- a.match(ui,/activeBg:\{light:'#185FC2',dark:'#215DB5'\}/);
- a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
- a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
+test('README documents weekday coverage in every home-screen size',()=>{
+ const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
+ a.match(readme,/中尺寸.*周一到周日/);
+ a.match(readme,/大尺寸.*七列周课表/);
+ a.match(readme,/小尺寸.*周一到周日/);
+ a.doesNotMatch(readme,/昨天、今天、明天|三日布局|!\[/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});
@@ -567,9 +364,11 @@ test('systemSmall uses measured width and height without wasting space on spacer
  a.match(section,/cardWidth=Math\.max\(0,width-2\*inset\)/);
  a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
  a.doesNotMatch(section,/<Spacer/);
- a.match(section,/lineLimit=\{2\}/);
- a.match(section,/\+\{remaining\} 项/);
+ a.match(section,/lineLimit=\{accessory\?1:2\}/);
+ a.match(section,/今天还有 \{remaining\} 项/);
  a.match(section,/chosen\.location\?/);
+ a.match(section,/model\.days\.map\(day=><VStack/);
+ a.match(section,/day\.courses\.length/);
  a.doesNotMatch(section,/chosen\.teacher/);
 });
 test('all course text and card surfaces adapt to dark mode',()=>{
@@ -588,7 +387,7 @@ test('dark mode has a pure black canvas with full-bleed root background for all 
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.equal((ui.match(/background=\{\{style:COLORS\.canvas\}\}/g)||[]).length,3);
  for(const [start,end] of [
-  ['function RollingPanel(', 'function SmallPanel('],
+  ['function WeeklyPanel(', 'function SmallPanel('],
   ['function SmallPanel(', 'function EmptyPanel('],
   ['function EmptyPanel(', 'const snapshot=']
  ]){
@@ -606,30 +405,23 @@ test('all widget sizes hide teacher names without stripping teacher data from th
  a.match(ui,/course\.location/);
  a.match(ui,/course\.startLabel/);
  const model=core.buildWidgetModel(make([ev('a','课程','2026-11-04T00:20:00Z','2026-11-04T03:25:00Z')]),date('2026-11-04T01:00:00Z'));
- a.equal(model.days[1].courses[0].title,'课程');
+ a.equal(model.days[2].courses[0].title,'课程');
 });
 
-test('three-day columns share space and adapt capacity to actual widget height',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- const layout=vm.runInNewContext(ui.slice(ui.indexOf('function rollingLayout('),ui.indexOf('function RollingPanel('))+'\nrollingLayout');
- for(const width of [275,320,540,600]){
-   for(const medium of [false,true]){
-     for(const count of [0,1,2]){
-       const {safeInset,gap,sideWidth,todayWidth}=layout(width,300,medium,count);
-       a.equal(sideWidth*2+todayWidth+2*gap+2*safeInset,width);
-       if(count===0)a.ok(Math.abs(todayWidth-sideWidth)<=2);
-       else a.ok(todayWidth>sideWidth);
-     }
-   }
+test('seven equal-width columns fit measured widgets and reserve room for overflow',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const layout=vm.runInNewContext(ui.slice(ui.indexOf('function weeklyLayout('),ui.indexOf('function WeeklyPanel('))+'\nweeklyLayout');
+ for(const [width,height,compact] of [[275,140,true],[320,155,true],[330,330,false],[360,375,false],[540,370,false],[540,650,false]]){
+   const result=layout(width,height,compact);
+   const usedWidth=result.columnWidth*7+result.gap*6+result.inset*2;
+   a.ok(usedWidth<=width&&width-usedWidth<7);
+   const usedHeight=result.inset*2+28+12+result.gap+result.maxRows*(result.cardHeight+result.gap);
+   a.ok(usedHeight<=height);
  }
- a.equal(layout(275,145,true,2).maxRows,1);
- a.equal(layout(275,145,true,2).tight,true);
- a.equal(layout(330,300,false,2).maxRows,2);
- a.equal(layout(330,350,false,2).maxRows,3);
- a.match(ui,/lineLimit=\{tight\?1:isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
- a.match(ui,/lineLimit=\{tight\?3:smallText\?4:5\}[\s\S]{0,160}fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ a.ok(layout(330,330,false).maxRows>layout(320,155,true).maxRows);
+ a.equal(layout(330,330,false).stackTimes,true);
+ a.equal(layout(540,370,false).stackTimes,false);
 });
-
 test('active and finished card text is legible in both appearances',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  const start=ui.indexOf('const COLORS='),end=ui.indexOf('\n};',start);
