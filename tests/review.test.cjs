@@ -734,13 +734,14 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  const exam='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
  const oldNote='同步：2025-01-01 08:00';
  e.state.anchors['159']='2026-03-02';
+ e.state.anchors['160']='2025-09-01';
  e.m.HTTP.prototype.get=async url=>{
    if(url===exam){
      queried.push('exams');
      return {url,text:'<table id="exams"><tr data-finished="true"><td><div class="time">2026-07-02 08:00~10:00</div></td><td><div>统计学</div><div>期末</div></td><td>已结束</td></tr></table>'};
    }
    a.equal(url,table);
-   return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="159">2025-2026-2</option></select>'};
+   return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="159">2025-2026-2</option><option value="160">2025-2026-1</option></select>'};
  };
  e.m.HTTP.prototype.json=async url=>{
    const sid=new URL(url).searchParams.get('semesterId');
@@ -749,11 +750,11 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  };
  await executeDaily(e);
  a.equal(e.store.read().runStatus,'success');
- a.equal(e.db.length,3);
+ a.equal(e.db.length,4);
  for(const event of e.db)event.notes=oldNote;
  queried.length=0;e.requests.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','exams','159']);
+ a.deepEqual(queried,['161','exams','159','160']);
  a.deepEqual(e.requests,[]);
  a.ok(e.db.every(event=>event.notes===oldNote));
  a.match(e.sandbox.output,/刷新成功/);
@@ -763,20 +764,33 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  e.db.splice(missing,1);
  await e.m.run();
  a.equal(e.store.read().runStatus,'success');
- a.equal(e.db.length,3);
- a.equal(e.db.filter(event=>event.notes===oldNote).length,2);
+ a.equal(e.db.length,4);
+ a.equal(e.db.filter(event=>event.notes===oldNote).length,3);
 
  const readTerm=e.m.HTTP.prototype.json;
  e.m.HTTP.prototype.json=async url=>{
-   if(new URL(url).searchParams.get('semesterId')==='159')throw Object.assign(new Error('budget'),{code:'BUDGET'});
+   if(new URL(url).searchParams.get('semesterId')==='160')throw Object.assign(new Error('budget'),{code:'BUDGET'});
    return readTerm(url);
  };
  await e.m.run();
  const partial=e.store.read();
  a.equal(partial.runStatus,'partial');
  a.equal(partial.lastExamError,null);
- a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['159','BUDGET']]);
+ a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['160','BUDGET']]);
+ a.deepEqual(Array.from(partial.historySyncCheckpoint.completed),[159]);
  a.equal(partial.exams.length,1);
+ a.match(e.notices.at(-1).body,/2025-2026-1（BUDGET）.*下次触发/);
+
+ e.m.HTTP.prototype.json=readTerm;
+ queried.length=0;
+ await e.m.run();
+ a.deepEqual(queried,['161','exams','160']);
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.store.read().historySyncCheckpoint,undefined);
+
+ queried.length=0;
+ await e.m.run();
+ a.deepEqual(queried,['161','exams','159','160']);
 });
 test('an unreadable exam response reports the reason and stops after one exam request',async()=>{
  const e=await env();

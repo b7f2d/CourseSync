@@ -2851,14 +2851,24 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   // Only a verified school session ends the signed-out state.
   if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   state.availableSemesters=info.semesters;store.write(state);
-  let sids=selectTermIds(info);
+  const allTermIds=selectTermIds(info);
+  const historyScope=JSON.stringify([calendar.identifier,...allTermIds]);
+  const previous=state.historySyncCheckpoint;
+  const resuming=!!syncPriorityExams&&previous?.scope===historyScope&&Array.isArray(previous.completed);
+  const completed=new Set(resuming?previous.completed.filter(sid=>sid!==info.current):[]);
+  const pendingSid=Number(interrupted?.sid);
+  let sids=allTermIds.filter(sid=>!completed.has(sid)||sid===pendingSid);
   if(interrupted){
     const sid=Number(interrupted.sid);
     assert(info.semesters.some(t=>t.id===sid),'TX_TERM_UNAVAILABLE');
     // Recover the pending write before opening another calendar transaction.
     if(sid!==info.current)sids=[sid,...sids.filter(id=>id!==sid)];
   }
-  const importsNewTerm=sids.some(sid=>!state.semesters[sid]?.lastSuccess);
+  const importsNewTerm=(resuming&&previous.importsNewTerm)||sids.some(sid=>!state.semesters[sid]?.lastSuccess);
+  const saveHistoryCheckpoint=()=>{
+    state.historySyncCheckpoint={scope:historyScope,completed:[...completed].filter(sid=>sid!==info.current),importsNewTerm};
+    store.write(state);
+  };
   const examPosition=sids.indexOf(info.current)+1;
   state.termErrors=[];
   for(const [position,sid] of sids.entries()) {
@@ -2872,6 +2882,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
       const term=sid===info.current?ustsCurrent:await ustsCourseData(http,sid);
       assert(term.person===info.person,'ACCOUNT_CHANGED');
       if(sid!==info.current&&!term.data.kbList.length&&!state.semesters[sid]&&interrupted?.sid!==String(sid)){
+        completed.add(sid);
         continue;
       }
       const dates=ustsCalendar(ustsHome,sid);
@@ -2896,6 +2907,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
       const index=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
       if(index){
         state.semesters[sid]={...old,events:p.events,index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
+        completed.add(sid);
         continue;
       }
     }
@@ -2905,8 +2917,11 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     state.tx={id:uuid(),sid:String(sid),anchor,name,hadBaseline:!!state.semesters[sid],deletionsConfirmed:approved,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length,examples:[...p.changed.map(e=>e.title+' 已调整'),...p.added.map(e=>e.title+' 新增')].slice(0,3)}};
     store.write(state);await finishTx(state,store,adapter,budget,interactive);
     if(state.notice){state.notice=null;store.write(state);}
+    completed.add(sid);
     } catch(e) {
-      if(syncPriorityExams&&position>=examPosition&&e.code==='BUDGET'&&!state.tx){
+      if(syncPriorityExams&&position>=examPosition&&e.code==='BUDGET'){
+        saveHistoryCheckpoint();
+        if(state.tx)throw e;
         for(const deferred of sids.slice(position))state.termErrors.push({sid:String(deferred),code:e.code});
         break;
       }
@@ -2922,8 +2937,13 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   if(!usts&&REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length&&
      (!state.lastCheck||importsNewTerm||legacyCleanupPending)){
     stage('全部学期核验完成后清理专用日历旧内容');
-    await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
+    try{await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});}
+    catch(error){
+      if(syncPriorityExams&&error?.code==='BUDGET')saveHistoryCheckpoint();
+      throw error;
+    }
   }
+  if(!state.termErrors.some(term=>term.code==='BUDGET'))delete state.historySyncCheckpoint;
   state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
   await refreshReminders(state,store);
   return http;
@@ -2963,6 +2983,7 @@ async function signOut(state,store){
   // Persist a fail-closed marker before touching the Keychain, so scheduled
   // refreshes cannot silently sign back in even if deletion partially fails.
   state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
+  delete state.historySyncCheckpoint;
   state.failures=0;state.lastError=null;
   state.runStatus='signed_out';state.credentialCloudStatus=null;
   store.write(state);
@@ -2987,13 +3008,24 @@ async function signOut(state,store){
 async function refreshFailure(code,state){
   const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新失败';
   n.body=code==='PARTIAL_SYNC'
-    ?[state?.termErrors?.length?'部分学期未完成。':'',state?.lastExamError?examFailureText(state.lastExamError):''].filter(Boolean).join('\n')||'部分同步未完成。'
+    ?partialSyncDetails(state)||'部分同步未完成。'
     :('原因：'+reasonFor(code||'LOCAL_ERROR'));
   if(code==='BUDGET'&&state?.lastStage)n.body+='\n最后阶段：'+state.lastStage;
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 function examFailureText(code){
   return '考试日程未更新完成（'+code+'）。'+reasonFor(code);
+}
+function partialSyncDetails(state){
+  const errors=state?.termErrors||[];
+  const lines=errors.slice(0,2).map(({sid,code})=>{
+    const term=state.availableSemesters?.find(item=>String(item.id)===sid);
+    const reason=code==='BUDGET'?'后台时间不足，下次触发时继续。':reasonFor(code);
+    return (term?.name||'学期 '+sid)+'（'+code+'）：'+reason;
+  });
+  if(errors.length>2)lines.push('另有 '+(errors.length-2)+' 个学期未完成。');
+  if(state?.lastExamError)lines.push(examFailureText(state.lastExamError));
+  return lines.join('\n');
 }
 // Notification delivery is separate from the verified calendar result.
 async function reportRefreshFailure(code,state,store){
@@ -3358,7 +3390,7 @@ async function run() {
     }
     if(examError&&interactive)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
     if(!interactive&&state.runStatus==='partial')await reportRefreshFailure('PARTIAL_SYNC',state,store);
-    if(config.runsWithSiri)Script.setShortcutOutput(examError?'部分完成：'+examFailureText(examError):state.termErrors?.length?'部分完成：部分学期未同步（'+state.termErrors[0].code+'）。':'刷新成功：CourseSync已更新并核验。');
+    if(config.runsWithSiri)Script.setShortcutOutput(state.runStatus==='partial'?'部分完成：'+partialSyncDetails(state):'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(code==='SYNC_SUPERSEDED'){
