@@ -2220,7 +2220,7 @@ function stampStage(state,store,stage,persist=true){
 }
 function createProgress(state,store,interactive,activityLoader){
   let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
-  let activityStart=null;
+  let activityStart=null,initialTitle=null;
   const stage=message=>{
     stampStage(state,store,message,interactive);
     if(closed||!started||!interactive)return;
@@ -2241,6 +2241,7 @@ function createProgress(state,store,interactive,activityLoader){
       ui?.resume();
     }
   };
+  stage.setTitle=title=>{initialTitle=title;ui?.setTitle?.(title);};
   stage.pause=()=>ui?.pause();
   stage.resume=()=>{waitingForVerification=false;ui?.resume();};
   stage.start=async()=>{
@@ -2252,7 +2253,7 @@ function createProgress(state,store,interactive,activityLoader){
     }
     try{
       if(typeof hostAPI('Navigation')?.present==='function'){
-        ui=createNativeProgressView();
+        ui=initialTitle?createNativeProgressView(initialTitle):createNativeProgressView();
         ui.show();
         await new Promise(resolve=>Timer.schedule(100,false,resolve));
       }
@@ -3364,18 +3365,20 @@ async function runAttempt() {
       progress('检查目标日历');
       calendar=await pickCalendar(state,store);
     }
-    if(!interactive)await progress.start();
+    if(interactive)progress.setTitle('正在登录账号');
+    await progress.start();
     progress('连接教务系统');
     const http=await synchronize(state,store,interactive?async()=>{
       if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
       progress('检查目标日历');
       try{
-        calendar=await pickCalendar(state,store);
+        calendar=await pickCalendar(state,store,progress.pause);
       }catch(error){
         calendarCancelled=error?.code==='CANCELLED';
         throw error;
       }
-      await progress.start();
+      progress.setTitle('正在同步课程和考试');
+      progress.resume();
       return calendar;
     }:calendar,interactive,progress,manualAuth);
     try{

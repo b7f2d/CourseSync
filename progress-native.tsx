@@ -11,6 +11,8 @@ type ProgressSession={
   shown:boolean;
   revision:number;
   progress:number;
+  title:string;
+  setTitle:((v:string) => void)|null;
   setProgress:((v:number) => void)|null;
   dismiss:(() => void)|null;
 };
@@ -43,9 +45,11 @@ export function NativeProgressContent({title,value}:{title:string;value:number})
   </GeometryReader>;
 }
 
-function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
+function ProgressScreen({session}:{session:ProgressSession}) {
   const dismiss=Navigation.useDismiss();
   const [value,setValue]=useState(session.progress);
+  const [title,setTitle]=useState(session.title);
+  session.setTitle=setTitle;
   session.setProgress=setValue;
   // The script's synchronization still owns the task. Closing this view
   // hides status only; it never cancels a calendar transaction.
@@ -65,12 +69,13 @@ export function createNativeProgressView(title='正在同步课程和考试'){
   let presented:Promise<unknown>=Promise.resolve();
   const session:ProgressSession={
     closed:false,hidden:false,suppressed:false,shown:false,
-    revision:0,progress:0.08,setProgress:null,dismiss:null,
+    revision:0,progress:0.08,title,setTitle:null,setProgress:null,dismiss:null,
   };
   const closeVisible=()=>{
     const dismiss=session.dismiss;
     session.dismiss=null;
     session.setProgress=null;
+    session.setTitle=null;
     if(dismiss)try{dismiss();}catch(_){}
   };
   return {
@@ -81,13 +86,17 @@ export function createNativeProgressView(title='正在同步课程和考试'){
       session.progress=clamped;
       if(session.setProgress)try{session.setProgress(clamped);}catch(_){}
     },
+    setTitle(value:string){
+      session.title=value;
+      if(session.setTitle)session.setTitle(value);
+    },
     show(){
       if(session.closed||session.hidden||session.suppressed||session.shown)return;
       const revision=++session.revision;
       session.shown=true;
       try {
         presented=Promise.resolve(Navigation.present({
-          element:<ProgressScreen session={session} title={title}/>,
+          element:<ProgressScreen session={session}/>,
           modalPresentationStyle:'pageSheet',
         })).then(()=>{
           if(session.revision!==revision)return;
