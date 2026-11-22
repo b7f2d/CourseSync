@@ -26,7 +26,7 @@ export const CourseRefreshActivity = LiveActivity?.register?.<State>('CourseSync
   <LiveActivityUI
     content={<Status {...state} />}
     compactLeading={<CalendarIcon {...state} />}
-    compactTrailing={<Text font="caption2">{state.phase === 'exams' ? '考试' : '课表'}</Text>}
+    compactTrailing={<Text font="caption2">{state.phase === 'exams' ? '考试' : '课程'}</Text>}
     minimal={<CalendarIcon {...state} />}
   >
     <LiveActivityUIExpandedCenter>
