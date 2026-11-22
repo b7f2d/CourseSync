@@ -963,7 +963,7 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows,check
   state.examTitleFormat='prefix';
   store.write(state);
 }
-async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check()) {
+async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check(),refreshTimestamp=true) {
   progress('读取考试日程');
   const end=now+366*DAY;
   const prefix=EXAM_MARKER+state.owner+'] ';
@@ -1069,17 +1069,22 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   }));
   store.write(state);
   const expectedNotes=readableNotes(null,new Date().toISOString());
+  const validNotes=ev=>ev.notes===expectedNotes||(!refreshTimestamp&&hasSyncTimestamp(ev));
+  let notesChanged=false;
   for(const ev of final){
-    if(ev.notes===expectedNotes)continue;
+    if(validNotes(ev))continue;
+    notesChanged=true;
     checkpoint();
     const oldId=ev.identifier,key=keyOf(ev);
     ev.notes=expectedNotes;
     await ev.save();
     if(ev.identifier!==oldId){delete index[oldId];index[ev.identifier]=key;store.write(state);}
   }
-  const polished=await read();
-  assert(polished.length===target.size&&new Set(polished.map(keyOf)).size===target.size&&
-    polished.every(ev=>ev.notes===expectedNotes&&target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
+  if(notesChanged){
+    const polished=await read();
+    assert(polished.length===target.size&&new Set(polished.map(keyOf)).size===target.size&&
+      polished.every(ev=>validNotes(ev)&&target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
+  }
 }
 async function fieldsFrom(html,id) {
   // Limit the HTML parser to a document-sized page, never execute or load its resources.
@@ -1739,6 +1744,9 @@ function eventRecord(ev,owner,byNative=null) {
   const title=actual===canonical||actual===expected?canonical:actual;
   const rec={...meta,title,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
+}
+function hasSyncTimestamp(event){
+  return /^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(event.notes||'');
 }
 function readableNotes(e,stamp){
   return '同步：'+localDateTime(stamp);
@@ -2646,10 +2654,9 @@ async function chooseAnchor(sid,name,http,state,store,{calendar,termDetail}={}) 
   return anchor;
 }
 
-// Update the visible synchronization timestamp on EACH verified term refresh,
-// not only during the one-time v3 migration. New events retain their temporary
-// recovery marker until their native identifiers are durably indexed.
-async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
+// New and changed events keep recovery markers until the native IDs are indexed.
+// Automatic runs keep readable timestamps on unchanged events.
+async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{},refreshTimestamp=true){
   const term=state.semesters[String(sid)];
   if(!term)return;
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
@@ -2660,13 +2667,14 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
     matches.push(item);byId.set(item.rec.id,matches);
   }
   const expectedNotes=readableNotes(null,term.lastSuccess);
+  const validNotes=ev=>ev.notes===expectedNotes||(!refreshTimestamp&&hasSyncTimestamp(ev));
   let modified=0;
   for(const rec of term.events){
     budget();
     const items=byId.get(rec.id)||[];
     assert(items.length===1&&same(items[0].rec,rec),'CALENDAR_VERIFY');
     const ev=items[0].ev,title=calendarTitle(rec);
-    if(ev.notes===expectedNotes&&ev.title===title)continue;
+    if(validNotes(ev)&&ev.title===title)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     ev.title=title;ev.notes=expectedNotes;
@@ -2692,10 +2700,9 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
       const matches=done.get(rec.id)||[];
       assert(matches.length===1&&same(matches[0].rec,rec)&&
         matches[0].ev.title===calendarTitle(rec)&&
-        matches[0].ev.notes===expectedNotes,'CALENDAR_VERIFY');
+        validNotes(matches[0].ev),'CALENDAR_VERIFY');
     }
   }
-  // A no-op in the same minute is fine; the next minute is checked again.
   if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
 function matchesOldCourse(ev,rec,state){
@@ -2753,7 +2760,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=
   state.lastLegacyCleanupCount=(state.lastLegacyCleanupCount||0)+count;
   store.write(state);
 }
-async function finishTx(state,store,adapter,budget) {
+async function finishTx(state,store,adapter,budget,refreshTimestamp=true) {
   const tx=state.tx;
   if(!tx.backupName){
     const live=await adapter.scan(tx.anchor,[...tx.before,...tx.target]);
@@ -2777,13 +2784,28 @@ async function finishTx(state,store,adapter,budget) {
   const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
   if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程和考试变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
   state.tx=null;store.write(state);
-  await polishTermNotes(adapter.calendar,state,store,tx.sid,budget);
+  await polishTermNotes(adapter.calendar,state,store,tx.sid,budget,undefined,refreshTimestamp);
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
 }
 function selectTermIds(info){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   return [info.current,...available.filter(sid=>sid!==info.current).sort((a,b)=>a-b)];
+}
+async function verifyUnchangedTerm(adapter,sid,anchor,events){
+  const expected=new Map(events.map(event=>[event.id,event]));
+  const index=Object.create(null);
+  const rows=await adapter.scan(anchor,events);
+  for(const {ev,rec} of rows){
+    if(rec.sid!==String(sid))continue;
+    const target=expected.get(rec.id);
+    if(!target||!same(rec,target)||ev.title!==calendarTitle(target)||!hasSyncTimestamp(ev)||
+       ev.isAllDay||ev.isDetached||ev.hasRecurrenceRules||ev.recurrenceRules?.length||ev.attendees?.length)
+      return null;
+    expected.delete(rec.id);
+    index[rec.id]=ev.identifier;
+  }
+  return expected.size?null:index;
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Reserve time for releasing the lock and returning the Shortcuts result.
@@ -2867,11 +2889,20 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     if(!old){const recovered=(await adapter.scan(anchor,normalized.events)).filter(x=>x.rec.sid===String(sid)).map(x=>x.rec);const by=new Map();for(const e of recovered)by.set(e.id,e);old={events:[...by.values()]};}
     assert(normalized.events.length||!old.events.length,'EMPTY_SOURCE');
     const p=plan(old.events,normalized.events,uuid);const approved=true;
+    // A missing, duplicate or edited event still goes through the repair transaction.
+    if(!interactive&&!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
+       old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
+      const index=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
+      if(index){
+        state.semesters[sid]={...old,events:p.events,index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
+        continue;
+      }
+    }
     // Ambiguous moved lessons are represented as remove+add; no relationship is invented.
     // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
     stage('写入学期 '+sid+' 的日历事件');
     state.tx={id:uuid(),sid:String(sid),anchor,name,hadBaseline:!!state.semesters[sid],deletionsConfirmed:approved,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length,examples:[...p.changed.map(e=>e.title+' 已调整'),...p.added.map(e=>e.title+' 新增')].slice(0,3)}};
-    store.write(state);await finishTx(state,store,adapter,budget);
+    store.write(state);await finishTx(state,store,adapter,budget,interactive);
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
       if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
@@ -2947,14 +2978,15 @@ async function signOut(state,store){
   try{await notice('已退出登录','已清除本机会话与凭据。已同步的课程和考试及日历均已保留。');}catch(_){}
   return true;
 }
-async function refreshFailure(code){
+async function refreshFailure(code,state){
   const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新失败';
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
+  if(code==='BUDGET'&&state?.lastStage)n.body+='\n最后阶段：'+state.lastStage;
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 // Notification delivery is separate from the verified calendar result.
 async function reportRefreshFailure(code,state,store){
-  try{await refreshFailure(code);if(state)state.resultNoticeError=null;}
+  try{await refreshFailure(code,state);if(state)state.resultNoticeError=null;}
   catch(_){if(state)state.resultNoticeError='NOTIFICATION_FAILED';}
   // Do not turn an optional delivery/status-write failure into a sync failure.
   if(state&&store&&store.token){try{store.write(state);}catch(_){}}
@@ -3280,7 +3312,7 @@ async function run() {
     const http=await synchronize(state,store,calendar,interactive,progress,manualAuth);
     if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
     let examError=null;
-    try{await syncExams(http,state,store,calendar,progress,Date.now(),http.before);}
+    try{await syncExams(http,state,store,calendar,progress,Date.now(),http.before,interactive);}
     catch(error){
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error.code))throw error;
       examError=diagnosticCode(error);

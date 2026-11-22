@@ -728,6 +728,44 @@ function loggedIn(e,sourceRaw){
  e.m.HTTP.prototype.json=async function(url){return typeof sourceRaw==='function'?sourceRaw(url):sourceRaw;};
 }
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
+test('automatic refresh checks every term and exams without rewriting unchanged events',async()=>{
+ const e=await env(),queried=[];
+ const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
+ const exam='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
+ const oldNote='同步：2025-01-01 08:00';
+ e.state.anchors['159']='2026-03-02';
+ e.m.HTTP.prototype.get=async url=>{
+   if(url===exam){
+     queried.push('exams');
+     return {url,text:'<table id="exams"><tr data-finished="true"><td><div class="time">2026-07-02 08:00~10:00</div></td><td><div>统计学</div><div>期末</div></td><td>已结束</td></tr></table>'};
+   }
+   a.equal(url,table);
+   return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="159">2025-2026-2</option></select>'};
+ };
+ e.m.HTTP.prototype.json=async url=>{
+   const sid=new URL(url).searchParams.get('semesterId');
+   queried.push(sid);
+   return raw([activity({weekIndexes:[1]})]);
+ };
+ await executeDaily(e);
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.db.length,3);
+ for(const event of e.db)event.notes=oldNote;
+ queried.length=0;e.requests.length=0;
+ await e.m.run();
+ a.deepEqual(queried,['161','159','exams']);
+ a.deepEqual(e.requests,[]);
+ a.ok(e.db.every(event=>event.notes===oldNote));
+ a.match(e.sandbox.output,/刷新成功/);
+
+ const missing=e.db.findIndex(event=>event.title.includes('高等数学')&&event.startDate.getUTCMonth()===2);
+ a.ok(missing>=0);
+ e.db.splice(missing,1);
+ await e.m.run();
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.db.length,3);
+ a.equal(e.db.filter(event=>event.notes===oldNote).length,2);
+});
 test('successful background refresh skips notifications even when delivery is unavailable',async()=>{
  const e=await env();loggedIn(e,raw([activity({weekIndexes:[1]})]));
  let deliveryAttempts=0;
