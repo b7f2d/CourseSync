@@ -3412,8 +3412,8 @@ async function runAttempt() {
     state.runStatus=state.termErrors?.length||examError?'partial':'success';
     state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
-    progress(state.runStatus==='success'?'完成本次同步':'本次同步部分完成');
     store.write(state);
+    progress(state.runStatus==='success'?'完成本次同步':'本次同步部分完成');
     if(progress){try{await progress.finish(state.runStatus);}
       catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
     if(state.termErrors?.length){

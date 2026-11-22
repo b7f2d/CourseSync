@@ -170,6 +170,20 @@ test('login progress reaches completion before the calendar sheet opens',async()
  p.finish();
 });
 
+test('successful refresh reaches full progress immediately before closing',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show(){},update:value=>calls.push(['update',value]),finish:()=>calls.push(['finish'])
+ });
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ progress('读取考试日程');
+ progress('完成本次同步');
+ await progress.finish('success');
+ a.deepEqual(calls.slice(-2),[['update',1],['finish']]);
+});
+
 test('native foreground progress presentation names courses and exams',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  a.match(progress,/正在同步课程和考试/);
