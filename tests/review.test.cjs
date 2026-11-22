@@ -142,6 +142,34 @@ test('shortcut sync still returns Intent.text and writes calendar without backgr
  a.ok(e.db.length>0);
 });
 
+test('login progress reaches completion before the calendar sheet opens',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=title=>({
+   show:()=>calls.push(['show',title]),
+   update:value=>calls.push(['update',value]),
+   pause:()=>{calls.push(['pause']);return Promise.resolve();},
+   setTitle:value=>calls.push(['title',value]),
+   resume:()=>calls.push(['resume']),
+   finish:()=>{}
+ });
+ const p=e.m.createProgress(e.state,e.store,true);
+ p.setTitle('正在登录账号');
+ await p.start();
+ p('连接教务系统');
+ p('认证完成后读取课表页面');
+ p('登录验证完成');
+ await p.pause();
+ p.setTitle('正在同步课程和考试');
+ p.resume();
+ const completed=calls.findIndex(call=>call[0]==='update'&&call[1]===1);
+ const paused=calls.findIndex(call=>call[0]==='pause');
+ a.ok(completed>=0&&completed<paused);
+ a.deepEqual(calls[0],['show','正在登录账号']);
+ a.ok(calls.findIndex(call=>call[0]==='title')>paused);
+ p.finish();
+});
+
 test('native foreground progress presentation names courses and exams',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  a.match(progress,/正在同步课程和考试/);
