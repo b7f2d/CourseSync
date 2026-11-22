@@ -2,7 +2,7 @@
 // CourseSync Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, GeometryReader, Script, modifiers } from 'scripting';
-import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayCourse, widgetReloadDate } from './widget-data';
+import { loadBestWidgetState, buildWidgetModel, selectTodayCourse, widgetReloadDate } from './widget-data';
 
 // Scripting resolves DynamicShapeStyle against the current system appearance.
 const COLORS={
@@ -29,12 +29,16 @@ function CourseCard({course,width,height,compact,stackTimes}){
   const title=exam?course.title.slice(examPrefix.length):course.title;
   const start=(exam?'考 ':'')+course.startLabel;
   const time=compact?start:start+(stackTimes?'\n':'–')+course.endLabel;
-  const titleFont=compact?(width<37?9:10):(width<39?10:11);
+  const chars=Array.from(title).length;
+  const availableWidth=Math.max(1,width-(compact?6:8));
+  const availableHeight=Math.max(1,height-(compact?20:stackTimes?34:25));
+  const titleFont=Math.max(5,Math.min(compact?10:11,
+    Math.floor(Math.sqrt(availableWidth*availableHeight/Math.max(1,chars)*0.8))));
   const cardStyle=modifiers().padding(compact?3:4)
     .frame({width,height,alignment:'topLeading'})
     .background({style:bg,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="leading" spacing={2} modifiers={cardStyle}>
-    <Text font={titleFont} fontWeight="semibold" lineLimit={compact?2:3}
+    <Text font={titleFont} fontWeight="semibold" fixedSize={{horizontal:false,vertical:true}}
       multilineTextAlignment="leading" foregroundStyle={fg}>{title}</Text>
     <Text font={8} foregroundStyle={detail} lineLimit={stackTimes?2:1}
       minScaleFactor={0.8}>{time}</Text>
@@ -44,8 +48,9 @@ function CourseCard({course,width,height,compact,stackTimes}){
 }
 
 function DayColumn({day,layout,compact}){
-  const {columnWidth,gap,cardHeight,maxRows,stackTimes}=layout;
-  const {courses,hidden}=selectVisibleCourses(day,maxRows);
+  const {columnWidth,gap,contentHeight,stackTimes}=layout;
+  const courses=day.courses;
+  const cardHeight=courses.length?Math.max(1,Math.floor((contentHeight-gap*courses.length)/courses.length)):0;
   const headingStyle=modifiers().frame({width:columnWidth,height:28})
     .background({style:day.today?COLORS.nextBg:COLORS.canvas,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="center" spacing={gap} frame={{width:columnWidth,alignment:'top'}}>
@@ -57,18 +62,16 @@ function DayColumn({day,layout,compact}){
       <CourseCard key={course.id} course={course} width={columnWidth} height={cardHeight}
         compact={compact} stackTimes={stackTimes}/>)
       :<Text font={10} foregroundStyle={COLORS.muted}>—</Text>}
-    {hidden>0?<Text font={9} foregroundStyle={COLORS.faint}>+{hidden} 项</Text>:null}
   </VStack>;
 }
 
-// Reserve space for the weekday heading and overflow count before fitting cards.
+// Share the available height among each day's courses.
 function weeklyLayout(width,height,compact){
   const inset=compact?9:12,gap=compact?3:4;
   const columnWidth=Math.max(1,Math.floor((width-2*inset-6*gap)/7));
   const stackTimes=!compact&&columnWidth<58;
-  const cardHeight=compact?43:stackTimes?82:70;
-  const maxRows=Math.max(1,Math.floor((height-2*inset-28-12-gap)/(cardHeight+gap)));
-  return {inset,gap,columnWidth,cardHeight,maxRows,stackTimes};
+  const contentHeight=Math.max(0,height-2*inset-28-gap);
+  return {inset,gap,columnWidth,contentHeight,stackTimes};
 }
 
 function WeeklyPanel({model,family}){
