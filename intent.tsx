@@ -8,14 +8,14 @@ async function loadActivity(isRunning) {
 }
 
 function launchIntent() {
-  let wantsActivity = false;
+  let activityDisabled = false;
   try {
     const parameter = Intent.shortcutParameter;
     const texts = Intent.textsParameter ?? [];
-    wantsActivity = (parameter?.type === 'text' && String(parameter.value).trim() === 'live-activity')
-      || texts.some(text => String(text).trim() === 'live-activity');
+    activityDisabled = (parameter?.type === 'text' && String(parameter.value).trim() === 'no-live-activity')
+      || texts.some(text => String(text).trim() === 'no-live-activity');
   } catch (_) {}
-  return launchCourseSync(wantsActivity ? loadActivity : undefined);
+  return launchCourseSync(activityDisabled ? undefined : loadActivity);
 }
 
 Promise.resolve().then(launchIntent).catch(error => {

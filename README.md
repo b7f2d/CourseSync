@@ -54,7 +54,7 @@ https://github.com/b7f2d/CourseSync/tree/main
 2. 设定时间（如每天 07:00），设为「立即运行」。
 3. 添加动作：Scripting「运行脚本」，选择 **CourseSync**，关闭「运行时显示」。
 
-如需试用灵动岛，在该动作的「文本」栏填入 `live-activity`。请先手动运行一次快捷指令验证，能否显示取决于 Scripting 和 iOS 是否允许该次运行启动实时活动。清空「文本」即可恢复普通后台同步。
+快捷指令运行时会尝试显示灵动岛进度。能否显示取决于 Scripting 和 iOS 是否允许该次运行启动实时活动。如需关闭，在该动作的「文本」栏填入 `no-live-activity`。
 
 ### 5. 维护与更新
 

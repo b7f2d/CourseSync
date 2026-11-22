@@ -83,7 +83,7 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   const intent=read('intent.tsx');
   assert.ok(intent.includes('import { launchCourseSync } from "./index"'));
   assert.ok(intent.includes('Promise.resolve().then(launchIntent).catch('));
-  assert.ok(intent.includes('launchCourseSync(wantsActivity ? loadActivity : undefined)'));
+  assert.ok(intent.includes('launchCourseSync(activityDisabled ? undefined : loadActivity)'));
   assert.ok(intent.includes("await import('./live_activity')"));
   assert.equal(intent.includes('await globalThis.__COURSESYNC_LAUNCH__'),false);
   assert.ok(intent.includes('Script.exit(Intent.text('));

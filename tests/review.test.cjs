@@ -41,7 +41,7 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('normal intent progress never loads optional activity or background lifecycle APIs',async()=>{
+test('intent progress without an activity loader does not access background lifecycle APIs',async()=>{
  const calls=[];
  const e=await env();
  for(const name of ['LiveActivity','AppEvents','BackgroundKeeper']){
@@ -72,14 +72,16 @@ test('foreground progress stays native and does not touch background APIs',async
  a.deepEqual(calls,['sheet','close']);
 });
 
-test('the intent entry enables an activity only when explicitly requested',async()=>{
+test('the intent entry enables an activity by default and honors explicit opt-out',async()=>{
  const entry=fs.readFileSync(__dirname+'/../intent.tsx','utf8')
    .split('\n').filter(line=>!line.trimStart().startsWith('import ')).join('\n');
  for(const [intent,expected] of [
-   [{},'undefined'],
-   [{shortcutParameter:{type:'text',value:'sync'}},'undefined'],
+   [{},'function'],
+   [{shortcutParameter:{type:'text',value:'sync'}},'function'],
    [{shortcutParameter:{type:'text',value:'live-activity'}},'function'],
    [{textsParameter:['live-activity']},'function'],
+   [{shortcutParameter:{type:'text',value:'no-live-activity'}},'undefined'],
+   [{textsParameter:['no-live-activity']},'undefined'],
  ]){
    let loader;
    await vm.runInNewContext(entry,{Intent:intent,launchCourseSync:value=>{loader=value;}});
