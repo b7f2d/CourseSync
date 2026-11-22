@@ -2,7 +2,7 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Navigation, NavigationStack, List, Section, Text,
+  GeometryReader, Navigation, NavigationStack, List, ScrollView, Section, Text,
   TextField, SecureField, Button, Image, useState,
   VStack, HStack, Spacer, modifiers, useRef,
 } from 'scripting';
@@ -156,28 +156,34 @@ function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
   if (page.kind === 'loading') {
     return <NativeProgressContent title="正在查询空闲教室" value={page.progress} />;
   }
-  return <List
-    navigationTitle="空闲教室"
-    navigationBarTitleDisplayMode="inline"
-    listStyle="insetGroup"
-  >
-    {page.kind === 'error' ? (
-      <Section>
-        <Text font="body" foregroundStyle="secondaryLabel">{page.message}</Text>
-        <Button title="重试" systemImage="arrow.clockwise" action={retry} />
-      </Section>
-    ) : (
-      <Section>
-        <Text font="headline" padding={{top:4,bottom:4}}>今天 · {page.date}</Text>
-        {page.rooms.map(({period, room}) => (
-          <VStack key={period} alignment="leading" spacing={4} padding={{top:8,bottom:8}}>
-            <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
-            <Text font="title2" fontWeight="semibold">{room}</Text>
-          </VStack>
-        ))}
-      </Section>
+  return <GeometryReader navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
+    {proxy=>(
+      <ScrollView>
+        <VStack
+          modifiers={modifiers().padding(24).frame({
+            maxWidth:'infinity',minHeight:proxy.size.height,alignment:'center',
+          })}
+        >
+          {page.kind === 'error' ? (
+            <VStack alignment="center" spacing={14}>
+              <Text font="body" foregroundStyle="secondaryLabel" multilineTextAlignment="center">{page.message}</Text>
+              <Button title="重试" systemImage="arrow.clockwise" action={retry} />
+            </VStack>
+          ) : (
+            <VStack alignment="center" spacing={20}>
+              <Text font="headline">今天 · {page.date}</Text>
+              {page.rooms.map(({period, room}) => (
+                <VStack key={period} alignment="center" spacing={4}>
+                  <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
+                  <Text font="title2" fontWeight="semibold" multilineTextAlignment="center">{room}</Text>
+                </VStack>
+              ))}
+            </VStack>
+          )}
+        </VStack>
+      </ScrollView>
     )}
-  </List>;
+  </GeometryReader>;
 }
 
 export type DashboardOptions = {
