@@ -228,7 +228,7 @@ test('widget UI renders only three day headings and keeps full course details',(
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
  a.match(ui,/const days=model\.days\.slice\(0,3\)/);
  a.match(ui,/\{days\.map\(day=>/);
- a.match(ui,/lineLimit=\{smallText\?4:5\}/);
+ a.match(ui,/lineLimit=\{tight\?3:smallText\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
@@ -340,9 +340,8 @@ test('today columns handle first lesson, a gap, last lesson and all finished',()
 
 test('large today layout has one focus card on the left, future stack on the right',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  a.ok(ui.includes('const showAllToday=!medium&&height>=290;'));
-  a.ok(ui.includes('showAll={showAllToday}'));
-  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('maxFuture={maxRows} tight={tight}'));
+  a.ok(ui.includes('selectTodayColumns(day,maxFuture)'));
   a.ok(ui.includes('course={columns.focus}'));
   a.ok(ui.includes('columns.future.map(c=>'));
   a.ok(ui.includes('course={c}'));
@@ -443,7 +442,7 @@ test('widget labels only dates and useful class details, not redundant auto-upda
 test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
   a.match(ui,/function TodayPairColumn/);
-  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('selectTodayColumns(day,maxFuture)'));
   a.ok(ui.includes('columns.future.map(c=>'));
   a.match(ui,/\+\{columns\.hiddenAfter\} 项/);
   a.match(ui,/day\.today&&expanded/);
@@ -474,7 +473,7 @@ test('all widget families use the adaptive opaque canvas',()=>{
 });
 test('all three day sections center visible cards; expanded today remains symmetric',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal'\}\)/);
+ a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal',tight=false\}\)/);
  a.match(ui,/width=\{width-8\}/);
  a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
  a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
@@ -498,10 +497,10 @@ test('readable three-day widget uses larger but density-aware typography',()=>{
    a.ok(d[i]>=9);
    a.ok(d[i]<d[i+4]&&d[i+4]<d[i+2]);
  }
- a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,2);
- a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{day\.today/);
+ a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,1);
+ a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{COLORS\.faint\}/);
  a.match(ui,/font=\{12\} foregroundStyle=\{COLORS\.muted\}>无安排/);
- a.match(ui,/<Text font=\{tight\?12:13\} fontWeight="semibold" lineLimit=\{2\}/);
+ a.match(ui,/<Text font=\{tight\?15:17\} fontWeight="semibold" lineLimit=\{2\}/);
  a.match(ui,/const fg=done\?COLORS\.finished:active\?COLORS\.white:COLORS\.dark/);
 });
 test('README documents the three-day UI without screenshots',()=>{
@@ -522,7 +521,7 @@ test('README documents the three-day UI without screenshots',()=>{
 test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n'); a.match(ui,/current\?COLORS.white:COLORS.dark/); a.match(ui,/course.status==='current'\?COLORS.activeDetail:/); });
 test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
-  const start=ui.indexOf('function formatSideTitle(title){');
+  const start=ui.indexOf('function formatSideTitle(title,maxChars=4){');
   const end=ui.indexOf('\n}\n',start);
   a.ok(start>=0&&end>start,'side title formatter should exist');
   const wrap=vm.runInNewContext(ui.slice(start,end+2)+'\nformatSideTitle',
@@ -531,7 +530,7 @@ test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   a.equal(wrap('管理学原理'),'管理学\n原理');
   a.equal(wrap('证券投资学'),'证券投\n资学');
   a.equal(wrap('Financial Markets'),'Financial Markets');
-  a.ok(ui.includes('isSide?formatSideTitle(course.title):course.title'));
+  a.ok(ui.includes('isSide?formatSideTitle(course.title,sideTitleWidth):course.title'));
   a.ok(ui.includes("course.startLabel+'–'+course.endLabel"));
   a.ok(ui.includes('lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}'));
   a.ok(!ui.includes("course.startLabel+'\\n'+course.endLabel"),
@@ -548,7 +547,7 @@ test('widget keeps adaptive canvas, distinct colored cards and symmetric rounded
  a.match(ui,/width-2\*safeInset/);
  a.match(ui,/doneBg:\{light:'#E5E7EB',dark:'#343D4C'\}/);
  a.match(ui,/nextBg:\{light:'#EBF4FF',dark:'#243449'\}/);
- a.match(ui,/activeBg:\{light:'#238BFF',dark:'#2467C6'\}/);
+ a.match(ui,/activeBg:\{light:'#185FC2',dark:'#215DB5'\}/);
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
 });
@@ -565,7 +564,7 @@ test('systemSmall uses measured width and height without wasting space on spacer
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function EmptyPanel('));
  a.match(section,/proxy\.size\.width,height=proxy\.size\.height/);
- a.match(section,/cardWidth=Math\.max\(80,width-2\*inset\)/);
+ a.match(section,/cardWidth=Math\.max\(0,width-2\*inset\)/);
  a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
  a.doesNotMatch(section,/<Spacer/);
  a.match(section,/lineLimit=\{2\}/);
@@ -610,21 +609,43 @@ test('all widget sizes hide teacher names without stripping teacher data from th
  a.equal(model.days[1].courses[0].title,'课程');
 });
 
-test('large widget reserves wider today column and vertically expands details',()=>{
+test('three-day columns share space and adapt capacity to actual widget height',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- a.match(ui,/const sideShare=expanded\?0\.24:medium\?0\.30:0\.265/);
- a.match(ui,/const sideWidth=Math\.floor\(usableWidth\*sideShare\)/);
- a.match(ui,/lineLimit=\{isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
- a.match(ui,/lineLimit=\{smallText\?4:5\}[\s\S]{0,160}fixedSize=\{\{horizontal:false,vertical:true\}\}/);
- for(const usableWidth of [280,320,540,600]){
-   for(const expanded of [false,true]){
-     for(const medium of [false,true]){
-       const share=expanded?0.24:medium?0.30:0.265;
-       const sideWidth=Math.floor(usableWidth*share);
-       const todayWidth=usableWidth-sideWidth*2;
-       a.equal(sideWidth*2+todayWidth,usableWidth);
-       a.ok(todayWidth>sideWidth);
+ const layout=vm.runInNewContext(ui.slice(ui.indexOf('function rollingLayout('),ui.indexOf('function RollingPanel('))+'\nrollingLayout');
+ for(const width of [275,320,540,600]){
+   for(const medium of [false,true]){
+     for(const count of [0,1,2]){
+       const {safeInset,gap,sideWidth,todayWidth}=layout(width,300,medium,count);
+       a.equal(sideWidth*2+todayWidth+2*gap+2*safeInset,width);
+       if(count===0)a.ok(Math.abs(todayWidth-sideWidth)<=2);
+       else a.ok(todayWidth>sideWidth);
      }
+   }
+ }
+ a.equal(layout(275,145,true,2).maxRows,1);
+ a.equal(layout(275,145,true,2).tight,true);
+ a.equal(layout(330,300,false,2).maxRows,2);
+ a.equal(layout(330,350,false,2).maxRows,3);
+ a.match(ui,/lineLimit=\{tight\?1:isSide\?2:3\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+ a.match(ui,/lineLimit=\{tight\?3:smallText\?4:5\}[\s\S]{0,160}fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+});
+
+test('active and finished card text is legible in both appearances',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const start=ui.indexOf('const COLORS='),end=ui.indexOf('\n};',start);
+ const colors=vm.runInNewContext(ui.slice(start,end+3)+'\nCOLORS');
+ const luminance=hex=>{
+   const linear=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255)
+     .map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);
+   return linear[0]*0.2126+linear[1]*0.7152+linear[2]*0.0722;
+ };
+ for(const scheme of ['light','dark']){
+   for(const [fg,bg] of [
+     [colors.white,colors.activeBg[scheme]], [colors.activeDetail[scheme],colors.activeBg[scheme]],
+     [colors.finished[scheme],colors.doneBg[scheme]], [colors.muted[scheme],colors.doneBg[scheme]],
+   ]){
+     const [aLum,bLum]=[luminance(fg),luminance(bg)];
+     a.ok((Math.max(aLum,bLum)+0.05)/(Math.min(aLum,bLum)+0.05)>=4.5,scheme+' '+fg+' on '+bg);
    }
  }
 });
