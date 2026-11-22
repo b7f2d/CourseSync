@@ -1,7 +1,7 @@
-// One native, indeterminate progress sheet. No WebKit, fabricated percentage,
+// One native progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, modifiers, useState,
+  Image, Navigation, NavigationStack, ProgressView, Spacer, VStack, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -16,26 +16,16 @@ type ProgressSession={
 };
 
 export function NativeProgressCard({value}:{value:number}) {
-  return <VStack
-    alignment="center"
-    spacing={18}
-    padding={28}
-    modifiers={modifiers().background({
-      style: { light: '#F1F5F9', dark: '#1E293B' },
-      shape: { type: 'rect', cornerRadius: 20 }
-    })}
-  >
-    <VStack
-      alignment="center"
-      frame={{ width: 52, height: 52 }}
-      modifiers={modifiers().background({
-        style: { light: '#2563EB', dark: '#1D4ED8' },
-        shape: { type: 'rect', cornerRadius: 14 }
-      })}
-    >
-      <Image systemName="calendar" font={24} foregroundStyle="#FFFFFF" />
-    </VStack>
-    <ProgressView value={value} total={1} progressViewStyle="linear" tint="#2563EB" frame={{ width: 180 }} />
+  return <VStack alignment="center" spacing={24} padding={{top:20,bottom:20}}>
+    <Image systemName="calendar" font={42} foregroundStyle="systemBlue" />
+    <ProgressView
+      value={value}
+      total={1}
+      progressViewStyle="linear"
+      tint="systemBlue"
+      frame={{maxWidth:300}}
+      scaleEffect={{x:1,y:1.8}}
+    />
   </VStack>;
 }
 

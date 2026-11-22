@@ -4,7 +4,7 @@
 import {
   Navigation, NavigationStack, List, Section, Text,
   TextField, SecureField, Button, Image, useState,
-  VStack, HStack, Spacer, modifiers, useRef,
+  VStack, HStack, Rectangle, Spacer, modifiers, useRef,
 } from 'scripting';
 import { NativeProgressCard } from './progress-native';
 
@@ -160,7 +160,7 @@ function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
   >
     {page.kind === 'loading' ? (
       <Section>
-        <VStack alignment="center" frame={{maxWidth:'infinity'}} padding={{top:8,bottom:8}}>
+        <VStack alignment="center" frame={{maxWidth:'infinity'}} listRowBackground={<Rectangle fill="clear" />}>
           <NativeProgressCard value={page.progress} />
         </VStack>
       </Section>
