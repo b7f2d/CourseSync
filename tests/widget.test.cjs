@@ -342,6 +342,13 @@ test('classroom labels wrap long room numbers without losing characters',()=>{
  a.equal(wrap('',32),'');
 });
 
+test('weekly cards include the end time in medium and large layouts',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function DayColumn('));
+ a.match(card,/const time=start\+\(\(compact\|\|stackTimes\)\?'\\n':'–'\)\+course\.endLabel/);
+ a.match(card,/fixedSize=\{\{horizontal:false,vertical:true\}\}[\s\S]*?\{time\}/);
+ a.doesNotMatch(card,/compact\?start:start/);
+});
 test('medium and large widgets draw the same seven days with status colors and chronological overflow',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  const panel=ui.slice(ui.indexOf('function WeeklyPanel('),ui.indexOf('function SmallPanel('));

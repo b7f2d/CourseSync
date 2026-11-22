@@ -42,12 +42,12 @@ function CourseCard({course,width,height,compact,stackTimes}){
   const exam=course.title.startsWith(examPrefix);
   const title=exam?course.title.slice(examPrefix.length):course.title;
   const start=(exam?'考 ':'')+course.startLabel;
-  const time=compact?start:start+(stackTimes?'\n':'–')+course.endLabel;
+  const time=start+((compact||stackTimes)?'\n':'–')+course.endLabel;
   const chars=Array.from(title).length;
   const availableWidth=Math.max(1,width-(compact?6:8));
   const location=wrapLocation(course.location,availableWidth);
   const locationLines=location?location.split('\n').length:0;
-  const availableHeight=Math.max(1,height-(stackTimes?30:20)-locationLines*10);
+  const availableHeight=Math.max(1,height-((compact||stackTimes)?30:20)-locationLines*10);
   const titleFont=Math.max(5,Math.min(compact?10:11,
     Math.floor(Math.sqrt(availableWidth*availableHeight/Math.max(1,chars)*0.8))));
   const cardStyle=modifiers().padding(compact?3:4)
@@ -56,8 +56,8 @@ function CourseCard({course,width,height,compact,stackTimes}){
   return <VStack alignment="leading" spacing={2} modifiers={cardStyle}>
     <Text font={titleFont} fontWeight="semibold" fixedSize={{horizontal:false,vertical:true}}
       multilineTextAlignment="leading" foregroundStyle={fg}>{title}</Text>
-    <Text font={8} foregroundStyle={detail} lineLimit={stackTimes?2:1}
-      minScaleFactor={0.8}>{time}</Text>
+    <Text font={8} foregroundStyle={detail} fixedSize={{horizontal:false,vertical:true}}
+      multilineTextAlignment="leading" minScaleFactor={0.8}>{time}</Text>
     {course.location?<Text font={8} fixedSize={{horizontal:false,vertical:true}}
       multilineTextAlignment="leading" foregroundStyle={detail}>{location}</Text>:null}
   </VStack>;
