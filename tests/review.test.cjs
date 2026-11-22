@@ -48,11 +48,14 @@ test('intent progress without an activity loader does not access background life
    Object.defineProperty(e.sandbox.__sdk,name,{get(){calls.push(name);throw Error('must not access '+name);}});
  }
  e.sandbox.__progressUIFactory=()=>{calls.push('progress');return {};};
+ e.store.write(e.state);
  const progress=e.m.createProgress(e.state,e.store,false);
  await progress.start();
  progress('读取学期 161');
  await progress.finish(true);
  a.deepEqual(calls,[]);
+ a.equal(e.state.lastStage,'读取学期 161');
+ a.equal(e.store.read().lastStage,undefined);
  const sourceProgress=source.slice(source.indexOf('function createProgress('),source.indexOf('// Recognize a previously bound calendar'));
  a.doesNotMatch(sourceProgress,/LiveActivity|AppEvents|BackgroundKeeper|scenePhase|live_activity|COURSE_REFRESH_ACTIVITY/);
  a.equal(source.includes("import('./live_activity')"),false);
@@ -781,6 +784,7 @@ function loggedIn(e,sourceRaw){
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
 test('automatic refresh checks every term and exams without rewriting unchanged events',async()=>{
  const e=await env(),queried=[];
+ let readingExams=false;
  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
  const exam='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
  const oldNote='同步：2025-01-01 08:00';
@@ -788,6 +792,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  e.state.anchors['160']='2025-09-01';
  e.m.HTTP.prototype.get=async url=>{
    if(url===exam){
+     readingExams=true;
      queried.push('exams');
      return {url,text:'<table id="exams"><tr data-finished="true"><td><div class="time">2026-07-02 08:00~10:00</div></td><td><div>统计学</div><div>期末</div></td><td>已结束</td></tr></table>'};
    }
@@ -795,6 +800,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
    return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="159">2025-2026-2</option><option value="160">2025-2026-1</option></select>'};
  };
  e.m.HTTP.prototype.json=async url=>{
+   readingExams=false;
    const sid=new URL(url).searchParams.get('semesterId');
    queried.push(sid);
    return raw([activity({weekIndexes:[1]})]);
@@ -803,10 +809,25 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  a.equal(e.store.read().runStatus,'success');
  a.equal(e.db.length,4);
  for(const event of e.db)event.notes=oldNote;
+ const courseReads=[];
+ const getEvents=e.Event.getAll;
+ e.Event.getAll=(start,end,calendars)=>{
+   if(!readingExams&&+end-+start===90*86400000)courseReads.push(+start);
+   return getEvents(start,end,calendars);
+ };
+ let stateWrites=0;
+ const writeFile=e.sandbox.__sdk.FileManager.writeAsStringSync;
+ e.sandbox.__sdk.FileManager.writeAsStringSync=(file,contents)=>{
+   if(/state-\d+\.json$/.test(file))stateWrites++;
+   return writeFile(file,contents);
+ };
  queried.length=0;e.requests.length=0;
  await e.m.run();
  a.deepEqual(queried,['161','exams','159','160']);
  a.deepEqual(e.requests,[]);
+ a.equal(courseReads.length,new Set(courseReads).size,'overlapping course windows are read once');
+ a.ok(courseReads.length<15,'the three course terms use fewer native reads than separate scans');
+ a.ok(stateWrites<=8,'progress updates do not rewrite the state file');
  a.ok(e.db.every(event=>event.notes===oldNote));
  a.match(e.sandbox.output,/刷新成功/);
 
@@ -935,6 +956,7 @@ test('failure notification errors preserve the original network failure',async()
  e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('notification denied');};
  await executeDaily(e);const s=e.store.read();
  a.equal(s.lastError,'NETWORK');a.equal(s.failures,1);a.equal(s.resultNoticeError,'NOTIFICATION_FAILED');
+ a.equal(s.lastFailure.stage,'尝试读取教务课表入口');
  a.notEqual(s.authNoticeError,'NOTIFICATION_FAILED');a.equal(e.db.length,0);
 });
 test('partial refresh notification failure keeps partial status and semester errors',async()=>{

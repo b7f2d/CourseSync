@@ -1756,13 +1756,41 @@ function readableNotes(e,stamp){
   return '同步：'+localDateTime(stamp);
 }
 class CalendarAdapter {
-  constructor(calendar,owner,store,budget=()=>store.check(),state=null){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;}
-  async scan(anchor,events=[]) {
+  constructor(calendar,owner,store,budget=()=>store.check(),state=null){
+    this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;
+    this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;this.verifiedWindows=new Map();
+  }
+  async scan(anchor,events=[],{reuseWindows=false}={}) {
     // Chunked bounded queries avoid EventKit's multi-year predicate limit.
     let lo=Date.parse(anchor+'T00:00:00+08:00')-30*DAY,hi=lo+500*DAY;
     for(const e of events){lo=Math.min(lo,Date.parse(e.start)-DAY);hi=Math.max(hi,Date.parse(e.end)+DAY);}
-    assert(Number.isFinite(lo)&&Number.isFinite(hi)&&hi-lo<4*366*DAY,'SCAN_RANGE');const found=new Map();
-    for(let start=lo;start<hi;start+=90*DAY){this.budget();this.store.check();const list=await calendarRows(start,Math.min(hi,start+90*DAY),this.calendar);this.store.check();for(const ev of list){const rec=eventRecord(ev,this.owner,this.byNative);if(rec)found.set(occurrenceKey(ev),{ev,rec});}}
+    assert(Number.isFinite(lo)&&Number.isFinite(hi)&&hi-lo<4*366*DAY,'SCAN_RANGE');
+    // Only unchanged-term checks share aligned reads. Transactions use fresh
+    // reads for their backups, writes, and verification.
+    if(!reuseWindows)this.verifiedWindows.clear();
+    const found=new Map(),windowSize=90*DAY;
+    const first=reuseWindows?Math.floor(lo/windowSize)*windowSize:lo;
+    for(let start=first;start<hi;start+=windowSize){
+      this.budget();
+      this.store.check();
+      let rows=reuseWindows?this.verifiedWindows.get(start):undefined;
+      if(!rows){
+        const end=reuseWindows?start+windowSize:Math.min(hi,start+windowSize);
+        const calendarEvents=await calendarRows(start,end,this.calendar);
+        this.store.check();
+        rows=[];
+        for(const ev of calendarEvents){
+          const rec=eventRecord(ev,this.owner,this.byNative);
+          if(rec)rows.push({ev,rec});
+        }
+        if(reuseWindows)this.verifiedWindows.set(start,rows);
+      }
+      for(const row of rows){
+        const {ev}=row;
+        if(reuseWindows&&(+ev.endDate<=lo||+ev.startDate>=hi))continue;
+        found.set(occurrenceKey(ev),row);
+      }
+    }
     return [...found.values()];
   }
   async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=calendarTitle(e);ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
@@ -2140,11 +2168,11 @@ function errorMessage(error,state){
   const code=diagnosticCode(error),stage=state&&state.lastStage||'尚未记录阶段';
   return '阶段：'+stage+'\n错误代码：'+code+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
-function stampStage(state,store,stage){
+function stampStage(state,store,stage,persist=true){
   const at=new Date().toISOString();
   state.lastStage=stage;state.lastStageAt=at;
   state.stageHistory=[...(state.stageHistory||[]),{at,stage}].slice(-30);
-  store.write(state);
+  if(persist)store.write(state);
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
@@ -2152,7 +2180,7 @@ function createProgress(state,store,interactive,activityLoader){
   let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
   let activityStart=null,activityPhase='connect';
   const stage=message=>{
-    stampStage(state,store,message);
+    stampStage(state,store,message,interactive);
     if(closed||!started)return;
     const label=String(message||'');
     if(!interactive){
@@ -2808,7 +2836,7 @@ function selectTermIds(info){
 async function verifyUnchangedTerm(adapter,sid,anchor,events){
   const expected=new Map(events.map(event=>[event.id,event]));
   const index=Object.create(null);
-  const rows=await adapter.scan(anchor,events);
+  const rows=await adapter.scan(anchor,events,{reuseWindows:true});
   for(const {ev,rec} of rows){
     if(rec.sid!==String(sid))continue;
     const target=expected.get(rec.id);
@@ -2831,7 +2859,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
   const usts=activeSchoolId==='usts';
   const jar=state.signedOut||manualAuth?.kind==='credentials'?new CookieJar():readCookieJar();
-  const stage=progress||((message)=>stampStage(state,store,message));
+  const stage=progress||((message)=>stampStage(state,store,message,interactive));
   let identityVerified=!usts;
   const saveCookies=c=>{if(identityVerified)Keychain.set(schoolKey(KEY),JSON.stringify(c));};
   const http=new HTTP(jar,saveCookies,budget,stage,interactive?Infinity:deadline);
