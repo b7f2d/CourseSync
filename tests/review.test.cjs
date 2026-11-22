@@ -8,7 +8,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
    'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...args):null);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
- .replace('export function launchCourseSync()', 'function launchCourseSync()');
+ .replace('export function launchCourseSync(loadActivity)', 'function launchCourseSync(loadActivity)');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -41,7 +41,7 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('intent and app progress never import or access background lifecycle APIs',async()=>{
+test('normal intent progress never loads optional activity or background lifecycle APIs',async()=>{
  const calls=[];
  const e=await env();
  for(const name of ['LiveActivity','AppEvents','BackgroundKeeper']){
@@ -53,7 +53,7 @@ test('intent and app progress never import or access background lifecycle APIs',
  progress('读取学期 161');
  await progress.finish(true);
  a.deepEqual(calls,[]);
- const sourceProgress=source.slice(source.indexOf('function createProgress(state,store,interactive)'),source.indexOf('// Recognize a previously bound calendar'));
+ const sourceProgress=source.slice(source.indexOf('function createProgress('),source.indexOf('// Recognize a previously bound calendar'));
  a.doesNotMatch(sourceProgress,/LiveActivity|AppEvents|BackgroundKeeper|scenePhase|live_activity|COURSE_REFRESH_ACTIVITY/);
  a.equal(source.includes("import('./live_activity')"),false);
 });
@@ -70,6 +70,55 @@ test('foreground progress stays native and does not touch background APIs',async
  progress('读取学期 161');
  await progress.finish(true);
  a.deepEqual(calls,['sheet','close']);
+});
+
+test('the intent entry enables an activity only when explicitly requested',async()=>{
+ const entry=fs.readFileSync(__dirname+'/../intent.tsx','utf8')
+   .split('\n').filter(line=>!line.trimStart().startsWith('import ')).join('\n');
+ for(const [intent,expected] of [
+   [{},'undefined'],
+   [{shortcutParameter:{type:'text',value:'sync'}},'undefined'],
+   [{shortcutParameter:{type:'text',value:'live-activity'}},'function'],
+   [{textsParameter:['live-activity']},'function'],
+ ]){
+   let loader;
+   await vm.runInNewContext(entry,{Intent:intent,launchCourseSync:value=>{loader=value;}});
+   a.equal(typeof loader,expected);
+ }
+});
+
+test('requested activity reports real sync stages and ends once with a partial result',async()=>{
+ const e=await env(),calls=[];
+ const progress=e.m.createProgress(e.state,e.store,false,async isRunning=>{
+   a.equal(isRunning(),true);
+   calls.push('start');
+   return {
+     update:async ({phase})=>{calls.push(phase);},
+     end:async ({phase},options)=>{calls.push(phase,options.dismissTimeInterval);},
+   };
+ });
+ await progress.start();
+ progress('读取学期 161');
+ await new Promise(resolve=>setImmediate(resolve));
+ progress('读取考试日程');
+ await new Promise(resolve=>setImmediate(resolve));
+ await progress.finish('partial');
+ await progress.finish();
+ a.deepEqual(calls,['start','courses','exams','partial',2]);
+});
+
+test('a stuck activity start does not hold up the sync and a late activity is closed',async()=>{
+ const e=await env(),calls=[];
+ let resolveActivity;
+ const progress=e.m.createProgress(e.state,e.store,false,()=>new Promise(resolve=>{resolveActivity=resolve;}));
+ e.sandbox.setTimeout=(callback,ms)=>{calls.push(ms);return setTimeout(callback,1);};
+ await progress.start();
+ progress('读取学期 161');
+ await progress.finish('success');
+ a.deepEqual(calls,[350]);
+ resolveActivity({end:async ({phase})=>{calls.push(phase);}});
+ await new Promise(resolve=>setImmediate(resolve));
+ a.deepEqual(calls,[350,'complete']);
 });
 
 test('shortcut sync still returns Intent.text and writes calendar without background APIs',async()=>{
@@ -184,7 +233,7 @@ test('background sync never opens any interactive progress UI',async()=>{
 });
 
 test('progress has no HTML and no artificial percentages',()=>{
- const start=source.indexOf('function createProgress(state,store,interactive)');
+ const start=source.indexOf('function createProgress(');
  const end=source.indexOf('// Recognize a previously bound calendar',start);
  a.ok(start>0&&end>start);
  const body=source.slice(start,end);

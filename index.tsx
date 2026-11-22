@@ -1,7 +1,7 @@
 // @ts-nocheck
 import * as Scripting from "scripting";
-// Native UI is loaded only inside the foreground index host. The intent host
-// must not resolve SwiftUI and Live Activity modules during background startup.
+// Native forms are loaded only in the foreground. The intent entry can supply
+// an optional activity loader after it has read the shortcut's input.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
 async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
@@ -29,7 +29,7 @@ async function __COURSESYNC_REPORT_STARTUP(error){
     throw exitError;
   }
 }
-async function __NUFE_START(){
+async function __NUFE_START(loadActivity){
   try{
     console.log('[CourseSync] 正在启动');
 const hostAPI=name=>Scripting[name]??globalThis[name];
@@ -2148,15 +2148,24 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// Foreground refreshes use a native progress sheet. Intent/scheduled refreshes
-// stay silent and return their result through Intent.text; neither mode keeps
-// an activity alive after leaving the App.
-function createProgress(state,store,interactive){
+function createProgress(state,store,interactive,activityLoader){
   let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
+  let activityStart=null,activityPhase='connect';
   const stage=message=>{
     stampStage(state,store,message);
-    if(closed||!started||!interactive)return;
+    if(closed||!started)return;
     const label=String(message||'');
+    if(!interactive){
+      if(!activityStart)return;
+      const phase=/^(读取考试日程|更新考试日程)/.test(label)?'exams':
+        /^(读取学期|请求学期|写入学期)/.test(label)?'courses':null;
+      if(!phase||phase===activityPhase)return;
+      activityPhase=phase;
+      activityStart.then(activity=>{
+        if(!closed&&phase===activityPhase)return activity?.update({phase});
+      }).catch(()=>{});
+      return;
+    }
     if(/检查目标日历/.test(label))ui?.update?.(0.1);
     else if(/连接教务系统|尝试读取教务课表入口|学校单点登录跳转|解析学校登录表单|注册设备指纹|提交学校认证请求/.test(label))ui?.update?.(0.25);
     else if(/^(认证完成后读取课表页面|读取学期|请求学期)/.test(label))ui?.update?.(0.5);
@@ -2178,7 +2187,10 @@ function createProgress(state,store,interactive){
   stage.start=async()=>{
     if(started||closed)return;
     started=true;
-    if(!interactive)return;
+    if(!interactive){
+      if(activityLoader)activityStart=Promise.resolve().then(()=>activityLoader(()=>!closed)).catch(()=>null);
+      return;
+    }
     try{
       if(typeof hostAPI('Navigation')?.present==='function'){
         ui=createNativeProgressView();
@@ -2187,12 +2199,15 @@ function createProgress(state,store,interactive){
       }
     }catch(_){ui=null;}
   };
-  stage.finish=()=>{
+  stage.finish=(result='failed')=>{
     if(finishing)return finishing;
     closed=true;
     try{ui?.finish();}catch(_){}
     ui=null;
-    finishing=Promise.resolve();
+    const phase=result==='success'?'complete':result==='partial'?'partial':'finish';
+    // Even an unresponsive activity may only delay the Intent result briefly.
+    finishing=activityStart?bounded(activityStart.then(activity=>
+      activity?.end({phase},{dismissTimeInterval:2})),350,'ACTIVITY_TIMEOUT').catch(()=>{}):Promise.resolve();
     return finishing;
   };
   return stage;
@@ -3347,7 +3362,7 @@ async function run() {
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
     __COURSESYNC_BOOT_PHASE='同步运行';
-    progress=createProgress(state,store,interactive);progress('检查目标日历');
+    progress=createProgress(state,store,interactive,HostScript.env==='intent'?loadActivity:null);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
     await progress.start();
     progress('连接教务系统');
@@ -3377,7 +3392,7 @@ async function run() {
     progress('完成本次同步');state.runStatus=state.termErrors?.length||examError?'partial':'success';state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
     store.write(state);
-    if(progress){try{await progress.finish(state.runStatus==='success');}
+    if(progress){try{await progress.finish(state.runStatus);}
       catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
     if(state.termErrors?.length){
       if(interactive){
@@ -3444,8 +3459,8 @@ else await run();
 
   }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
-export function launchCourseSync() {
-  const launch = __NUFE_START();
+export function launchCourseSync(loadActivity) {
+  const launch = __NUFE_START(loadActivity);
   globalThis.__COURSESYNC_LAUNCH__ = launch;
   return launch;
 }
