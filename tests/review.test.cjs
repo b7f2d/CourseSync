@@ -1379,6 +1379,27 @@ test('widget has a single dedicated Scripting entry with no legacy ListWidget re
 });
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
+test('exam location omits campus while preserving room or building',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-16T00:00:00Z');
+ const rows=[
+  '<tr data-finished="false"><td><div class="time">2026-12-18 09:00~11:00</div><div><span>仙林校区</span><span>博远楼101</span></div></td><td><div>高等数学</div><div>期末</div></td><td>未结束</td></tr>',
+  '<tr data-finished="false"><td><div class="time">2026-12-19 14:00~16:00</div><div><span>仙林</span><span>德业楼</span><span>202</span></div></td><td><div>线性代数</div><div>期末</div></td><td>未结束</td></tr>',
+  '<tr data-finished="false"><td><div class="time">2026-12-20 09:00~11:00</div><div><span>仙林校区</span></div></td><td><div>大学英语</div><div>期末</div></td><td>未结束</td></tr>'
+ ].join('');
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',text:'<table id="exams">'+rows+'</table>'})};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.deepEqual(Array.from(e.state.exams,x=>[x.title,x.location]),[
+  ['（考试）高等数学','博远楼101'],
+  ['（考试）线性代数','德业楼 202'],
+  ['（考试）大学英语','']
+ ]);
+ a.deepEqual(Array.from(e.db,x=>[x.title,x.location]),[
+  ['（考试）高等数学','博远楼101'],
+  ['（考试）线性代数','德业楼 202'],
+  ['（考试）大学英语','']
+ ]);
+});
 test('App refresh always fetches all courses; scheduled sync rotates two earlier terms',async()=>{
  const e=await env(),fetched=[];
  e.m.HTTP.prototype.get=async()=>({
