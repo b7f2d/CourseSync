@@ -327,6 +327,21 @@ test('private mirror reads real events and ignores legacy preview fields',()=>{
   a.equal(Object.hasOwn(result.state,'preview'),false);
 });
 
+test('classroom labels wrap long room numbers without losing characters',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const wrap=vm.runInNewContext(ui.slice(ui.indexOf('function wrapLocation('),ui.indexOf('function CourseCard('))+'\nwrapLocation');
+ for(const room of ['德业楼 Z4-110','博远楼 JC204','德经楼 Z1S204']){
+   const wrapped=wrap(room,32);
+   a.equal(wrapped.replace(/\n/g,''),room);
+   a.ok(wrapped.includes('\n'));
+   for(const line of wrapped.split('\n')){
+     const width=Array.from(line).reduce((sum,c)=>sum+(/[\u0000-\u007f]/.test(c)?5.2:8),0);
+     a.ok(width<=32.001);
+   }
+ }
+ a.equal(wrap('',32),'');
+});
+
 test('medium and large widgets draw the same seven days with status colors and chronological overflow',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  const panel=ui.slice(ui.indexOf('function WeeklyPanel('),ui.indexOf('function SmallPanel('));

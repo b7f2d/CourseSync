@@ -19,6 +19,20 @@ const COLORS={
   white:'#FFFFFF'
 };
 
+// Explicit breaks allow narrow cards to wrap room numbers as well as Chinese text.
+function wrapLocation(value,width,fontSize=8){
+  const maxWidth=Math.max(fontSize,width);
+  let result='',lineWidth=0;
+  for(const character of String(value||'')){
+    if(character==='\n'){result+='\n';lineWidth=0;continue;}
+    const charWidth=/[\u0000-\u007f]/.test(character)?fontSize*0.65:fontSize;
+    if(lineWidth&&lineWidth+charWidth>maxWidth){result+='\n';lineWidth=0;}
+    result+=character;
+    lineWidth+=charWidth;
+  }
+  return result;
+}
+
 function CourseCard({course,width,height,compact,stackTimes}){
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?COLORS.white:COLORS.dark;
@@ -31,8 +45,8 @@ function CourseCard({course,width,height,compact,stackTimes}){
   const time=compact?start:start+(stackTimes?'\n':'–')+course.endLabel;
   const chars=Array.from(title).length;
   const availableWidth=Math.max(1,width-(compact?6:8));
-  const locationLines=course.location
-    ?Math.ceil(Array.from(course.location).length/Math.max(1,Math.floor(availableWidth/8))):0;
+  const location=wrapLocation(course.location,availableWidth);
+  const locationLines=location?location.split('\n').length:0;
   const availableHeight=Math.max(1,height-(stackTimes?30:20)-locationLines*10);
   const titleFont=Math.max(5,Math.min(compact?10:11,
     Math.floor(Math.sqrt(availableWidth*availableHeight/Math.max(1,chars)*0.8))));
@@ -45,7 +59,7 @@ function CourseCard({course,width,height,compact,stackTimes}){
     <Text font={8} foregroundStyle={detail} lineLimit={stackTimes?2:1}
       minScaleFactor={0.8}>{time}</Text>
     {course.location?<Text font={8} fixedSize={{horizontal:false,vertical:true}}
-      multilineTextAlignment="leading" foregroundStyle={detail}>{course.location}</Text>:null}
+      multilineTextAlignment="leading" foregroundStyle={detail}>{location}</Text>:null}
   </VStack>;
 }
 
