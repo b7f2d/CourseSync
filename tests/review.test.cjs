@@ -753,7 +753,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  for(const event of e.db)event.notes=oldNote;
  queried.length=0;e.requests.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','159','exams']);
+ a.deepEqual(queried,['161','exams','159']);
  a.deepEqual(e.requests,[]);
  a.ok(e.db.every(event=>event.notes===oldNote));
  a.match(e.sandbox.output,/刷新成功/);
@@ -765,6 +765,36 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  a.equal(e.store.read().runStatus,'success');
  a.equal(e.db.length,3);
  a.equal(e.db.filter(event=>event.notes===oldNote).length,2);
+
+ const readTerm=e.m.HTTP.prototype.json;
+ e.m.HTTP.prototype.json=async url=>{
+   if(new URL(url).searchParams.get('semesterId')==='159')throw Object.assign(new Error('budget'),{code:'BUDGET'});
+   return readTerm(url);
+ };
+ await e.m.run();
+ const partial=e.store.read();
+ a.equal(partial.runStatus,'partial');
+ a.equal(partial.lastExamError,null);
+ a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['159','BUDGET']]);
+ a.equal(partial.exams.length,1);
+});
+test('an unreadable exam response reports the reason and stops after one exam request',async()=>{
+ const e=await env();
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const readPage=e.m.HTTP.prototype.get;
+ let examRequests=0;
+ e.m.HTTP.prototype.get=async url=>{
+   if(!url.endsWith('/exam-arrange'))return readPage(url);
+   examRequests++;
+   return {url,text:'<html>unexpected response</html>'};
+ };
+ await executeDaily(e);
+ a.equal(examRequests,1);
+ a.equal(e.store.read().lastExamError,'EXAM_SCHEMA');
+ a.match(e.sandbox.output,/部分完成.*EXAM_SCHEMA/);
+ a.equal(e.notices.length,1);
+ a.match(e.notices[0].body,/EXAM_SCHEMA/);
+ a.equal(e.db.length,1);
 });
 test('successful background refresh skips notifications even when delivery is unavailable',async()=>{
  const e=await env();loggedIn(e,raw([activity({weekIndexes:[1]})]));
