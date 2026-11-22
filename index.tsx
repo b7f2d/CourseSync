@@ -2178,22 +2178,11 @@ function stampStage(state,store,stage,persist=true){
 }
 function createProgress(state,store,interactive,activityLoader){
   let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
-  let activityStart=null,activityPhase='connect';
+  let activityStart=null;
   const stage=message=>{
     stampStage(state,store,message,interactive);
-    if(closed||!started)return;
+    if(closed||!started||!interactive)return;
     const label=String(message||'');
-    if(!interactive){
-      if(!activityStart)return;
-      const phase=/^(读取考试日程|更新考试日程)/.test(label)?'exams':
-        /^(读取学期|请求学期|写入学期)/.test(label)?'courses':null;
-      if(!phase||phase===activityPhase)return;
-      activityPhase=phase;
-      activityStart.then(activity=>{
-        if(!closed&&phase===activityPhase)return activity?.update({phase});
-      }).catch(()=>{});
-      return;
-    }
     if(/检查目标日历/.test(label))ui?.update?.(0.1);
     else if(/连接教务系统|尝试读取教务课表入口|学校单点登录跳转|解析学校登录表单|注册设备指纹|提交学校认证请求/.test(label))ui?.update?.(0.25);
     else if(/^(认证完成后读取课表页面|读取学期|请求学期)/.test(label))ui?.update?.(0.5);

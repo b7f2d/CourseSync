@@ -92,7 +92,7 @@ test('the intent entry enables an activity by default and honors explicit opt-ou
  }
 });
 
-test('requested activity reports real sync stages and ends once with a partial result',async()=>{
+test('an activity keeps one sync display through courses and exams and ends once',async()=>{
  const e=await env(),calls=[];
  const progress=e.m.createProgress(e.state,e.store,false,async isRunning=>{
    a.equal(isRunning(),true);
@@ -107,9 +107,11 @@ test('requested activity reports real sync stages and ends once with a partial r
  await new Promise(resolve=>setImmediate(resolve));
  progress('读取考试日程');
  await new Promise(resolve=>setImmediate(resolve));
+ progress('读取学期 159');
+ await new Promise(resolve=>setImmediate(resolve));
  await progress.finish('partial');
  await progress.finish();
- a.deepEqual(calls,['start','courses','exams','partial',2]);
+ a.deepEqual(calls,['start','partial',2]);
 });
 
 test('a stuck activity start does not hold up the sync and a late activity is closed',async()=>{
