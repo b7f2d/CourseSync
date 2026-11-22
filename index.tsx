@@ -2380,6 +2380,13 @@ async function pickCalendar(state,store){
       }else if(res.action==='select'){
         picked=all.find(c=>c.identifier===res.calendarId);
         assert(picked&&liveCalendar(picked),'CALENDAR_READONLY');
+        const consent=await HostDialog.confirm({
+          title:'⚠️ 绑定已有日历',
+          message:'同步可能删除「'+picked.title+'」中原有的日程，包括你手动添加的个人日程。请确认这是专用日历。若其中有个人日程，请取消并新建日历。',
+          cancelLabel:'取消',
+          confirmLabel:'仍然绑定'
+        });
+        if(consent!==true)fail('CANCELLED');
         store.check();
       }else{
         fail('CANCELLED');

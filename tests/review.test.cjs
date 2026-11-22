@@ -1236,17 +1236,42 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
  a.equal(e.store.read().runStatus,'success');
  a.equal(alerts.length,0);
 });
-test('Scripting first provisioning lets user select an existing writable calendar via native manager',async()=>{
+test('Scripting first provisioning warns before binding an existing calendar',async()=>{
  const e=await env({hostEnv:'index'});
  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;
  let prompted=false;
+ const warnings=[];
  e.sandbox.__sdk.Navigation={present:async()=>null};
  e.sandbox.__sdk.Dialog.prompt=async()=>{prompted=true;return 'Fallback';};
+ e.sandbox.__sdk.Dialog.confirm=async warning=>{
+   warnings.push(warning);
+   a.equal(e.store.read().calendarId,null);
+   a.equal(e.db.length,0);
+   return true;
+ };
  e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier,calendarTitle:e.other.title});
  loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
  a.equal(prompted,false);
+ a.equal(warnings.length,1);
+ a.match(warnings[0].message,/「个人」.*删除|删除「个人」/);
+ a.match(warnings[0].message,/个人日程/);
+ a.equal(warnings[0].confirmLabel,'仍然绑定');
  a.equal(e.store.read().calendarId,e.other.identifier);
  a.equal(e.store.read().calendarTitle,e.other.title);
+});
+test('cancelling the first binding warning leaves the calendar and binding untouched',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.state.calendarId=null;
+ e.store.write(e.state);
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__calendarManagerMock=async()=>({action:'select',calendarId:e.other.identifier});
+ e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ const personal=e.add(lesson({title:'个人日程'}),{cal:e.other,notes:''});
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
+ a.equal(e.state.calendarId,null);
+ a.equal(e.store.read().calendarId,null);
+ a.deepEqual(e.db,[personal]);
+ a.deepEqual(e.requests,[]);
 });
 test('Scripting first provisioning lets user create a custom-named iCloud calendar via native manager',async()=>{
  const e=await env({hostEnv:'index'});

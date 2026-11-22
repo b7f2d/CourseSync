@@ -459,6 +459,12 @@ function CalendarManageView({ calendars, currentCalendarId }: CalendarManageOpti
           cancellationAction: <Button title="取消" action={() => dismiss(null)} />
         }}
       >
+        <Section header={<Text>⚠️ 绑定前请确认</Text>}>
+          <Text font="subheadline">
+            同步可能删除所选日历中原有的个人日程。建议新建专用日历。
+          </Text>
+        </Section>
+
         <Section header={<Text>添加新日历</Text>}>
           <TextField
             title="日历名称"
