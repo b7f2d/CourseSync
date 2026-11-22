@@ -132,7 +132,8 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
  assert.match(native,/navigationDestination=\{\{/);
  assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
- assert.match(native,/<NativeProgressCard value=\{page\.progress\}/);
+ assert.match(native,/if \(page\.kind === 'loading'\) \{\s*return <NativeProgressContent title="正在查询空闲教室" value=\{page\.progress\} \/>;\s*\}\s*return <List/);
+ assert.match(progress,/<NativeProgressContent title=\{title\} value=\{value\}/);
  assert.match(progress,/<NativeProgressCard value=\{value\}/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });

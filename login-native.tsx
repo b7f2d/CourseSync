@@ -4,9 +4,9 @@
 import {
   Navigation, NavigationStack, List, Section, Text,
   TextField, SecureField, Button, Image, useState,
-  VStack, HStack, Rectangle, Spacer, modifiers, useRef,
+  VStack, HStack, Spacer, modifiers, useRef,
 } from 'scripting';
-import { NativeProgressCard } from './progress-native';
+import { NativeProgressContent } from './progress-native';
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
   const dismiss = Navigation.useDismiss();
@@ -153,18 +153,15 @@ type FreeRoomResult =
 type FreeRoomPage = FreeRoomResult | {kind: 'loading'; progress: number};
 
 function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
+  if (page.kind === 'loading') {
+    return <NativeProgressContent title="正在查询空闲教室" value={page.progress} />;
+  }
   return <List
-    navigationTitle={page.kind === 'loading' ? '正在查询空闲教室' : '空闲教室'}
+    navigationTitle="空闲教室"
     navigationBarTitleDisplayMode="inline"
     listStyle="insetGroup"
   >
-    {page.kind === 'loading' ? (
-      <Section>
-        <VStack alignment="center" frame={{maxWidth:'infinity'}} listRowBackground={<Rectangle fill="clear" />}>
-          <NativeProgressCard value={page.progress} />
-        </VStack>
-      </Section>
-    ) : page.kind === 'error' ? (
+    {page.kind === 'error' ? (
       <Section>
         <Text font="body" foregroundStyle="secondaryLabel">{page.message}</Text>
         <Button title="重试" systemImage="arrow.clockwise" action={retry} />

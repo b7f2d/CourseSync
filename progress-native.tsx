@@ -15,7 +15,7 @@ type ProgressSession={
   dismiss:(() => void)|null;
 };
 
-export function NativeProgressCard({value}:{value:number}) {
+function NativeProgressCard({value}:{value:number}) {
   return <GeometryReader frame={{height:208}}>
     {proxy=>{
       const barWidth=Math.min(300,proxy.size.width);
@@ -41,6 +41,20 @@ export function NativeProgressCard({value}:{value:number}) {
   </GeometryReader>;
 }
 
+export function NativeProgressContent({title,value}:{title:string;value:number}) {
+  return <VStack
+    navigationTitle={title}
+    navigationBarTitleDisplayMode="inline"
+    frame={{maxWidth:'infinity',maxHeight:'infinity'}}
+    padding={24}
+    spacing={16}
+  >
+    <Spacer/>
+    <NativeProgressCard value={value} />
+    <Spacer/>
+  </VStack>;
+}
+
 function ProgressScreen({session,title}:{session:ProgressSession,title:string}) {
   const dismiss=Navigation.useDismiss();
   const [value,setValue]=useState(session.progress);
@@ -55,17 +69,7 @@ function ProgressScreen({session,title}:{session:ProgressSession,title:string}) 
     });
   }
   return <NavigationStack>
-    <VStack
-      navigationTitle={title}
-      navigationBarTitleDisplayMode="inline"
-      frame={{maxWidth:'infinity',maxHeight:'infinity'}}
-      padding={24}
-      spacing={16}
-    >
-      <Spacer/>
-      <NativeProgressCard value={value} />
-      <Spacer/>
-    </VStack>
+    <NativeProgressContent title={title} value={value} />
   </NavigationStack>;
 }
 
