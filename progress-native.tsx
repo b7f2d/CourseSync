@@ -140,8 +140,6 @@ export function createNativeProgressView(title='正在同步课程和考试'){
     },
     finish(){
       if(session.closed)return;
-      session.progress=1;
-      if(session.setProgress)try{session.setProgress(1);}catch(_){}
       session.closed=true;
       session.revision++;
       session.shown=false;

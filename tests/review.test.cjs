@@ -1201,7 +1201,27 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).length,1);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,0);});
-test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,0);});
+test('legacy course reminders are cleared once after upgrading',async()=>{
+ const e=await env();
+ e.state.minutes=10;
+ e.state.notificationMode='result-only-v1.9';
+ let reads=0;
+ const old='nufe-local-class-'+e.state.owner+'-one';
+ const removed=[];
+ e.sandbox.__sdk.Notification.getAllPendingsOfCurrentScript=async()=>{
+   reads++;
+   return [{identifier:old},{identifier:'another-feature'}];
+ };
+ e.sandbox.__sdk.Notification.removePendings=async ids=>removed.push(...ids);
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ await e.m.run();
+ a.equal(reads,1);
+ a.deepEqual(removed,[old]);
+ a.equal(e.store.read().minutes,0);
+ a.equal(e.store.read().notificationMode,'result-only-v2');
+ a.equal(e.notices.length,0);
+});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
 test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
  const e=await env({hostEnv:'index'});
@@ -1252,6 +1272,20 @@ test('Scripting first provisioning cancels cleanly when native calendar manager 
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);});
 test('Scripting native fetch cancels redirect and exposes parsed cookie metadata',async()=>{const e=await env();let stopped=false;e.sandbox.fetchImpl=async(url,opt)=>{a.equal(opt.allowInsecureRequest,false);a.equal(await opt.handleRedirect({url:'https://jwxt.nufe.edu.cn/student/login'}),null);stopped=true;return {status:302,headers:{forEach:fn=>{fn('/student/login','location');},get:()=>null},cookies:[{name:'school',value:'local-token',domain:'jwxt.nufe.edu.cn',path:'/',expiresDate:null}],mimeType:'text/html',text:async()=>''};};const req=new e.m.ScriptingAdapter.Request('https://jwxt.nufe.edu.cn/student/sso/login');let redirected='';req.onRedirect=r=>{redirected=r.url;return null;};await req.loadString();a.ok(stopped);a.equal(redirected,'https://jwxt.nufe.edu.cn/student/login');a.equal(req.response.cookies[0].name,'school');});
+test('school requests persist changed cookies and deletions only',async()=>{
+ const e=await env(),writes=[];
+ const headers=[undefined,'session=one; Path=/','session=one; Path=/','session=; Path=/; Max-Age=0'];
+ e.sandbox.fetchImpl=async()=>{
+   const cookie=headers.shift();
+   return {status:200,headers:new Map(cookie?[['set-cookie',cookie]]:[]),text:async()=>''};
+ };
+ const http=new e.m.HTTP(new e.m.CookieJar(),cookies=>writes.push(cookies.map(cookie=>cookie.value)));
+ for(let i=0;i<4;i++){
+   http.last=0;
+   await http.get('https://jwxt.nufe.edu.cn/student/for-std/course-table');
+ }
+ a.deepEqual(writes.map(values=>Array.from(values)),[['one'],[]]);
+});
 test('remaining slider WebView is ephemeral, does not expose JS evaluation and presents only local HTML',async()=>{
  const e=await env();let initialized=null;
  e.sandbox.__sdk.WebViewController=class{

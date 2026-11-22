@@ -163,7 +163,7 @@ class Notification{
    }
    return awaitNotification(HostNotification.schedule(options));
  }
- static async allPending(){const rows=await awaitNotification(HostNotification.getAllPendingsOfCurrentScript());return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:r.trigger?.date||null}));}
+ static async allPending(){return awaitNotification(HostNotification.getAllPendingsOfCurrentScript());}
  static async removePending(ids){if(ids.length)await awaitNotification(HostNotification.removePendings(ids));}
 }
 const Data=hostAPI('Data'),Image={fromData:data=>hostAPI('UIImage').fromData(data)};
@@ -502,29 +502,51 @@ function expand(raw, sid, anchor, teachingDates=null) {
   return {events,skipped,studentCode:String(vm.code||'')};
 }
 function same(a,b) { return ['sid','title','start','end','location','week','su','eu'].every(k=>a[k]===b[k])&&JSON.stringify(a.teachers)===JSON.stringify(b.teachers); }
-function plan(old, incoming, newId) {
-  const out=incoming.map(x=>({...x})), used=new Set(), paired=new Set(), inferred=[], ambiguous=[];
-  function pair(oi,ni,guess=false) {out[ni].id=old[oi].id;used.add(oi);paired.add(ni);if(guess)inferred.push(out[ni].id);}
-  // Match exact name+time first, irrespective of room / teacher changes.
-  for(let n=0;n<out.length;n++) {
-    const matches=old.map((o,i)=>({o,i})).filter(({o,i})=>!used.has(i)&&o.sid===out[n].sid&&o.title===out[n].title&&o.start===out[n].start&&o.end===out[n].end);
-    if(matches.length===1)pair(matches[0].i,n);
+function groupBy(items,keyOf){
+  const groups=new Map();
+  for(const item of items){
+    const key=keyOf(item), bucket=groups.get(key);
+    if(bucket)bucket.push(item);
+    else groups.set(key,[item]);
   }
-  const names=new Set(out.map(e=>e.sid+'\0'+e.title));
-  for(const key of names) {
-    let ns=out.map((e,i)=>i).filter(i=>!paired.has(i)&&out[i].sid+'\0'+out[i].title===key);
-    let os=old.map((e,i)=>i).filter(i=>!used.has(i)&&old[i].sid+'\0'+old[i].title===key);
+  return groups;
+}
+function plan(old, incoming, newId) {
+  const out=incoming.map(x=>({...x})),used=new Set(),paired=new Set(),inferred=[],ambiguous=[];
+  function pair(before,after,guess=false){
+    after.id=before.id;used.add(before);paired.add(after);
+    if(guess)inferred.push(after.id);
+  }
+  const lessonKey=e=>e.sid+'\0'+e.title;
+  const byTime=groupBy(old,e=>JSON.stringify([e.sid,e.title,e.start,e.end]));
+  // Match exact name+time first, irrespective of room / teacher changes.
+  for(const next of out){
+    const matches=byTime.get(JSON.stringify([next.sid,next.title,next.start,next.end]));
+    if(matches?.length===1&&!used.has(matches[0]))pair(matches[0],next);
+  }
+  const oldByName=groupBy(old.filter(e=>!used.has(e)),lessonKey);
+  for(const [key,next] of groupBy(out,lessonKey)){
+    let ns=next.filter(e=>!paired.has(e)),os=oldByName.get(key)||[];
+    if(!ns.length||!os.length)continue;
     // One unmatched instance in the same teaching week is an explainable inference.
-    for(const week of new Set(ns.map(i=>out[i].week))) {
-      const nn=ns.filter(i=>out[i].week===week),oo=os.filter(i=>old[i].week===week);
-      if(nn.length===1&&oo.length===1)pair(oo[0],nn[0],true);
+    const oldByWeek=groupBy(os,e=>e.week);
+    for(const [week,rows] of groupBy(ns,e=>e.week)){
+      const before=oldByWeek.get(week);
+      if(rows.length===1&&before?.length===1)pair(before[0],rows[0],true);
     }
-    ns=ns.filter(i=>!paired.has(i));os=os.filter(i=>!used.has(i));
-    if(ns.length===1&&os.length===1&&Math.abs(Date.parse(out[ns[0]].start)-Date.parse(old[os[0]].start))<=14*DAY)pair(os[0],ns[0],true);
+    ns=ns.filter(e=>!paired.has(e));os=os.filter(e=>!used.has(e));
+    if(ns.length===1&&os.length===1&&Math.abs(Date.parse(ns[0].start)-Date.parse(os[0].start))<=14*DAY)pair(os[0],ns[0],true);
     else if(ns.length&&os.length)ambiguous.push(key.split('\0')[1]);
   }
-  out.forEach(e=>{if(!e.id)e.id=newId();});
-  return {events:out,added:out.filter(e=>!old.some(o=>o.id===e.id)),removed:old.filter((e,i)=>!used.has(i)),changed:out.filter(e=>{const o=old.find(o=>o.id===e.id);return o&&!same(o,e);}),inferred,ambiguous};
+  const oldById=new Map(old.map(event=>[event.id,event]));
+  const added=[],changed=[];
+  for(const event of out){
+    if(!event.id)event.id=newId();
+    const before=oldById.get(event.id);
+    if(!before)added.push(event);
+    else if(!same(before,event))changed.push(event);
+  }
+  return {events:out,added,removed:old.filter(event=>!used.has(event)),changed,inferred,ambiguous};
 }
 // AES key expansion + AES-CBC/PKCS#7, tested against Node's crypto for 128/192/256 bits.
 function utf8(s) { return Array.from(unescape(encodeURIComponent(s)),c=>c.charCodeAt(0)); }
@@ -659,6 +681,7 @@ function networkErrorCode(error) {
 class HTTP {
   constructor(jar,persist=()=>{},before=()=>{},trace=()=>{},deadline=Infinity) {
     this.jar=jar;this.persist=persist;this.before=before;this.trace=trace;this.deadline=deadline;this.last=0;
+    this.savedCookies=JSON.stringify(jar.cookies);
   }
   async get(url,opt={}) {
     let method=opt.body?'POST':'GET',body=opt.body||null;
@@ -692,7 +715,16 @@ class HTTP {
       try{value=await bounded(opt.binary?req.load():req.loadString(),Math.min(requestLimit,runRemaining),timeoutCode);}
       catch(e){fail(e?.code===timeoutCode?timeoutCode:networkErrorCode(e));}
       this.before();
-      const res=req.response;assert(res,'NETWORK');this.trace('收到 HTTP '+res.statusCode+' '+requestLabel(url));const cookieStatus=this.jar.ingest(url,res.headers||{},res.cookies||[]);if(cookieStatus.rejected)this.trace('已安全忽略 '+cookieStatus.rejected+' 条不符合域名或格式规则的 Cookie（内容未记录）');this.persist(this.jar.cookies);
+      const res=req.response;assert(res,'NETWORK');this.trace('收到 HTTP '+res.statusCode+' '+requestLabel(url));
+      const cookieStatus=this.jar.ingest(url,res.headers||{},res.cookies||[]);
+      if(cookieStatus.rejected)this.trace('已安全忽略 '+cookieStatus.rejected+' 条不符合域名或格式规则的 Cookie（内容未记录）');
+      if(cookieStatus.accepted){
+        const cookies=JSON.stringify(this.jar.cookies);
+        if(cookies!==this.savedCookies){
+          this.persist(this.jar.cookies);
+          this.savedCookies=cookies;
+        }
+      }
       if(res.statusCode>=300&&res.statusCode<400){
         const k=Object.keys(res.headers||{}).find(k=>k.toLowerCase()==='location');
         let target=redirect||(k&&res.headers[k]);assert(target,'REDIRECT');
@@ -1045,7 +1077,8 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     saved=true;
   }
   const written=saved?await read():rows;
-  for(const [key,exam] of target)assert(written.some(ev=>keyOf(ev)===key&&matches(ev,exam)),'CALENDAR_VERIFY');
+  const writtenByKey=groupBy(written,keyOf);
+  for(const [key,exam] of target)assert(writtenByKey.get(key)?.some(ev=>matches(ev,exam)),'CALENDAR_VERIFY');
   const kept=new Set();
   let removed=false;
   for(const ev of written){
@@ -1661,7 +1694,13 @@ function validateState(s){
     assert(/^\d+$/.test(sid)&&t&&typeof t==='object','STATE_CORRUPT');validateRecords(t.events);
     for(const e of t.events){assert(s.owner&&s.calendarId&&e.sid===sid&&!allIds.has(e.id),'STATE_CORRUPT');allIds.add(e.id);}
   }
-  if(s.tx){const t=s.tx;assert(typeof t.sid==='string'&&typeof t.anchor==='string'&&typeof t.stamp==='string'&&Number.isFinite(Date.parse(t.stamp)),'STATE_CORRUPT');monday(t.anchor);validateRecords(t.before);validateRecords(t.target);assert([...t.before,...t.target].every(e=>e.sid===t.sid)&&t.changes&&Array.isArray(t.changes.examples),'STATE_CORRUPT');}
+  if(s.tx){
+    const t=s.tx;
+    assert(typeof t.sid==='string'&&typeof t.anchor==='string'&&typeof t.stamp==='string'&&Number.isFinite(Date.parse(t.stamp)),'STATE_CORRUPT');
+    monday(t.anchor);validateRecords(t.before);validateRecords(t.target);
+    assert([...t.before,...t.target].every(e=>e.sid===t.sid)&&t.changes&&
+      ['added','removed','changed'].every(key=>Number.isInteger(t.changes[key])&&t.changes[key]>=0),'STATE_CORRUPT');
+  }
 }
 function readCookieJar(){
   try{
@@ -1836,8 +1875,6 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
   return index;
 }
 
-function fingerprint(events){return JSON.stringify(events.map(({id,...e})=>e));}
-function deletionReady(previous,events,now){return previous&&previous.signature===fingerprint(events)&&now-previous.at>=5*60000;}
 async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='CourseSync';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
 
 // Session invalidation is known only after a school's request redirects to auth.
@@ -1858,13 +1895,6 @@ async function notifyAuthExpiredOnce(state,store) {
   await n.schedule();
   state.authExpiryNotifiedAt=new Date().toISOString();state.authNoticeError=null;
   store.write(state);return true;
-}
-async function testAuthNotification() {
-  const n=new Notification();n.identifier='nufe-local-auth-test';
-  n.title='CourseSync · 通知测试';
-  n.body='这是一条测试通知。学校会话失效后，定时同步会提醒你手动重新登录。';
-  n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
-  await n.schedule();
 }
 // Reconcile OLD unmarked ICS imports with the course events that this installation
 // ACTUALLY created, in the SAME selected writable calendar. Never infer from a
@@ -1955,9 +1985,10 @@ function snapshotSignature(e){return JSON.stringify(snapshotFields(e));}
 async function verifyBaseline(rows,state){
   const byNative=storedEventIndex(state);const records=rows.map(ev=>({ev,rec:eventRecord(ev,state.owner,byNative)})).filter(x=>x.rec);
   assertNonRecurring(records);
+  const byId=groupBy(records,row=>row.rec.sid+'\0'+row.rec.id);
   for(const term of Object.values(state.semesters))for(const e of term.events||[]){
-    const matches=records.filter(x=>x.rec.sid===e.sid&&x.rec.id===e.id);
-    assert(matches.length===1&&same(matches[0].rec,e),'CALENDAR_VERIFY');
+    const matches=byId.get(e.sid+'\0'+e.id);
+    assert(matches?.length===1&&same(matches[0].rec,e),'CALENDAR_VERIFY');
   }
 }
 async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
@@ -1997,18 +2028,17 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   state.lastLegacyCleanupRemaining=remaining;state.legacyReplacement.status=remaining?'unverified':'verified';store.write(state);
   assert(!remaining,'LEGACY_VERIFY');return requests;
 }
-async function cleanupLegacyDuplicates(calendar,state,store,progress=()=>{}){
-  return await replaceDedicatedLegacy(calendar,state,store,progress);
-}
-async function refreshReminders(state,store){
-  try{await reminders(state);state.reminderError=null;}catch(_){state.reminderError='NOTIFICATION_FAILED';}store.write(state);
-}
-async function reminders(state) {
-  const prefix='nufe-local-class-'+state.owner+'-',now=Date.now(),all=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
-  const desired=state.minutes>0?all.filter(e=>Date.parse(e.start)-state.minutes*60000>now+60000&&Date.parse(e.start)<now+7*DAY).slice(0,40):[];
-  const want=new Set(desired.map(e=>prefix+e.id));
-  const pending=await Notification.allPending();const pendingById=new Map(pending.map(n=>[n.identifier,n]));const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
-  for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pendingById.get(id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
+async function clearLegacyReminders(state,store){
+  if(state.notificationMode==='result-only-v2')return;
+  const prefix='nufe-local-class-'+state.owner+'-';
+  try{
+    const pending=await Notification.allPending();
+    await Notification.removePending(pending.map(n=>n.identifier).filter(id=>typeof id==='string'&&id.startsWith(prefix)));
+    state.notificationMode='result-only-v2';
+    state.minutes=0;
+    state.reminderError=null;
+  }catch(_){state.reminderError='NOTIFICATION_FAILED';}
+  store.write(state);
 }
 // Minimal, private same-project cache for widget.tsx. In some Scripting
 // widget extensions the FileManager App Group path is unavailable even though
@@ -2073,7 +2103,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程和考试由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整���结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程和考试缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程和考试。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程和考试变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程和考试在新日历中不可见。为避免重复课程和考试，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程和考试，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程和考试身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程和考试由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程和考试缺少可靠起止时间，已保留旧课表。',ANCHOR:'学校校历未提供可确认的教学周日期，已保留该学期的原有课程和考试。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程和考试变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程和考试在新日历中不可见。为避免重复课程和考试，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程和考试，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程和考试身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -2475,7 +2505,7 @@ async function probeSchoolSession(jar){
     try{
       const r=await new HTTP(jar||new CookieJar()).get(USTS_HOME+'?jsdm=xs&echarts=1');
       const valid=ustsStudentMenu(r.text);
-      return {connection:{level:'正常',detail:'苏州科技���学教务入口已响应'},
+      return {connection:{level:'正常',detail:'苏州科技大学教务入口已响应'},
         auth:valid?{level:'正常',detail:'当前会话可访问学生主菜单'}:
           {level:'注意',detail:'当前会话未通过登录检查'}};
     }catch(error){
@@ -2801,18 +2831,13 @@ async function finishTx(state,store,adapter,budget,refreshTimestamp=true) {
   assert(store.fm.fileExists(store.path(tx.backupName)),'BACKUP_FAILED');
   let backup;try{backup=JSON.parse(store.fm.readString(store.path(tx.backupName)));}catch(_){fail('BACKUP_FAILED');}
   assert(backup.calendarId===adapter.calendar.identifier&&JSON.stringify(backup.before)===JSON.stringify(tx.before)&&JSON.stringify(backup.target)===JSON.stringify(tx.target),'BACKUP_FAILED');
-  // The user authorized unattended replacement/cancellation of installation-owned courses.
-  tx.deletionsConfirmed=true;
-  const obsolete=tx.before.filter(e=>{const n=tx.target.find(n=>n.id===e.id);return !n||!same(e,n);}).map(e=>'nufe-local-class-'+state.owner+'-'+e.id);
-  if(obsolete.length)await Notification.removePending(obsolete);
+  adapter.hasMarkerWrites=false;
   const index=await applyTransaction(tx,adapter,budget);
   const oldTerm=state.semesters[tx.sid];
   const sourceChanges=tx.changes.added+tx.changes.removed+tx.changes.changed;
   state.semesters[tx.sid]={events:tx.target,index,anchor:tx.anchor,name:tx.name,lastSuccess:new Date().toISOString(),skipped:tx.skipped,
     notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
-  const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
-  if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程和考试变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
   state.tx=null;store.write(state);
   await polishTermNotes(adapter.calendar,state,store,tx.sid,budget,undefined,refreshTimestamp);
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
@@ -2848,7 +2873,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
-  if(state.notice){state.notice=null;store.write(state);}
+  delete state.notice;
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
   const usts=activeSchoolId==='usts';
   const jar=state.signedOut||manualAuth?.kind==='credentials'?new CookieJar():readCookieJar();
@@ -2933,7 +2958,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Recover local logical IDs from managed event notes when term index is absent.
     if(!old){const recovered=(await adapter.scan(anchor,normalized.events)).filter(x=>x.rec.sid===String(sid)).map(x=>x.rec);const by=new Map();for(const e of recovered)by.set(e.id,e);old={events:[...by.values()]};}
     assert(normalized.events.length||!old.events.length,'EMPTY_SOURCE');
-    const p=plan(old.events,normalized.events,uuid);const approved=true;
+    const p=plan(old.events,normalized.events,uuid);
     // A missing, duplicate or edited event still goes through the repair transaction.
     if(!interactive&&!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
        old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
@@ -2946,9 +2971,8 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Ambiguous moved lessons are represented as remove+add; no relationship is invented.
     // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
     stage('写入学期 '+sid+' 的日历事件');
-    state.tx={id:uuid(),sid:String(sid),anchor,name,hadBaseline:!!state.semesters[sid],deletionsConfirmed:approved,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length,examples:[...p.changed.map(e=>e.title+' 已调整'),...p.added.map(e=>e.title+' 新增')].slice(0,3)}};
+    state.tx={id:uuid(),sid:String(sid),anchor,name,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length}};
     store.write(state);await finishTx(state,store,adapter,budget,interactive);
-    if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
       if(rotating&&e.code==='BUDGET'&&!state.tx){
         for(const deferred of sids.slice(position))state.termErrors.push({sid:String(deferred),code:e.code});
@@ -2970,7 +2994,6 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
   }
   state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
-  await refreshReminders(state,store);
   return http;
 }
 // GET-only login-page preflight: does not ask for a password or modify the calendar.
@@ -3079,7 +3102,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终��正在写入的日历操作。';
+    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终止正在写入的日历操作。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
@@ -3268,7 +3291,7 @@ async function run() {
   let store=new Store();
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
-  let state,locked=false,progress=null,action=0,manualAuth=null;
+  let state,locked=false,progress=null,signOutRequested=false,manualAuth=null;
   try {
     if(!interactive&&reselectSchool){
       if(config.runsWithSiri)Script.setShortcutOutput('请打开 CourseSync 登录南京财经大学账号。');
@@ -3310,7 +3333,7 @@ async function run() {
         selected=await menu.presentSheet();
       }
       if(selected===null||selected===undefined||selected<0)return;
-      if(canSignOut&&selected===1)action=13;
+      signOutRequested=canSignOut&&selected===1;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -3333,14 +3356,9 @@ async function run() {
       }catch(_){state.credentialCloudStatus='unavailable';}
       store.write(state);
     }
-    // Remove legacy class reminders.
-    if(state.notificationMode!=='result-only-v1.9'){
-      state.notificationMode='result-only-v1.9';state.minutes=0;store.write(state);
-      await refreshReminders(state,store);
-    }
-    if(action===13){await signOut(state,store);return;}
-    if(action===5){await clearBrokenCookies(state,store);return;}
-    if(interactive&&action===0){
+    await clearLegacyReminders(state,store);
+    if(signOutRequested){await signOut(state,store);return;}
+    if(interactive){
       if(reselectSchool&&!savedReselectSchool)Keychain.set(SCHOOL_RESELECT_KEY,reselectSchool);
       const hasCredentials=!state.signedOut&&hasSavedCredentials();
       const selectedSchool=state.signedOut||reselectSchool?null:loadSelectedSchool(null,true);
@@ -3396,8 +3414,10 @@ async function run() {
       const reload=typeof widgets?.reloadUserWidgets==='function'?widgets.reloadUserWidgets:widgets?.reloadAll;
       if(typeof reload==='function')Promise.resolve(reload.call(widgets)).catch(()=>{});
     }catch(_){}
-    progress('完成本次同步');state.runStatus=state.termErrors?.length||examError?'partial':'success';state.runCompletedAt=new Date().toISOString();
+    state.runStatus=state.termErrors?.length||examError?'partial':'success';
+    state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
+    progress(state.runStatus==='success'?'完成本次同步':'本次同步部分完成');
     store.write(state);
     if(progress){try{await progress.finish(state.runStatus);}
       catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
@@ -3459,7 +3479,7 @@ async function run() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,refreshReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.

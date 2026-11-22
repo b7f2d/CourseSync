@@ -220,30 +220,37 @@ function DashboardAction({title, systemImage, action, role}: {
 function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeRooms }: DashboardOptions) {
   const dismiss = Navigation.useDismiss();
   const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
-  const roomQuery = useRef({visible: false, pending: false, progress: 0.08});
+  const roomQuery = useRef({visible: false, pending: false, progress: 0.08, revision: 0});
   const openFreeRooms = async () => {
     if (!loadFreeRooms) return;
     const query = roomQuery.current;
+    if (!query.visible || !query.pending) query.progress = 0.08;
     query.visible = true;
-    if (!query.pending) query.progress = 0.08;
     setFreeRoomPage({kind: 'loading', progress: query.progress});
     if (query.pending) return;
     query.pending = true;
+    const revision=query.revision;
+    const isActive=()=>query.visible&&query.revision===revision;
     try {
-      const result = await loadFreeRooms(() => query.visible, progress => {
+      const result = await loadFreeRooms(isActive, progress => {
+        if (!isActive()) return;
         query.progress = progress;
-        if (query.visible) setFreeRoomPage({kind: 'loading', progress});
+        setFreeRoomPage({kind: 'loading', progress});
       });
-      if (query.visible) setFreeRoomPage(result);
+      if (isActive()) setFreeRoomPage(result);
+    } catch (_) {
+      if (isActive()) setFreeRoomPage({kind: 'error', message: '查询失败，请稍后重试。'});
     } finally {
       query.pending = false;
+      if (query.visible && query.revision !== revision) void openFreeRooms();
     }
   };
   const isSignedOut = !!state?.signedOut;
   const isFailed = state?.runStatus === 'failed';
   const isSuccess = state?.runStatus === 'success';
-  const statusColor = isSignedOut ? '#F59E0B' : isFailed ? '#EF4444' : '#10B981';
-  const statusBadge = isSignedOut ? '未登录' : isFailed ? '异常' : isSuccess ? '已同步' : '';
+  const isPartial = state?.runStatus === 'partial';
+  const statusColor = isSignedOut || isPartial ? 'systemOrange' : isFailed ? 'systemRed' : 'systemGreen';
+  const statusBadge = isSignedOut ? '未登录' : isFailed ? '刷新失败' : isPartial ? '部分完成' : isSuccess ? '已同步' : '';
   const calTitle = state?.calendarTitle || (state?.calendarId ? '专用课程和考试日历' : '未绑定');
   const formatLastCheck = (iso?: string) => {
     if (!iso) return '暂无同步记录';
@@ -266,6 +273,7 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
           onChanged: visible => {
             if (!visible) {
               roomQuery.current.visible = false;
+              roomQuery.current.revision++;
               setFreeRoomPage(null);
             }
           },

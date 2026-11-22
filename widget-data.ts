@@ -25,16 +25,14 @@ export function readWidgetMirror(storage){
   if(!obj||obj.version!==1||!Array.isArray(obj.events)||
      obj.events.length>400||typeof obj.lastCheck!=='string')
     return {kind:'invalid',code:'STORAGE_SCHEMA'};
-  const events=[];
   for(const e of obj.events){
     if(!e||typeof e.title!=='string'||typeof e.start!=='string'||
        typeof e.end!=='string'||typeof e.location!=='string'||
        (e.teacher!==undefined&&typeof e.teacher!=='string'))
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
-    events.push(e);
   }
   return {kind:'ready',state:{lastCheck:obj.lastCheck,
-    semesters:{widget:{events}}}};
+    semesters:{widget:{events:obj.events}}}};
 }
 
 export function loadBestWidgetState(files,storage){
@@ -88,15 +86,6 @@ export function loadWidgetState(files) {
   return {kind:'ready',state};
 }
 
-export function weekStartBeijing(now){
-  const ms = now instanceof Date ? now.getTime() : Number(now);
-  if(!Number.isFinite(ms)) throw Error('WIDGET_TIME');
-  const local = new Date(ms+BEIJING);
-  const daysSinceMonday = (local.getUTCDay()+6)%7;
-  return Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-
-    daysSinceMonday*DAY-BEIJING;
-}
-
 function plainText(value,limit){
   return String(value||'').trim().slice(0,limit);
 }
@@ -118,44 +107,6 @@ function safeCourse(event,weekStart,weekEnd){
     startLabel:timeString(start),endLabel:timeString(end)};
 }
 
-export function buildWeek(state,now=Date.now()){
-  const at=now instanceof Date?now.getTime():Number(now);
-  const start=weekStartBeijing(at),end=start+7*DAY;
-  const courses=[];
-  const semesters=state&&state.semesters&&typeof state.semesters==='object'
-    ?Object.values(state.semesters):[];
-  for(const semester of semesters){
-    if(!semester||!Array.isArray(semester.events))continue;
-    for(const ev of semester.events){
-      const course=safeCourse(ev,start,end);
-      if(course)courses.push(course);
-    }
-  }
-  courses.sort((a,b)=>a.start-b.start||a.title.localeCompare(b.title));
-  const weekend=courses.some(e=>e.day>=5);
-  const count=weekend?7:5;
-  const today=Math.floor((at-start)/DAY);
-  const days=Array.from({length:count},(_,idx)=>({
-    index:idx,label:'周'+NAMES[idx],number:new Date(start+idx*DAY+BEIJING).getUTCDate(),
-    today:idx===today,
-    courses:courses.filter(c=>c.day===idx).map(c=>({
-      ...c,status:c.end<=at?'done':c.start<=at?'current':'upcoming'
-    }))
-  }));
-  const boundaries=[start+7*DAY];
-  for(const c of courses){
-    if(c.start>at)boundaries.push(c.start);
-    if(c.end>at)boundaries.push(c.end);
-  }
-  const nextMidnight=start+(today+1)*DAY;
-  if(nextMidnight>at)boundaries.push(nextMidnight);
-  const nextAt=Math.min(...boundaries.filter(t=>t>at));
-  const update=state&&typeof state.lastCheck==='string'?Date.parse(state.lastCheck):NaN;
-  const outdated=Number.isFinite(update)&&at-update>7*DAY;
-  return {start,at,days,courses,weekend,today,nextAt,
-    updated:Number.isFinite(update)?update:null,outdated,empty:courses.length===0};
-}
-
 // A rolling three-day view: yesterday, today, tomorrow.
 // It deliberately crosses semester week/month/year boundaries without using
 // the calendar week's Monday as a fixed display window.
@@ -168,9 +119,10 @@ export function buildRollingDays(state,now=Date.now()){
   const courses=[];
   const semesters=state&&state.semesters&&typeof state.semesters==='object'
     ?Object.values(state.semesters):[];
-  for(const semester of semesters){
-    if(!semester||!Array.isArray(semester.events))continue;
-    for(const ev of semester.events){
+  const groups=[...semesters.map(semester=>semester?.events),state?.exams];
+  for(const events of groups){
+    if(!Array.isArray(events))continue;
+    for(const ev of events){
       const course=safeCourse(ev,start,end);
       if(course&&course.day<3)courses.push(course);
     }
@@ -205,7 +157,7 @@ export function buildRollingDays(state,now=Date.now()){
 }
 
 // Fixed chronological order: never jump or auto-focus a different class.
-// When layout capacity is reached, the UI prints "+N节课" for the remainder.
+// When layout capacity is reached, the UI counts the remaining entries.
 export function selectVisibleCourses(day,limit=1){
   const all=Array.isArray(day?.courses)?day.courses:[];
   const n=Math.max(1,Math.min(5,Math.trunc(Number(limit)||1)));
@@ -213,7 +165,7 @@ export function selectVisibleCourses(day,limit=1){
 }
 
 // Show the current/next class together when today contains several classes.
-// Earlier completed classes remain in cache, but are not counted in "+N节课".
+// Earlier completed classes remain in cache and do not count toward overflow.
 export function selectTodayPair(day){
   const courses=Array.isArray(day?.courses)?day.courses:[];
   if(courses.length<=1)return {courses,hiddenAfter:0};
@@ -250,10 +202,4 @@ export function widgetReloadDate(model){
   // updates; only request an update at the next class boundary or day rollover.
   const at=model.at,delta=Math.max(60000,model.nextAt-at+1000);
   return new Date(at+Math.min(delta,DAY));
-}
-
-export function formatWeekLabel(start){
-  const d=new Date(start+BEIJING);
-  const y=d.getUTCFullYear(),m=d.getUTCMonth()+1,date=d.getUTCDate();
-  return y+' / '+String(m).padStart(2,'0')+' / '+String(date).padStart(2,'0');
 }

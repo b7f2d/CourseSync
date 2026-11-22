@@ -42,7 +42,7 @@ test('first setup opens the native credential form directly',()=>{
  assert.match(index,/presentNativeRefreshForm\(NUFE_SCHOOL\.id,allowReuse\)/);
  assert.match(index,/response\.schoolId===NUFE_SCHOOL\.id/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
- assert.match(index,/if\(interactive&&action===0\)/);
+ assert.match(index,/if\(signOutRequested\)\{await signOut\(state,store\);return;\}\s*if\(interactive\)/);
  assert.match(index,/if\(!manualAuth\)return;/);
 });
 
@@ -92,7 +92,7 @@ test('native progress replaces the HTML view with one stable system sheet',()=>{
 });
 
 test('routine refresh and re-login keep using the selected school',()=>{
- const start=index.indexOf('if(interactive&&action===0){');
+ const start=index.indexOf('if(signOutRequested)');
  const end=index.indexOf('if(!interactive){',start);
  const routine=index.slice(start,end);
  assert.match(routine,/const hasCredentials=!state\.signedOut&&hasSavedCredentials\(\)/);

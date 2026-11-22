@@ -93,10 +93,10 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
           density={emphasize?'single':'side'}/>
         <Spacer minLength={0}/>
       </HStack>):
-      <Text font={12} foregroundStyle={COLORS.muted}>无课</Text>}
+      <Text font={12} foregroundStyle={COLORS.muted}>无安排</Text>}
     {window.hiddenAfter>0?
       <Text font={compact?10:11} foregroundStyle={COLORS.faint}>
-        +{window.hiddenAfter}节课
+        +{window.hiddenAfter} 项
       </Text>:null}
   </VStack>;
 }
@@ -126,7 +126,7 @@ function TodayPairColumn({day,width,compact=false,gap=5,showAll=false}){
           <CourseCard key={c.id} course={c} compact={compact}
             width={cardWidth} density="pair"/>)}
         {columns.hiddenAfter>0?<Text font={compact?10:11}
-          foregroundStyle={COLORS.faint}>+{columns.hiddenAfter}节课</Text>:null}
+          foregroundStyle={COLORS.faint}>+{columns.hiddenAfter} 项</Text>:null}
       </VStack>
     </HStack>
   </VStack>;
@@ -220,7 +220,7 @@ function SmallPanel({model}){
         </VStack>:
         <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程和考试</Text>}
         {remaining>0?<Text font={10} foregroundStyle={COLORS.faint}>
-          +{remaining}节课
+          +{remaining} 项
         </Text>:null}
         </VStack>
       </VStack>;

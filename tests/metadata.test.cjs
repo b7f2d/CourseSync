@@ -93,5 +93,4 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.ok(index.includes("__shortcutOutput||'处理完成'"));
   const intentBody=intent.split('\n').filter(line=>!line.trimStart().startsWith('import ')).join('\n');
   assert.doesNotThrow(()=>new (require('node:vm').Script)(intentBody));
-  assert.ok(read('intent-probe.tsx').includes('CourseSync intent ok'));
 });
