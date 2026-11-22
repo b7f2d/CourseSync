@@ -32,14 +32,16 @@ export function NativeProgressContent({title,value}:{title:string;value:number})
           foregroundStyle="systemBlue"
           frame={{width:iconWidth,height:iconWidth}}
         />
-        <ProgressView
-          value={value}
-          total={1}
-          progressViewStyle="linear"
-          tint="systemBlue"
-          frame={{width:barWidth}}
-          scaleEffect={{x:1,y:1.8}}
-        />
+        {title==='正在登录账号'
+          ? <ProgressView tint="systemBlue" />
+          : <ProgressView
+              value={value}
+              total={1}
+              progressViewStyle="linear"
+              tint="systemBlue"
+              frame={{width:barWidth}}
+              scaleEffect={{x:1,y:1.8}}
+            />}
       </VStack>;
     }}
   </GeometryReader>;
