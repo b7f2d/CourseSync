@@ -173,7 +173,9 @@ function formatRoomResults(date, rooms) {
     const heading=periods[period] || period;
     const content=String(room || '').split('\n').map(line=>{
       const match=line.match(/^(.*?：)(.+、.+?)(（第[^）]+节）)$/);
-      return match ? match[1]+match[2].split('、').map(value=>value+match[3]).join('\n') : line.replace(/、/g,'\n');
+      if(match)return match[1]+'\n'+match[2].split('、').map(value=>value+match[3]).join('\n');
+      if(period==='建议教室'&&line.includes('：'))return line.replace('：','：\n').replace(/、/g,'\n');
+      return line.replace(/、/g,'\n');
     }).join('\n');
     return heading+'\n'+content;
   });
