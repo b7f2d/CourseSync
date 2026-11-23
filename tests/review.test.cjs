@@ -2444,28 +2444,19 @@ test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest f
  ]);
 });
 
-test('resolveDayRooms merges all-day, morning-afternoon, afternoon-evening rooms or lists separately',async()=>{
- const e=await env();
- const rAll={id:1,nameZh:'博远楼JC101',floor:1};
- const rAft={id:2,nameZh:'博远楼JC203',floor:2};
- const rEve={id:3,nameZh:'博观楼JB105',floor:1};
- const describe=rows=>rows.map(({period,room})=>period+'：'+room).join('\n');
-
- // 1. 全天同一教室
- const allDayLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rAll,rEve]);
- a.equal(describe(allDayLines),'全天：博远楼JC101');
-
- // 2. 白天同一教室 (上午 + 下午)
- const mornAftLines=e.m.resolveDayRooms([rAll],[rAll,rAft],[rEve]);
- a.equal(describe(mornAftLines),'白天：博远楼JC101\n晚上：博观楼JB105');
-
- // 3. 下午至晚上同一教室 (下午 + 晚上)
- const aftEveLines=e.m.resolveDayRooms([rAll],[rAft],[rAft,rEve]);
- a.equal(describe(aftEveLines),'上午：博远楼JC101\n下午至晚上：博远楼JC203');
-
- // 4. 三时段各不相同
- const sepLines=e.m.resolveDayRooms([rAll],[rAft],[rEve]);
- a.equal(describe(sepLines),'上午：博远楼JC101\n下午：博远楼JC203\n晚上：博观楼JB105');
+test('room recommendations preserve every ranked room and only combine continuous periods',async()=>{
+ const {m}=await env();
+ const a1={id:1,nameZh:'博远楼JC101'},a2={id:2,nameZh:'博远楼JC203'},b={id:3,nameZh:'博观楼JB105'};
+ const describe=rows=>Array.from(rows,({period,room})=>period+'：'+room);
+ a.deepEqual(describe(m.resolveDayRooms([a1,a2],[a1,a2],[a1,b])),[
+  '建议教室：全天：博远楼JC101','上午：博远楼JC101、博远楼JC203',
+  '下午：博远楼JC101、博远楼JC203','晚上：博远楼JC101、博观楼JB105']);
+ a.match(describe(m.resolveDayRooms([a1],[a1,a2],[b]))[0],/白天：博远楼JC101/);
+ a.match(describe(m.resolveDayRooms([a1],[a2],[a2,b]))[0],/下午至晚上：博远楼JC203/);
+ a.match(describe(m.resolveDayRooms([a1],[a2],[a1]))[0],/暂无可连续/);
+ const partial=describe(m.resolveDayRooms([a1],[a1],[a1],true));
+ a.match(partial[0],/上午至下午第8节/);a.doesNotMatch(partial[0],/全天/);
+ a.match(partial[2],/第5—8节/);
 });
 
 test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
@@ -2489,7 +2480,9 @@ test('NUFE free classroom query only requests today in China time and merges per
  a.deepEqual(progress,[0.25,0.5,0.75,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
-   {period:'白天',room:'博远楼JC101'},
+   {period:'建议教室',room:'白天：博远楼JC101'},
+   {period:'上午',room:'博远楼JC101'},
+   {period:'下午',room:'博远楼JC101'},
    {period:'晚上',room:'博远楼JC403'}
  ]);
  a.equal(requestedSegments.length,3);
@@ -2537,7 +2530,8 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  await e.m.run();
  a.equal(results.kind,'ready');
  a.deepEqual(progress,[0.25,0.5,0.75,1]);
- a.equal(results.rooms[0].room,'博远楼JC101');
+ a.equal(results.rooms[0].room,'全天：博远楼JC101');
+ a.equal(results.rooms.length,4);
  a.equal(failure.kind,'error');
  a.match(failure.message,/查询失败/);
  a.match(cancelled.message,/已取消/);
@@ -2594,4 +2588,18 @@ test('dashboard errors are not attributed to the previous run exam stage',async(
  a.equal(alerts.length,1);
  a.match(alerts[0].message,/阶段：打开主菜单/);
  a.doesNotMatch(alerts[0].message,/阶段：更新考试日程/);
+});
+
+test('afternoon fallback labels shorter availability and never promises full-day continuity',async()=>{
+ const {m}=await env();const called=[];
+ const room={id:11,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;called.push(units.join(','));
+   return {roomList:units.includes('9')?[]:[room]};
+ }};
+ const rows=await m.queryDayRooms(http,'2026-11-23');
+ a.equal(rows[0].period,'建议教室');a.match(rows[0].room,/上午至下午第8节/);
+ a.doesNotMatch(rows[0].room,/全天/);
+ a.equal(rows[2].period,'下午（第5—8节）');
+ a.ok(called.includes('5,6,7,8,9'));a.ok(called.includes('5,6,7,8'));
 });
