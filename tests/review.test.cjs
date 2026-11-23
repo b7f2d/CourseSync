@@ -2575,3 +2575,11 @@ test('glass dialog preserves selected action, cancellation and input without inv
  e.sandbox.__nativeDialogMock=async()=>null;
  a.equal(await prompt.presentAlert(),-1);
 });
+
+test('type-error diagnostics report only safe local source coordinates',async()=>{
+ const {m}=await env();
+ const error=new TypeError('secret-password');error.stack='TypeError: secret-password\n at f (/secret-user/private/index.tsx:123:45)';
+ const report=m.errorMessage(error,{lastStage:'保存同步结果'});
+ a.match(report,/代码位置：index 123:45/);
+ a.doesNotMatch(report,/secret-password|secret-user|private/);
+});

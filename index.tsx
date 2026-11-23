@@ -2207,7 +2207,10 @@ function actionFor(code){return (ERROR_GUIDE[code]||[null,'检查失败阶段、
 function briefTime(iso){if(!iso)return '无';try{return localDateTime(iso).replace(' ',' ');}catch(_){return '无';}}
 function errorMessage(error,state){
   const code=diagnosticCode(error),stage=state&&state.lastStage||'尚未记录阶段';
-  return '阶段：'+stage+'\n错误代码：'+code+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
+  // Report only a local source line, never exception messages or raw stacks.
+  const match=typeof error?.stack==='string'?/\bindex\.(?:tsx|js):(\d{1,7})(?::(\d{1,5}))?/.exec(error.stack):null;
+  const location=match?'\n代码位置：index '+match[1]+(match[2]?':'+match[2]:''):'';
+  return '阶段：'+stage+'\n错误代码：'+code+location+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
 function stampStage(state,store,stage,persist=true){
   const at=new Date().toISOString();
@@ -3381,6 +3384,8 @@ async function runAttempt() {
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
       state.lastExamError=diagnosticCode(error);
     }
+    // The last progress stage must identify failures after the exam step too.
+    state.lastStage='更新小组件数据';
     const examError=state.lastExamError;
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
@@ -3391,6 +3396,7 @@ async function runAttempt() {
       const reload=typeof widgets?.reloadUserWidgets==='function'?widgets.reloadUserWidgets:widgets?.reloadAll;
       if(typeof reload==='function')Promise.resolve(reload.call(widgets)).catch(()=>{});
     }catch(_){}
+    state.lastStage='保存同步结果';
     state.runStatus=state.termErrors?.length||examError?'partial':'success';
     state.runCompletedAt=new Date().toISOString();
     if(state.runStatus==='success')state.resultNoticeError=null;
@@ -3398,6 +3404,7 @@ async function runAttempt() {
     progress(state.runStatus==='success'?'完成本次同步':'本次同步部分完成');
     if(progress){try{await progress.finish(state.runStatus);}
       catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
+    state.lastStage='显示同步结果';
     if(state.termErrors?.length){
       if(interactive){
         const details=state.termErrors.map(({sid,code})=>{
