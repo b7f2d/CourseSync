@@ -6,7 +6,6 @@ import {
   TextField, SecureField, Button, Image, useState,
   VStack, HStack, Spacer, useRef,
 } from 'scripting';
-import { createNativeProgressView } from './progress-native';
 
 // The system sheet hosts a compact, centered glass dialog. Its contents remain
 // scrollable when the keyboard, a small screen, or larger text reduces space.
@@ -326,12 +325,9 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
       let retry = true;
       while (retry) {
         retry = false;
-        const progress = createNativeProgressView('正在查询空闲教室');
-        progress.show();
         let result: FreeRoomResult;
         try { result = await loadFreeRooms(() => true, () => {}); }
         catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
-        finally { await progress.pause(); progress.finish(); }
         const roomText = result.kind === 'error' ? result.message :
           ['今天 · '+result.date, ...result.rooms.map(({period,room}) => period+'：'+room)].join('\n');
         const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];

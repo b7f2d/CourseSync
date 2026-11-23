@@ -72,7 +72,8 @@ test('foreground progress stays native and does not touch background APIs',async
  await progress.start();
  progress('读取学期 161');
  await progress.finish(true);
- a.deepEqual(calls,['sheet','close']);
+ a.deepEqual(calls,[]);
+ a.equal(e.state.lastStage,'读取学期 161');
 });
 
 test('the intent entry enables an activity by default and honors explicit opt-out',async()=>{
@@ -142,91 +143,13 @@ test('shortcut sync still returns Intent.text and writes calendar without backgr
  a.ok(e.db.length>0);
 });
 
-test('native foreground progress presentation names courses and exams',()=>{
- const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
- a.match(progress,/正在同步课程和考试/);
- a.ok(progress.includes('isPresented:visible'));
- a.ok(progress.includes('title="隐藏"'));
- a.ok(progress.includes("modalPresentationStyle:'overFullScreen'"));
- a.ok(source.includes('读取考试日程|更新考试日程'));
-});
-
-test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
+test('foreground sync tracks stages without presenting a transition and never delays verification',async()=>{
  const e=await env({hostEnv:'index'}),calls=[];
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>({
-   show:()=>calls.push('show'),
-   pause:()=>calls.push('pause'),
-   resume:()=>calls.push('resume'),
-   finish:()=>calls.push('finish')
- });
+ e.sandbox.__sdk.Navigation={present:()=>{calls.push('present');}};
  const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查目标日历');await progress.start();
- progress('读取学期 161');
- progress('等待输入学校登录信息');
- progress('提交学校认证请求');
- progress('等待二次认证');
- progress('发送短信');
- a.deepEqual(calls,['show','pause','pause']);
- progress('认证完成后读取课表页面');
- progress('写入学期 161 的日历事件');
- progress('写入学期 162 的日历事件');
- progress.finish();progress.finish();
- a.deepEqual(calls,['show','pause','pause','resume','finish']);
- a.equal(e.state.lastStage,'写入学期 162 的日历事件');
- a.equal(e.state.stageHistory.at(-1).stage,'写入学期 162 的日历事件');
-});
-
-test('progress stage returns a dismissal promise before opening native challenges',async()=>{
- const e=await env({hostEnv:'index'});let done;
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>({
-   show(){},pause(){return new Promise(resolve=>{done=resolve;});},
-   resume(){},finish(){}
- });
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();
- const release=p('等待输入学校登录信息');
- a.equal(typeof release?.then,'function');
- done();await release;
- p.finish();
-});
-test('native progress can be hidden for CAPTCHA and never reopens between requests',async()=>{
- const e=await env({hostEnv:'index'}),calls=[];
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>({
-   show:()=>calls.push('show'),pause:()=>calls.push('pause'),
-   resume:()=>calls.push('resume'),finish:()=>calls.push('finish')
- });
- const progress=e.m.createProgress(e.state,e.store,true);
- await progress.start();
- progress('等待图形验证');
- progress('查询是否需要验证码');
- progress('本机加密登录密码（原生安全随机数）');
- progress('提交学校认证请求');
- a.deepEqual(calls,['show','pause']);
- progress('读取学期 161');
- progress.finish();
- a.deepEqual(calls,['show','pause','resume','finish']);
-});
-
-test('native progress unavailable never blocks foreground synchronization',async()=>{
- const e=await env({hostEnv:'index'});
- e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
- e.sandbox.__progressUIFactory=()=>{throw Error('UI_NOT_AVAILABLE');};
- const progress=e.m.createProgress(e.state,e.store,true);
- progress('检查目标日历');await progress.start();
- progress('请求学期 161 课表数据');progress.finish();
- a.equal(e.state.lastStage,'请求学期 161 课表数据');
-});
-
-test('native progress requires a foreground Navigation API',async()=>{
- const e=await env({hostEnv:'index'});let created=0;
- e.sandbox.__progressUIFactory=()=>{created++;return {show(){},pause(){},resume(){},finish(){}};};
- const progress=e.m.createProgress(e.state,e.store,true);
- await progress.start();progress('读取学期 161');progress.finish();
- a.equal(created,0);
- a.equal(e.state.lastStage,'读取学期 161');
+ await progress.start();progress('等待二次认证');await progress.pause();progress.resume();
+ progress('读取学期 161');await progress.finish('success');
+ a.deepEqual(calls,[]);a.equal(e.state.lastStage,'读取学期 161');
 });
 
 test('background sync never opens any interactive progress UI',async()=>{
@@ -244,7 +167,7 @@ test('progress has no HTML and no artificial percentages',()=>{
  const end=source.indexOf('// Recognize a previously bound calendar',start);
  a.ok(start>0&&end>start);
  const body=source.slice(start,end);
- a.match(body,/createNativeProgressView\(\)/);
+ a.doesNotMatch(body,/createNativeProgressView|Navigation\.present/);
  a.doesNotMatch(body,/WebView|loadHTML|evaluateJavaScript|window\.updateStage|percentage/);
 });
 test('widget mirror publishes only non-sensitive verified course fields',async()=>{

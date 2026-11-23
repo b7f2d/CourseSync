@@ -4,7 +4,6 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const index=fs.readFileSync(__dirname+'/../index.tsx','utf8');
 const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
-const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
 const start=index.indexOf('async function credentialForm(');
 const end=index.indexOf('function validSliderResult(',start);
 if(start<0||end<start)throw Error('Native credential form not found');
@@ -77,20 +76,11 @@ test('only school slider verification retains ephemeral, isolated WebKit',()=>{
  assert.match(slider,/connect-src 'none'; form-action 'none'/);
 });
 
-test('native progress replaces the HTML view with one stable system sheet',()=>{
- assert.doesNotMatch(progress,/<ProgressView|progressViewStyle/);
- assert.match(progress,/alert=\{\{/);
- assert.match(progress,/modalPresentationStyle:'overFullScreen'/);
- assert.match(progress,/Navigation\.present\(\{/);
- assert.match(progress,/session\.suppressed=true/);
- assert.match(progress,/session\.revision\+\+/);
- assert.match(progress,/pause\(\)/);
- assert.match(progress,/resume\(\)/);
- assert.match(progress,/finish\(\)/);
- assert.doesNotMatch(progress,/WebView|loadHTML|evaluateJavaScript|fetch\(|Clipboard|password|Cookie|setInterval/);
+test('foreground sync and classroom query do not present transition views',()=>{
  const create=index.slice(index.indexOf('function createProgress('),index.indexOf('// Recognize a previously bound calendar'));
- assert.match(create,/createNativeProgressView\(\)/);
- assert.doesNotMatch(create,/WebView|loadHTML|evaluateJavaScript/);
+ assert.doesNotMatch(create,/createNativeProgressView|Navigation\.present/);
+ const dashboard=native.slice(native.indexOf('export async function presentNativeDashboard('),native.indexOf('\ntype CalendarManageOptions'));
+ assert.doesNotMatch(dashboard,/createNativeProgressView|progress\.show|progress\.pause/);
 });
 
 test('routine refresh and re-login keep using the selected school',()=>{
@@ -139,8 +129,6 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
  assert.match(freeRoom,/page\.rooms\.map/);
  assert.match(native,/function GlassPopup[\s\S]*<ScrollView[\s\S]*\{children\}/);
- assert.match(progress,/alert=\{\{/);
- assert.match(progress,/title="隐藏"/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
@@ -155,7 +143,6 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(native,/title="退出当前登录"/);
  assert.doesNotMatch(native,/运行状态与自检|切换学校|[🎓🏫🔐📅🏛🗓🔄🚪]/u);
  assert.match(index,/presentNativeDashboard\(\{/);
- assert.match(progress,/正在同步课程和考试/);
 });
 
 test('system dashboard preserves actions, classroom results, retry, and logout',async()=>{
@@ -168,7 +155,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('let result: FreeRoomResult','let result');
  const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'第一节',room:'博远楼 101'}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},
-   createNativeProgressView:()=>({show(){},pause:async()=>{},finish(){}})};
+   createNativeProgressView:()=>{throw Error('transition must not open');}};
  const show=vm.runInNewContext(source+'\npresentNativeDashboard',sandbox);
  const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync'},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
  assert.equal(result,1);
@@ -223,27 +210,4 @@ test('native fallback shows all choices and supports cancel without executing an
  assert.match(calls[0].message,/1．刷新[\s\S]*2．空闲教室[\s\S]*3．退出/);
  assert.equal(calls[0].cancelLabel,'取消');assert.match(calls[1].message,/请输入有效的选项序号/);
  assert.equal(await choose(options),null);
-});
-
-test('progress controller dismisses the host for completion and verification without cancelling work',async()=>{
- const vm=require('node:vm');
- const source=progress.slice(progress.indexOf('export function createNativeProgressView('))
-   .replace('export function','function')
-   .replace('let presented:Promise<unknown>','let presented')
-   .replace('const session:ProgressSession','const session')
-   .replace('new Promise<void>','new Promise')
-   .replace('setTitle(value:string)','setTitle(value)')
-   .replace('element:<ProgressScreen session={session}/>','element:{session}');
- let current,resolvePresentation,presentCount=0,dismissCount=0;
- const Navigation={present:({element})=>{
-   presentCount++;current=element.session;
-   return new Promise(resolve=>{resolvePresentation=resolve;});
- }};
- const factory=vm.runInNewContext(source+'\ncreateNativeProgressView',{Navigation,setTimeout,Promise});
- const ui=factory('正在查询空闲教室');ui.show();
- current.dismiss=()=>{dismissCount++;resolvePresentation();};
- await ui.pause();assert.equal(dismissCount,1);
- ui.resume();assert.equal(presentCount,2);
- current.dismiss=()=>{dismissCount++;resolvePresentation();};
- ui.finish();assert.equal(dismissCount,2);ui.show();assert.equal(presentCount,2);
 });

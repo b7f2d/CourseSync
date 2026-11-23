@@ -48,7 +48,7 @@ const backgroundDeadline=HostScript.env==='intent'?Date.now()+26000:Infinity;
 const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
 let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
-let presentNativeDashboard,presentNativeCalendarManager,presentNativeDialog,createNativeProgressView;
+let presentNativeDashboard,presentNativeCalendarManager,presentNativeDialog;
 // Test-only injections simulate the index host without invoking native modules.
 if(globalThis.__COURSESYNC_TEST__){
   presentNativeCredentialForm=(...a)=>globalThis.__nativeCredentialMock(...a);
@@ -57,12 +57,10 @@ if(globalThis.__COURSESYNC_TEST__){
   presentNativeDialog=(...a)=>globalThis.__nativeDialogMock?globalThis.__nativeDialogMock(...a):Promise.reject(new Error('No native dialog mock'));
   presentNativeDashboard=(...a)=>globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...a):-1;
   presentNativeCalendarManager=(...a)=>globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...a):null;
-  createNativeProgressView=(...a)=>globalThis.__progressUIFactory(...a);
 }else if(config.runsInApp){
   const native=await import('./login-native');
   ({presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm,
     presentNativeDashboard,presentNativeCalendarManager,presentNativeDialog}=native);
-  ({createNativeProgressView}=await import('./progress-native'));
 }
 
 const args={shortcutParameter:__mode==='menu'?'':'sync'};
@@ -2233,46 +2231,21 @@ function stampStage(state,store,stage,persist=true){
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
 function createProgress(state,store,interactive,activityLoader){
-  let ui=null,closed=false,started=false,waitingForVerification=false,finishing=null;
-  let activityStart=null,initialTitle=null;
-  const stage=message=>{
-    stampStage(state,store,message,interactive);
-    if(closed||!started||!interactive)return;
-    const label=String(message||'');
-    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
-      waitingForVerification=true;
-      return ui?.pause();
-    }
-    if(waitingForVerification){
-      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|读取考试日程|更新考试日程|核对旧|扫描专用日历)/.test(label))return;
-      waitingForVerification=false;
-      ui?.resume();
-    }
-  };
-  stage.setTitle=title=>{initialTitle=title;ui?.setTitle?.(title);};
-  stage.pause=()=>ui?.pause();
-  stage.resume=()=>{waitingForVerification=false;ui?.resume();};
+  let closed=false,started=false,finishing=null,activityStart=null;
+  // Stage tracking is still used for recovery and diagnostics, without UI.
+  const stage=message=>stampStage(state,store,message,interactive);
+  stage.pause=()=>Promise.resolve();
+  stage.resume=()=>{};
   stage.start=async()=>{
     if(started||closed)return;
     started=true;
-    if(!interactive){
-      if(activityLoader)activityStart=Promise.resolve().then(()=>activityLoader(()=>!closed)).catch(()=>null);
-      return;
-    }
-    try{
-      if(typeof hostAPI('Navigation')?.present==='function'){
-        ui=initialTitle?createNativeProgressView(initialTitle):createNativeProgressView();
-        ui.show();
-      }
-    }catch(_){ui=null;}
+    if(!interactive&&activityLoader)
+      activityStart=Promise.resolve().then(()=>activityLoader(()=>!closed)).catch(()=>null);
   };
   stage.finish=(result='failed')=>{
     if(finishing)return finishing;
     closed=true;
-    try{ui?.finish();}catch(_){}
-    ui=null;
     const phase=result==='success'?'complete':result==='partial'?'partial':'finish';
-    // Even an unresponsive activity may only delay the Intent result briefly.
     finishing=activityStart?bounded(activityStart.then(activity=>
       activity?.end({phase},{dismissTimeInterval:2})),350,'ACTIVITY_TIMEOUT').catch(()=>{}):Promise.resolve();
     return finishing;
@@ -3349,7 +3322,6 @@ async function runAttempt() {
       progress('检查目标日历');
       calendar=await pickCalendar(state,store);
     }
-    if(interactive)progress.setTitle('正在登录账号');
     await progress.start();
     progress('连接教务系统');
     const http=await synchronize(state,store,interactive?async()=>{
@@ -3361,7 +3333,6 @@ async function runAttempt() {
         calendarCancelled=error?.code==='CANCELLED';
         throw error;
       }
-      progress.setTitle('正在同步课程和考试');
       progress.resume();
       return calendar;
     }:calendar,interactive,progress,manualAuth);
