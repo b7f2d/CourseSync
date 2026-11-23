@@ -666,6 +666,18 @@ function loggedIn(e,sourceRaw){
  e.m.HTTP.prototype.json=async function(url){return typeof sourceRaw==='function'?sourceRaw(url):sourceRaw;};
 }
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
+test('background term rotation includes future terms and resumes from the previous cursor',async()=>{
+ const {m}=await env();
+ const info={current:3,semesters:[{id:1},{id:2},{id:3},{id:4},{id:5}]};
+ const choose=cursor=>Array.from(m.selectTermIds(info,{lastBackgroundHistoryTerm:cursor},false));
+ a.deepEqual(choose(undefined),[3,5,4]);
+ a.deepEqual(choose(4),[3,2,1]);
+ a.deepEqual(choose(1),[3,5,4]);
+ a.deepEqual(choose(99),[3,5,4]);
+ a.deepEqual(Array.from(m.selectTermIds({current:3,semesters:[{id:3}]},{},false)),[3]);
+ a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[3,1,2,4,5]);
+});
+
 test('automatic refresh checks every term and exams without rewriting unchanged events',async()=>{
  const e=await env(),queried=[];
  let readingExams=false;
@@ -1354,7 +1366,7 @@ test('exam location omits campus while preserving room or building',async()=>{
   ['（考试）金融风险管理','德经楼Z1-116']
  ]);
 });
-test('App refresh always fetches all courses; scheduled sync rotates two earlier terms',async()=>{
+test('App refresh fetches all courses; scheduled sync rotates two other terms including future terms',async()=>{
  const e=await env(),fetched=[];
  e.m.HTTP.prototype.get=async()=>({
    url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',
@@ -1365,20 +1377,20 @@ test('App refresh always fetches all courses; scheduled sync rotates two earlier
  e.m.HTTP.prototype.json=async url=>{
    const sid=Number(new URL(url).searchParams.get('semesterId'));
    fetched.push(sid);
-   if(failHistorical&&sid===159)throw Object.assign(Error('offline'),{code:'NETWORK'});
+   if(failHistorical&&sid===160)throw Object.assign(Error('offline'),{code:'NETWORK'});
    return raw([activity({weekIndexes:[1]})]);
  };
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
  a.deepEqual(fetched.splice(0),[161,157,158,159,160,162]);
  failHistorical=true;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,160,159]);
- a.equal(e.state.termErrors[0].sid,'159');
+ a.deepEqual(fetched.splice(0),[161,162,160]);
+ a.equal(e.state.termErrors[0].sid,'160');
  failHistorical=false;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,158,157]);
+ a.deepEqual(fetched.splice(0),[161,159,158]);
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,160,159]);
+ a.deepEqual(fetched.splice(0),[161,157,162]);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
  a.deepEqual(fetched.splice(0),[161,157,158,159,160,162]);
  const pending=e.state.semesters['160'];

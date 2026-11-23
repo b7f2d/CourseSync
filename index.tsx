@@ -2770,9 +2770,9 @@ function selectTermIds(info,state,interactive){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   if(interactive)return [info.current,...available.filter(sid=>sid!==info.current).sort((a,b)=>a-b)];
-  const history=available.filter(sid=>sid<info.current).sort((a,b)=>b-a);
-  const next=history.indexOf(state.lastBackgroundHistoryTerm)+1;
-  return [info.current,...history.slice(next).concat(history.slice(0,next)).slice(0,2)];
+  const otherTerms=available.filter(sid=>sid!==info.current).sort((a,b)=>b-a);
+  const next=otherTerms.indexOf(state.lastBackgroundHistoryTerm)+1;
+  return [info.current,...otherTerms.slice(next).concat(otherTerms.slice(0,next)).slice(0,2)];
 }
 async function verifyUnchangedTerm(adapter,sid,anchor,events){
   const expected=new Map(events.map(event=>[event.id,event]));
@@ -2857,7 +2857,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   state.termErrors=[];
   for(const [position,sid] of sids.entries()) {
     const rotating=!interactive&&sid!==info.current&&sid!==pendingSid;
-    // Leave time for the exam list after the optional historical course reads.
+    // Leave time for the exam list after the optional rotating course reads.
     workDeadline=rotating?deadline-5000:deadline;
     if(!interactive)http.deadline=workDeadline;
     try {
