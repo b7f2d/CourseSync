@@ -341,7 +341,9 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         const roomText = result.kind === 'error' ? result.message :
           formatRoomResults(result.date,result.rooms);
         const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
-        const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:true,cancelLabel:'返回'});
+        // System dialogs do not expose content inset controls. A leading line
+        // keeps the title clear of the rounded top when long content scrolls.
+        const selected = await chooseNativeAction({title:'\n空闲教室',message:roomText,actions:roomActions,cancelButton:true,cancelLabel:'返回'});
         if (result.kind === 'error' && selected === 0) retry = true;
       }
       continue;

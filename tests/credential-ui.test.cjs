@@ -162,6 +162,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.match(calls[0].message,/南京财经大学[\s\S]*已同步[\s\S]*CourseSync/);
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
+ assert.equal(calls[2].title,'\n空闲教室');
  assert.match(calls[2].message,/第一节\n博远楼 101/);
 });
 
