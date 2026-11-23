@@ -29,7 +29,7 @@ async function __COURSESYNC_REPORT_STARTUP(error){
     throw exitError;
   }
 }
-async function __NUFE_START(loadActivity){
+async function __NUFE_START(){
   try{
     console.log('[CourseSync] 正在启动');
 const hostAPI=name=>Scripting[name]??globalThis[name];
@@ -2220,7 +2220,7 @@ function errorMessage(error,state){
   const rawMessage=typeof error?.message==='string'?error.message:'';
   const api=apiNames.find(name=>new RegExp('\\b'+name+'\\b').test(rawMessage));
   const clue=api?'\n关联接口：'+api:'';
-  return '阶段：'+stage+'\n错误代码：'+code+'\n诊断标识：D3'+location+clue+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
+  return '阶段：'+stage+'\n错误代码：'+code+location+clue+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
 function stampStage(state,store,stage,persist=true){
   const at=new Date().toISOString();
@@ -2230,26 +2230,13 @@ function stampStage(state,store,stage,persist=true){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-function createProgress(state,store,interactive,activityLoader){
-  let closed=false,started=false,finishing=null,activityStart=null;
-  // Stage tracking is still used for recovery and diagnostics, without UI.
+function createProgress(state,store,interactive){
+  // Stage tracking supports recovery and diagnostics; it does not present UI.
   const stage=message=>stampStage(state,store,message,interactive);
   stage.pause=()=>Promise.resolve();
   stage.resume=()=>{};
-  stage.start=async()=>{
-    if(started||closed)return;
-    started=true;
-    if(!interactive&&activityLoader)
-      activityStart=Promise.resolve().then(()=>activityLoader(()=>!closed)).catch(()=>null);
-  };
-  stage.finish=(result='failed')=>{
-    if(finishing)return finishing;
-    closed=true;
-    const phase=result==='success'?'complete':result==='partial'?'partial':'finish';
-    finishing=activityStart?bounded(activityStart.then(activity=>
-      activity?.end({phase},{dismissTimeInterval:2})),350,'ACTIVITY_TIMEOUT').catch(()=>{}):Promise.resolve();
-    return finishing;
-  };
+  stage.start=()=>Promise.resolve();
+  stage.finish=()=>Promise.resolve();
   return stage;
 }
 // Recognize a previously bound calendar even if it has not yet been renamed.
@@ -3362,7 +3349,7 @@ async function runAttempt() {
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
     __COURSESYNC_BOOT_PHASE='同步运行';
-    progress=createProgress(state,store,interactive,HostScript.env==='intent'?loadActivity:null);
+    progress=createProgress(state,store,interactive);
     let calendar;
     if(!interactive){
       progress('检查目标日历');
@@ -3485,8 +3472,8 @@ else await run();
 
   }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
-export function launchCourseSync(loadActivity) {
-  const launch = __NUFE_START(loadActivity);
+export function launchCourseSync() {
+  const launch = __NUFE_START();
   globalThis.__COURSESYNC_LAUNCH__ = launch;
   return launch;
 }

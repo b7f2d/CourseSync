@@ -114,7 +114,7 @@ test('native secure input preserves exact secret without trimming and supports u
 });
 
 test('NUFE provides free classroom query button in dashboard only, not in unauthenticated login/setup views',()=>{
- assert.match(native,/title="查询空闲教室"/);
+ assert.match(native,/label:'查询空闲教室'/);
  const loginSection=native.slice(0,native.indexOf('type FreeRoomResult'));
  assert.doesNotMatch(loginSection,/查询空闲教室|freeRooms/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
@@ -123,25 +123,17 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/queryFreeRoomsToday/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
  assert.doesNotMatch(native,/navigationDestination=\{\{/);
- assert.match(native,/roomQuery\.current\.revision\+\+/);
- assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
- assert.match(native,/page\.kind === 'loading'[\s\S]*正在查询空闲教室/);
- const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
- assert.match(freeRoom,/page\.rooms\.map/);
- assert.match(native,/function GlassPopup[\s\S]*<ScrollView[\s\S]*\{children\}/);
+ assert.match(native,/loadFreeRooms\(\(\) => true/);
+ assert.match(native,/formatRoomResults\(result.date,result.rooms\)/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
-test('native dashboard presents an app-like interface with rich background and card styling',()=>{
+test('native dashboard retains its main actions',()=>{
  assert.match(native,/export async function presentNativeDashboard/);
- assert.match(native,/function DashboardView/);
- assert.match(native,/<Text font="title2" fontWeight="bold">CourseSync<\/Text>/);
- assert.match(native,/glassEffect=\{\{type:'rect',cornerRadius:20\}\}/);
- assert.match(native,/title="立即刷新"/);
+ assert.match(native,/label:'立即刷新'/);
+ assert.match(native,/label:'查询空闲教室'/);
+ assert.match(native,/label:'退出当前登录'/);
  assert.doesNotMatch(native,/管理日程/);
- assert.match(native,/title="查询空闲教室"/);
- assert.match(native,/title="退出当前登录"/);
- assert.doesNotMatch(native,/运行状态与自检|切换学校|[🎓🏫🔐📅🏛🗓🔄🚪]/u);
  assert.match(index,/presentNativeDashboard\(\{/);
 });
 

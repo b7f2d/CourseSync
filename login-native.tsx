@@ -2,23 +2,9 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Dialog, GeometryReader, Navigation, NavigationStack, List, Section, ScrollView, Text,
+  Dialog, Navigation, NavigationStack, List, Section, Text,
   TextField, SecureField, Button, Image, useState,
-  VStack, HStack, Spacer, useRef,
 } from 'scripting';
-
-// The system sheet hosts a compact, centered glass dialog. Its contents remain
-// scrollable when the keyboard, a small screen, or larger text reduces space.
-function GlassPopup({children}: {children:any}) {
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="hidden" presentationBackground="clear">
-    <GeometryReader>{proxy => <VStack alignment="center" frame={{width:proxy.size.width,height:proxy.size.height,alignment:'center'}}>
-      <ScrollView frame={{width:Math.min(380,Math.max(0,proxy.size.width-40)),maxHeight:Math.max(120,proxy.size.height-40)}}
-        glassEffect={{type:'rect',cornerRadius:24}}>
-        {children}
-      </ScrollView>
-    </VStack>}</GeometryReader>
-  </NavigationStack>;
-}
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
   const dismiss = Navigation.useDismiss();
@@ -130,27 +116,6 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false)
 type FreeRoomResult =
   | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
   | {kind: 'error'; message: string};
-type FreeRoomPage = FreeRoomResult | {kind: 'loading'};
-
-function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
-  if (page.kind === 'loading') return <VStack spacing={12} padding={20}>
-    <Image systemName="calendar" font={48} foregroundStyle="systemBlue" />
-    <Text font="headline">正在查询空闲教室</Text>
-  </VStack>;
-  return <VStack alignment="center" spacing={16} padding={16}>
-    {page.kind === 'error' ? <VStack spacing={12}>
-      <Text foregroundStyle="secondaryLabel" multilineTextAlignment="center">{page.message}</Text>
-      <Button buttonStyle="glass" title="重试" systemImage="arrow.clockwise" action={retry} />
-    </VStack> : <VStack alignment="center" spacing={16}>
-      <Text font="headline">今天 · {page.date}</Text>
-      {page.rooms.map(({period, room}) => <VStack key={period} spacing={4}>
-        <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
-        <Text font="title2" fontWeight="semibold" multilineTextAlignment="center">{room}</Text>
-      </VStack>)}
-    </VStack>}
-  </VStack>;
-}
-
 export type DashboardOptions = {
   state: any;
   schoolName: string;
@@ -158,107 +123,6 @@ export type DashboardOptions = {
   statusMessage: string;
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
-
-function DashboardAction({title, systemImage, action, role}: {
-  title: string;
-  systemImage: string;
-  action: () => void;
-  role?: 'destructive';
-}) {
-  return <Button
-    buttonStyle="glass"
-    action={action}
-    role={role}
-    listRowInsets={{top:14,bottom:14,leading:16,trailing:16}}
-  >
-    <HStack alignment="center" spacing={10}>
-      <Image
-        systemName={systemImage}
-        font="body"
-        frame={{width:24,alignment:'center'}}
-      />
-      <Text>{title}</Text>
-      <Spacer />
-    </HStack>
-  </Button>;
-}
-
-function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeRooms }: DashboardOptions) {
-  const dismiss = Navigation.useDismiss();
-  const [freeRoomPage, setFreeRoomPage] = useState<FreeRoomPage | null>(null);
-  const roomQuery = useRef({visible: false, pending: false, revision: 0});
-  const openFreeRooms = async () => {
-    if (!loadFreeRooms) return;
-    const query = roomQuery.current;
-    query.visible = true;
-    setFreeRoomPage({kind: 'loading'});
-    if (query.pending) return;
-    query.pending = true;
-    const revision=query.revision;
-    const isActive=()=>query.visible&&query.revision===revision;
-    try {
-      const result = await loadFreeRooms(isActive, () => {});
-      if (isActive()) setFreeRoomPage(result);
-    } catch (_) {
-      if (isActive()) setFreeRoomPage({kind: 'error', message: '查询失败，请稍后重试。'});
-    } finally {
-      query.pending = false;
-      if (query.visible && query.revision !== revision) void openFreeRooms();
-    }
-  };
-  const isSignedOut = !!state?.signedOut;
-  const isFailed = state?.runStatus === 'failed';
-  const isSuccess = state?.runStatus === 'success';
-  const isPartial = state?.runStatus === 'partial';
-  const statusColor = isSignedOut || isPartial ? 'systemOrange' : isFailed ? 'systemRed' : 'systemGreen';
-  const statusBadge = isSignedOut ? '未登录' : isFailed ? '刷新失败' : isPartial ? '部分完成' : isSuccess ? '已同步' : state?.calendarBindingPending && canSignOut ? '已登录' : '';
-  const calTitle = state?.calendarBindingPending || !state?.calendarId
-    ? '未绑定日历' : (state.calendarTitle || '专用课程和考试日历');
-  const formatLastCheck = (iso?: string) => {
-    if (!iso) return '暂无同步记录';
-    const ms = Date.parse(iso);
-    if (!Number.isFinite(ms)) return String(iso).replace('T', ' ').slice(0, 16);
-    return new Date(ms + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
-  };
-  const lastTime = formatLastCheck(state?.lastCheck);
-
-  const statusDetail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
-
-  const closeRooms = () => {
-    roomQuery.current.visible = false;
-    roomQuery.current.revision++;
-    setFreeRoomPage(null);
-  };
-  return (
-    <GlassPopup>
-      {freeRoomPage ? (
-        <VStack spacing={8} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-          <HStack><Text font="headline">空闲教室</Text><Spacer />
-            <Button buttonStyle="glass" title="返回" action={closeRooms} /></HStack>
-          <FreeRoomView page={freeRoomPage} retry={openFreeRooms} />
-        </VStack>
-      ) : (
-        <VStack alignment="leading" spacing={14} padding={20}>
-            <HStack><Text font="title2" fontWeight="bold">CourseSync</Text><Spacer />
-              <Button buttonStyle="glass" title="完成" action={() => dismiss(-1)} /></HStack>
-            <VStack alignment="leading" spacing={10} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-              <HStack><Image systemName="calendar" foregroundStyle="systemBlue" />
-                <Text font="headline">{schoolName}</Text><Spacer />
-                {statusBadge ? <Text font="footnote" foregroundStyle={statusColor}>{statusBadge}</Text> : null}</HStack>
-              <HStack><Text foregroundStyle="secondaryLabel">日历</Text><Spacer /><Text multilineTextAlignment="trailing">{calTitle}</Text></HStack>
-              <HStack><Text foregroundStyle="secondaryLabel">上次刷新</Text><Spacer /><Text>{lastTime}</Text></HStack>
-              {statusDetail ? <Text font="subheadline" foregroundStyle="secondaryLabel">{statusDetail}</Text> : null}
-            </VStack>
-            <VStack alignment="leading" spacing={12} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-              <DashboardAction title="立即刷新" systemImage="arrow.clockwise.circle" action={() => dismiss(0)} />
-              {loadFreeRooms ? <DashboardAction title="查询空闲教室" systemImage="magnifyingglass.circle" action={openFreeRooms} /> : null}
-              {canSignOut ? <DashboardAction title="退出当前登录" systemImage="arrow.right.circle" role="destructive" action={() => dismiss(1)} /> : null}
-            </VStack>
-        </VStack>
-      )}
-    </GlassPopup>
-  );
-}
 
 // Some Scripting releases do not expose Dialog.actionSheet. Use the native
 // confirm dialog in that case, keeping every option available without a page.
@@ -356,28 +220,6 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
 type CalendarManageOptions = Record<string, never>;
 type CalendarManageResult = { action: 'create'; title: string } | null;
 
-function CalendarManageView(_options: CalendarManageOptions) {
-  const dismiss = Navigation.useDismiss();
-  const [newTitle, setNewTitle] = useState('CourseSync');
-  const title = newTitle.trim();
-  const validTitle = title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title);
-
-  return (
-    <GlassPopup>
-      <VStack alignment="leading" spacing={14} padding={20}>
-          <Text font="title2" fontWeight="bold">新建 iCloud 日历</Text>
-          <VStack padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-            <TextField title="日历名称" prompt="日历名称" value={newTitle} onChanged={setNewTitle} />
-          </VStack>
-          <Button buttonStyle="glass" title="创建并绑定" disabled={!validTitle} action={() => {
-            if (validTitle) dismiss({ action: 'create', title });
-          }} />
-          <Button buttonStyle="glass" title="取消" action={() => dismiss(null)} />
-      </VStack>
-    </GlassPopup>
-  );
-}
-
 export async function presentNativeCalendarManager(_options: CalendarManageOptions): Promise<CalendarManageResult> {
   let initial = 'CourseSync';
   while (true) {
@@ -399,25 +241,6 @@ type GlassDialogOptions = {
   cancel?: boolean; cancelLabel?: string;
   field?: {placeholder: string; value: string; secure: boolean};
 };
-function GlassDialog({options}: {options: GlassDialogOptions}) {
-  const dismiss = Navigation.useDismiss();
-  const [value, setValue] = useState(options.field?.value || '');
-  return <GlassPopup>
-    <VStack alignment="leading" spacing={14} padding={20}>
-        <VStack alignment="leading" spacing={12} padding={18} glassEffect={{type:'rect',cornerRadius:20}}>
-          <Text font="headline">{options.title}</Text>
-          {options.message ? <Text font="body">{options.message}</Text> : null}
-          {options.field ? (options.field.secure ?
-            <SecureField title={options.field.placeholder} prompt={options.field.placeholder} value={value} onChanged={setValue} /> :
-            <TextField title={options.field.placeholder} prompt={options.field.placeholder} value={value} onChanged={setValue} />) : null}
-        </VStack>
-        {options.actions.map((action, index) => <Button key={index} buttonStyle="glass"
-          title={action.label} role={action.destructive ? 'destructive' : undefined}
-          action={() => dismiss({index, value})} />)}
-        {options.cancel ? <Button buttonStyle="glass" title={options.cancelLabel || '取消'} action={() => dismiss(null)} /> : null}
-    </VStack>
-  </GlassPopup>;
-}
 export async function presentNativeDialog(options: GlassDialogOptions): Promise<{index:number;value:string}|null> {
   if (options.field) {
     const value = await systemDialog().prompt({title:options.title,message:options.message,

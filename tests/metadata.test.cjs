@@ -82,12 +82,13 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.equal(index.includes("await import('./progress-native')"),false);
   const intent=read('intent.tsx');
   assert.ok(intent.includes('import { launchCourseSync } from "./index"'));
-  assert.ok(intent.includes('Promise.resolve().then(launchIntent).catch('));
-  assert.ok(intent.includes('launchCourseSync(activityDisabled ? undefined : loadActivity)'));
-  assert.ok(intent.includes("await import('./live_activity')"));
+  assert.ok(intent.includes('Promise.resolve().then(() => launchCourseSync()).catch('));
+  assert.ok(intent.includes('launchCourseSync()'));
+  assert.doesNotMatch(intent,/live_activity|loadActivity/);
+  assert.equal(fs.existsSync(path.join(root,'live_activity.tsx')),false);
   assert.equal(intent.includes('await globalThis.__COURSESYNC_LAUNCH__'),false);
   assert.ok(intent.includes('Script.exit(Intent.text('));
-  assert.ok(index.includes('export function launchCourseSync(loadActivity)'));
+  assert.ok(index.includes('export function launchCourseSync()'));
   assert.ok(index.includes("const __bootScript = Scripting.Script ?? globalThis.Script;"));
   assert.ok(index.includes("__bootScript?.env !== 'intent'"));
   assert.ok(index.includes("__shortcutOutput||'处理完成'"));

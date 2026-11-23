@@ -1,24 +1,7 @@
 import { Intent, Script } from "scripting";
 import { launchCourseSync } from "./index";
 
-/** @param {() => boolean} isRunning */
-async function loadActivity(isRunning) {
-  const { startCourseRefreshActivity } = await import('./live_activity');
-  return isRunning() ? startCourseRefreshActivity(isRunning) : null;
-}
-
-function launchIntent() {
-  let activityDisabled = false;
-  try {
-    const parameter = Intent.shortcutParameter;
-    const texts = Intent.textsParameter ?? [];
-    activityDisabled = (parameter?.type === 'text' && String(parameter.value).trim() === 'no-live-activity')
-      || texts.some(text => String(text).trim() === 'no-live-activity');
-  } catch (_) {}
-  return launchCourseSync(activityDisabled ? undefined : loadActivity);
-}
-
-Promise.resolve().then(launchIntent).catch(error => {
+Promise.resolve().then(() => launchCourseSync()).catch(error => {
   const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)
     ? error.code : 'INTENT_LAUNCH_FAILED';
   console.error('[CourseSync] Intent launch failed: ' + code);

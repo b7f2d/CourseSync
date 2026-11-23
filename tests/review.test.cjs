@@ -8,7 +8,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
    'const presentNativeDashboard=(...args)=>(globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...args):-1);const presentNativeCalendarManager=(...args)=>(globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...args):null);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
- .replace('export function launchCourseSync(loadActivity)', 'function launchCourseSync(loadActivity)');
+ .replace('export function launchCourseSync()', 'function launchCourseSync()');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -76,57 +76,16 @@ test('foreground progress stays native and does not touch background APIs',async
  a.equal(e.state.lastStage,'读取学期 161');
 });
 
-test('the intent entry enables an activity by default and honors explicit opt-out',async()=>{
+test('shortcut entry starts sync without Live Activity, including old shortcut parameters',async()=>{
  const entry=fs.readFileSync(__dirname+'/../intent.tsx','utf8')
    .split('\n').filter(line=>!line.trimStart().startsWith('import ')).join('\n');
- for(const [intent,expected] of [
-   [{},'function'],
-   [{shortcutParameter:{type:'text',value:'sync'}},'function'],
-   [{shortcutParameter:{type:'text',value:'live-activity'}},'function'],
-   [{textsParameter:['live-activity']},'function'],
-   [{shortcutParameter:{type:'text',value:'no-live-activity'}},'undefined'],
-   [{textsParameter:['no-live-activity']},'undefined'],
- ]){
-   let loader;
-   await vm.runInNewContext(entry,{Intent:intent,launchCourseSync:value=>{loader=value;}});
-   a.equal(typeof loader,expected);
+ for(const intent of [{},{shortcutParameter:{type:'text',value:'no-live-activity'}},
+   {textsParameter:['live-activity'] }]){
+   let calls=0,args;
+   await vm.runInNewContext(entry,{Intent:intent,Script:{},launchCourseSync:(...values)=>{calls++;args=values;}});
+   a.equal(calls,1);a.equal(args.length,0);
  }
-});
-
-test('an activity keeps one sync display through courses and exams and ends once',async()=>{
- const e=await env(),calls=[];
- const progress=e.m.createProgress(e.state,e.store,false,async isRunning=>{
-   a.equal(isRunning(),true);
-   calls.push('start');
-   return {
-     update:async ({phase})=>{calls.push(phase);},
-     end:async ({phase},options)=>{calls.push(phase,options.dismissTimeInterval);},
-   };
- });
- await progress.start();
- progress('读取学期 161');
- await new Promise(resolve=>setImmediate(resolve));
- progress('读取考试日程');
- await new Promise(resolve=>setImmediate(resolve));
- progress('读取学期 159');
- await new Promise(resolve=>setImmediate(resolve));
- await progress.finish('partial');
- await progress.finish();
- a.deepEqual(calls,['start','partial',2]);
-});
-
-test('a stuck activity start does not hold up the sync and a late activity is closed',async()=>{
- const e=await env(),calls=[];
- let resolveActivity;
- const progress=e.m.createProgress(e.state,e.store,false,()=>new Promise(resolve=>{resolveActivity=resolve;}));
- e.sandbox.setTimeout=(callback,ms)=>{calls.push(ms);return setTimeout(callback,1);};
- await progress.start();
- progress('读取学期 161');
- await progress.finish('success');
- a.deepEqual(calls,[350]);
- resolveActivity({end:async ({phase})=>{calls.push(phase);}});
- await new Promise(resolve=>setImmediate(resolve));
- a.deepEqual(calls,[350,'complete']);
+ a.doesNotMatch(entry,/live_activity|LiveActivity|loadActivity/);
 });
 
 test('shortcut sync still returns Intent.text and writes calendar without background APIs',async()=>{
