@@ -177,9 +177,9 @@ function formatRoomResults(date, rooms) {
       if(period==='建议教室'&&line.includes('：'))return line.replace('：','：\n').replace(/、/g,'\n');
       return line.replace(/、/g,'\n');
     }).join('\n');
-    return heading+'\n'+content;
+    return (period==='上午'?'完整空闲教室列表\n\n':'')+heading+'\n'+content;
   });
-  return ['今天 · '+date,...sections].join('\n\n');
+  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼',...sections].join('\n\n');
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
