@@ -156,3 +156,38 @@ test('native dashboard presents an app-like interface with rich background and c
  assert.match(index,/presentNativeDashboard\(\{/);
  assert.match(progress,/正在同步课程和考试/);
 });
+
+test('system dashboard preserves actions, classroom results, retry, and logout',async()=>{
+ const vm=require('node:vm');
+ const source=native.slice(native.indexOf('export async function presentNativeDashboard('),native.indexOf('\ntype CalendarManageOptions'))
+   .replace('export async function','async function')
+   .replace('options: DashboardOptions','options')
+   .replace(': Promise<any>','')
+   .replace('let result: FreeRoomResult','let result');
+ const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'第一节',room:'博远楼 101'}]}];
+ const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},
+   createNativeProgressView:()=>({show(){},pause:async()=>{},finish(){}})};
+ const show=vm.runInNewContext(source+'\npresentNativeDashboard',sandbox);
+ const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync'},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
+ assert.equal(result,1);
+ assert.match(calls[0].message,/南京财经大学[\s\S]*已同步[\s\S]*CourseSync/);
+ assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
+ assert.match(calls[1].message,/查询失败/);
+ assert.match(calls[2].message,/第一节：博远楼 101/);
+});
+
+test('calendar naming uses native prompt, validates entries and retains retry value',async()=>{
+ const vm=require('node:vm');
+ const source=native.slice(native.indexOf('export async function presentNativeCalendarManager('),native.indexOf('\n// Common foreground prompts'))
+   .replace('export async function','async function')
+   .replace('_options: CalendarManageOptions','_options')
+   .replace(': Promise<CalendarManageResult>','');
+ const prompts=[],alerts=[],values=['bad/name',' My Calendar '];
+ const run=vm.runInNewContext(source+'\npresentNativeCalendarManager',{Dialog:{
+   prompt:async opts=>{prompts.push(opts);return values.shift();},alert:async opts=>alerts.push(opts)
+ }});
+ const result=await run({});
+ assert.equal(result.action,'create');assert.equal(result.title,'My Calendar');
+ assert.equal(prompts[0].defaultValue,'CourseSync');assert.equal(prompts[1].defaultValue,'bad/name');
+ assert.equal(alerts.length,1);
+});

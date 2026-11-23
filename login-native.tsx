@@ -2,10 +2,11 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  GeometryReader, Navigation, NavigationStack, ScrollView, Text,
+  Dialog, GeometryReader, Navigation, NavigationStack, ScrollView, Text,
   TextField, SecureField, Button, Image, useState,
   VStack, HStack, Spacer, useRef,
 } from 'scripting';
+import { createNativeProgressView } from './progress-native';
 
 // The system sheet hosts a compact, centered glass dialog. Its contents remain
 // scrollable when the keyboard, a small screen, or larger text reduces space.
@@ -262,21 +263,44 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
-  let presented = true;
-  const loadFreeRooms = options.loadFreeRooms;
-  try {
-    const result = await Navigation.present({
-      element: <DashboardView {...options} loadFreeRooms={loadFreeRooms
-        ? (isActive, updateProgress) => loadFreeRooms(() => presented && isActive(), progress => {
-          if (presented) updateProgress(progress);
-        })
-        : undefined} />,
-      modalPresentationStyle: 'pageSheet'
-    });
-    if (result === null || result === undefined || result === -1) return 'dismiss';
-    return result;
-  } finally {
-    presented = false;
+  const {state, schoolName, canSignOut, statusMessage, loadFreeRooms} = options;
+  const stateLabel = state?.signedOut ? '未登录' : state?.runStatus === 'failed' ? '刷新失败' :
+    state?.runStatus === 'partial' ? '部分完成' : state?.runStatus === 'success' ? '已同步' :
+    state?.calendarBindingPending && canSignOut ? '已登录' : '';
+  const calendar = state?.calendarBindingPending || !state?.calendarId ? '未绑定日历' :
+    (state.calendarTitle || '专用课程和考试日历');
+  const ms = Date.parse(state?.lastCheck || '');
+  const lastTime = !state?.lastCheck ? '暂无同步记录' : Number.isFinite(ms) ?
+    new Date(ms + 8 * 3600000).toISOString().slice(0,16).replace('T',' ') :
+    String(state.lastCheck).replace('T',' ').slice(0,16);
+  const detail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
+  const message = [schoolName, stateLabel, '日历：'+calendar, '上次刷新：'+lastTime, detail].filter(Boolean).join('\n');
+  while (true) {
+    const actions = [{label:'立即刷新'}, ...(loadFreeRooms ? [{label:'查询空闲教室'}] : []),
+      ...(canSignOut ? [{label:'退出当前登录',destructive:true}] : [])];
+    const selection = await Dialog.actionSheet({title:'CourseSync',message,actions,cancelButton:false});
+    if (selection == null || selection < 0) return 'dismiss';
+    if (selection === 0) return 0;
+    if (loadFreeRooms && selection === 1) {
+      let retry = true;
+      while (retry) {
+        retry = false;
+        const progress = createNativeProgressView('正在查询空闲教室');
+        progress.show();
+        let result: FreeRoomResult;
+        try { result = await loadFreeRooms(() => true, () => {}); }
+        catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
+        finally { await progress.pause(); progress.finish(); }
+        const roomText = result.kind === 'error' ? result.message :
+          ['今天 · '+result.date, ...result.rooms.map(({period,room}) => period+'：'+room)].join('\n');
+        const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
+        const selected = await Dialog.actionSheet({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:false});
+        if (result.kind === 'error' && selected === 0) retry = true;
+      }
+      continue;
+    }
+    if (canSignOut && selection === (loadFreeRooms ? 2 : 1)) return 1;
+    return 'dismiss';
   }
 }
 
@@ -305,13 +329,18 @@ function CalendarManageView(_options: CalendarManageOptions) {
   );
 }
 
-export async function presentNativeCalendarManager(options: CalendarManageOptions): Promise<CalendarManageResult> {
-  const result = await Navigation.present({
-    element: <CalendarManageView {...options} />,
-    modalPresentationStyle: 'pageSheet'
-  });
-  if (!result || typeof result !== 'object') return null;
-  return result as CalendarManageResult;
+export async function presentNativeCalendarManager(_options: CalendarManageOptions): Promise<CalendarManageResult> {
+  let initial = 'CourseSync';
+  while (true) {
+    const result = await Dialog.prompt({title:'新建 iCloud 日历',placeholder:'日历名称',
+      defaultValue:initial,cancelLabel:'取消',confirmLabel:'创建并绑定'});
+    if (result == null) return null;
+    const title = result.trim();
+    if (title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title))
+      return {action:'create',title};
+    initial = result;
+    await Dialog.alert({title:'日历名称无效',message:'请输入 1 至 60 个字符，且不要包含斜杠或换行。',buttonLabel:'好'});
+  }
 }
 
 // Common foreground prompts use the same native glass surface as the forms.
@@ -341,7 +370,23 @@ function GlassDialog({options}: {options: GlassDialogOptions}) {
   </GlassPopup>;
 }
 export async function presentNativeDialog(options: GlassDialogOptions): Promise<{index:number;value:string}|null> {
-  const result = await Navigation.present({element:<GlassDialog options={options}/>, modalPresentationStyle:'pageSheet'});
-  if (!result || !Number.isInteger(result.index) || result.index < 0 || result.index >= options.actions.length) return null;
-  return {index:result.index, value:typeof result.value === 'string' ? result.value : ''};
+  if (options.field) {
+    const value = await Dialog.prompt({title:options.title,message:options.message,
+      placeholder:options.field.placeholder,defaultValue:options.field.value,
+      obscureText:options.field.secure,cancelLabel:options.cancelLabel || '取消',
+      confirmLabel:options.actions[0]?.label || '确认'});
+    return value === null ? null : {index:0,value};
+  }
+  if (options.cancel && options.actions.length === 1) {
+    const ok = await Dialog.confirm({title:options.title,message:options.message || '',
+      cancelLabel:options.cancelLabel || '取消',confirmLabel:options.actions[0].label});
+    return ok ? {index:0,value:''} : null;
+  }
+  if (options.actions.length === 1 && !options.cancel) {
+    await Dialog.alert({title:options.title,message:options.message || '',buttonLabel:options.actions[0].label});
+    return {index:0,value:''};
+  }
+  const index = await Dialog.actionSheet({title:options.title,message:options.message,
+    actions:options.actions,cancelButton:options.cancel});
+  return index == null || index < 0 ? null : {index,value:''};
 }
