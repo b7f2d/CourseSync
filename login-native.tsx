@@ -272,9 +272,28 @@ async function chooseNativeAction(options) {
   if (typeof dialog?.actionSheet === 'function') {
     try { return await dialog.actionSheet(options); } catch (_) { /* try native confirms */ }
   }
-  if (typeof dialog?.confirm !== 'function') throw new Error('NATIVE_DIALOG_UNAVAILABLE');
   const actions = options.actions || [];
   if (!actions.length) return null;
+  // Older hosts have no action sheet. A single native prompt exposes all
+  // choices and a cancel button, without trapping users in sequential dialogs.
+  if (actions.length > 1 && typeof dialog?.prompt === 'function') {
+    const choices = actions.map((action,index)=>(index+1)+'．'+action.label).join('\n');
+    let warning = '';
+    while (true) {
+      const value=await dialog.prompt({title:options.title,
+        message:[options.message,choices,warning].filter(Boolean).join('\n\n'),
+        placeholder:'输入选项序号',keyboardType:'numberPad',
+        cancelLabel:options.cancelLabel || '取消',confirmLabel:'确定'});
+      if (value == null) return null;
+      const input=String(value).trim();
+      if (/^[1-9]\d*$/.test(input)) {
+        const index=Number(input)-1;
+        if (Number.isSafeInteger(index)&&index<actions.length) return index;
+      }
+      warning='请输入有效的选项序号。';
+    }
+  }
+  if (typeof dialog?.confirm !== 'function') throw new Error('NATIVE_DIALOG_UNAVAILABLE');
   for (let index = 0; index < actions.length; index++) {
     const selected = await dialog.confirm({title:options.title,message:options.message || '',
       confirmLabel:actions[index].label,
@@ -300,7 +319,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
   while (true) {
     const actions = [{label:'立即刷新'}, ...(loadFreeRooms ? [{label:'查询空闲教室'}] : []),
       ...(canSignOut ? [{label:'退出当前登录',destructive:true}] : [])];
-    const selection = await chooseNativeAction({title:'CourseSync',message,actions,cancelButton:false});
+    const selection = await chooseNativeAction({title:'CourseSync',message,actions,cancelButton:true,cancelLabel:'取消'});
     if (selection == null || selection < 0) return 'dismiss';
     if (selection === 0) return 0;
     if (loadFreeRooms && selection === 1) {
@@ -316,7 +335,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         const roomText = result.kind === 'error' ? result.message :
           ['今天 · '+result.date, ...result.rooms.map(({period,room}) => period+'：'+room)].join('\n');
         const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
-        const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:false});
+        const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:true,cancelLabel:'返回'});
         if (result.kind === 'error' && selected === 0) retry = true;
       }
       continue;

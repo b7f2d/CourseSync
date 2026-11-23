@@ -210,3 +210,16 @@ test('missing or broken actionSheet falls back to native confirmation choices',a
    assert.equal(seen[2].cancelLabel,'取消');
  }
 });
+
+test('native fallback shows all choices and supports cancel without executing an action',async()=>{
+ const vm=require('node:vm');
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nexport async function presentNativeDashboard('))
+   .replace('(globalThis as any).Dialog','globalThis.Dialog');
+ const calls=[],values=['0','2',null];
+ const choose=vm.runInNewContext(source+'\nchooseNativeAction',{Dialog:{prompt:async o=>{calls.push(o);return values.shift();}}});
+ const options={title:'CourseSync',message:'已同步',actions:[{label:'刷新'},{label:'空闲教室'},{label:'退出'}],cancelLabel:'取消'};
+ assert.equal(await choose(options),1);
+ assert.match(calls[0].message,/1．刷新[\s\S]*2．空闲教室[\s\S]*3．退出/);
+ assert.equal(calls[0].cancelLabel,'取消');assert.match(calls[1].message,/请输入有效的选项序号/);
+ assert.equal(await choose(options),null);
+});
