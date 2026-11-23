@@ -145,9 +145,9 @@ test('shortcut sync still returns Intent.text and writes calendar without backgr
 test('native foreground progress presentation names courses and exams',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  a.match(progress,/正在同步课程和考试/);
- a.ok(progress.includes('{title}</Text>'));
- a.equal(progress.includes('<Button'),false);
- a.ok(progress.includes("modalPresentationStyle:'pageSheet'"));
+ a.ok(progress.includes('isPresented:visible'));
+ a.ok(progress.includes('title="隐藏"'));
+ a.ok(progress.includes("modalPresentationStyle:'overFullScreen'"));
  a.ok(source.includes('读取考试日程|更新考试日程'));
 });
 

@@ -79,6 +79,8 @@ test('only school slider verification retains ephemeral, isolated WebKit',()=>{
 
 test('native progress replaces the HTML view with one stable system sheet',()=>{
  assert.doesNotMatch(progress,/<ProgressView|progressViewStyle/);
+ assert.match(progress,/alert=\{\{/);
+ assert.match(progress,/modalPresentationStyle:'overFullScreen'/);
  assert.match(progress,/Navigation\.present\(\{/);
  assert.match(progress,/session\.suppressed=true/);
  assert.match(progress,/session\.revision\+\+/);
@@ -137,9 +139,8 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
  assert.match(freeRoom,/page\.rooms\.map/);
  assert.match(native,/function GlassPopup[\s\S]*<ScrollView[\s\S]*\{children\}/);
- assert.match(progress,/<NativeProgressContent title=\{title\}/);
- assert.match(progress,/<GeometryReader>[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
- assert.match(progress,/const iconWidth=Math\.max\(0,Math\.min\(120,width-80,height-110\)\)/);
+ assert.match(progress,/alert=\{\{/);
+ assert.match(progress,/title="隐藏"/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
@@ -222,4 +223,27 @@ test('native fallback shows all choices and supports cancel without executing an
  assert.match(calls[0].message,/1．刷新[\s\S]*2．空闲教室[\s\S]*3．退出/);
  assert.equal(calls[0].cancelLabel,'取消');assert.match(calls[1].message,/请输入有效的选项序号/);
  assert.equal(await choose(options),null);
+});
+
+test('progress controller dismisses the host for completion and verification without cancelling work',async()=>{
+ const vm=require('node:vm');
+ const source=progress.slice(progress.indexOf('export function createNativeProgressView('))
+   .replace('export function','function')
+   .replace('let presented:Promise<unknown>','let presented')
+   .replace('const session:ProgressSession','const session')
+   .replace('new Promise<void>','new Promise')
+   .replace('setTitle(value:string)','setTitle(value)')
+   .replace('element:<ProgressScreen session={session}/>','element:{session}');
+ let current,resolvePresentation,presentCount=0,dismissCount=0;
+ const Navigation={present:({element})=>{
+   presentCount++;current=element.session;
+   return new Promise(resolve=>{resolvePresentation=resolve;});
+ }};
+ const factory=vm.runInNewContext(source+'\ncreateNativeProgressView',{Navigation,setTimeout,Promise});
+ const ui=factory('正在查询空闲教室');ui.show();
+ current.dismiss=()=>{dismissCount++;resolvePresentation();};
+ await ui.pause();assert.equal(dismissCount,1);
+ ui.resume();assert.equal(presentCount,2);
+ current.dismiss=()=>{dismissCount++;resolvePresentation();};
+ ui.finish();assert.equal(dismissCount,2);ui.show();assert.equal(presentCount,2);
 });

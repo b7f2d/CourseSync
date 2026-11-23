@@ -1,7 +1,6 @@
-// One native progress sheet. No WebKit, fabricated percentage,
-// timer polling, sensitive stage details or repeated re-presentation.
+// Native alert hosted over the current screen. No fabricated percentage or polling.
 import {
-  GeometryReader, Image, Navigation, NavigationStack, Text, VStack, useState,
+  Button, Navigation, Text, VStack, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -15,43 +14,34 @@ type ProgressSession={
   dismiss:(() => void)|null;
 };
 
-export function NativeProgressContent({title}:{title:string}) {
-  return <GeometryReader>
-    {proxy=>{
-      const {width,height}=proxy.size;
-      const iconWidth=Math.max(0,Math.min(120,width-80,height-110));
-      return <VStack alignment="center" spacing={0} frame={{width,height,alignment:'center'}}>
-        <VStack spacing={12} padding={20} glassEffect={{type:'rect',cornerRadius:28}}>
-        <Image
-          systemName="calendar"
-          resizable={true}
-          scaleToFit={true}
-          foregroundStyle="systemBlue"
-          frame={{width:iconWidth,height:iconWidth}}
-        />
-          <Text font="headline" multilineTextAlignment="center">{title}</Text>
-        </VStack>
-      </VStack>;
-    }}
-  </GeometryReader>;
-}
-
 function ProgressScreen({session}:{session:ProgressSession}) {
   const dismiss=Navigation.useDismiss();
   const [title,setTitle]=useState(session.title);
+  const [visible,setVisible]=useState(true);
   session.setTitle=setTitle;
-  // The script's synchronization still owns the task. Closing this view
-  // hides status only; it never cancels a calendar transaction.
-  session.dismiss=()=>dismiss();
+  // The alert is only a status display. Hiding it never cancels a transaction.
+  session.dismiss=()=>{setVisible(false);dismiss();};
   if(session.closed||session.hidden) {
-    // Dismiss a sheet even if a login handoff happened before it mounted.
     Promise.resolve().then(()=>{
-      if(session.closed||session.hidden)try{dismiss();}catch(_){}
+      if(session.closed||session.hidden)try{setVisible(false);dismiss();}catch(_){}
     });
   }
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="hidden" presentationBackground="clear">
-    <NativeProgressContent title={title} />
-  </NavigationStack>;
+  return <VStack frame={{maxWidth:'infinity',maxHeight:'infinity'}} background="clear" ignoresSafeArea
+    alert={{
+      title,
+      isPresented:visible,
+      onChanged:isPresented=>{
+        setVisible(isPresented);
+        if(!isPresented){
+          if(!session.closed&&!session.hidden)session.suppressed=true;
+          try{dismiss();}catch(_){}
+        }
+      },
+      message:<Text>请稍候</Text>,
+      actions:<Button title="隐藏" role="cancel" action={()=>{
+        session.suppressed=true;setVisible(false);dismiss();
+      }}/>
+    }} />;
 }
 
 export function createNativeProgressView(title='正在同步课程和考试'){
@@ -78,7 +68,7 @@ export function createNativeProgressView(title='正在同步课程和考试'){
       try {
         presented=Promise.resolve(Navigation.present({
           element:<ProgressScreen session={session}/>,
-          modalPresentationStyle:'pageSheet',
+          modalPresentationStyle:'overFullScreen',
         })).then(()=>{
           if(session.revision!==revision)return;
           session.shown=false;
