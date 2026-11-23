@@ -49,7 +49,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
       if(session.closed||session.hidden)try{dismiss();}catch(_){}
     });
   }
-  return <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="hidden" presentationBackground="clear">
     <NativeProgressContent title={title} />
   </NavigationStack>;
 }

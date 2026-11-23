@@ -133,9 +133,10 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.doesNotMatch(native,/navigationDestination=\{\{/);
  assert.match(native,/roomQuery\.current\.revision\+\+/);
  assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
- assert.match(native,/if \(page\.kind === 'loading'\) \{\s*return <NativeProgressContent title="正在查询空闲教室" \/>;\s*\}\s*return <GeometryReader/);
+ assert.match(native,/page\.kind === 'loading'[\s\S]*正在查询空闲教室/);
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
- assert.match(freeRoom,/<ScrollView>[\s\S]*minHeight:proxy\.size\.height,alignment:'center'/);
+ assert.match(freeRoom,/page\.rooms\.map/);
+ assert.match(native,/function GlassPopup[\s\S]*<ScrollView[\s\S]*\{children\}/);
  assert.match(progress,/<NativeProgressContent title=\{title\}/);
  assert.match(progress,/<GeometryReader>[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
  assert.match(progress,/const iconWidth=Math\.max\(0,Math\.min\(120,width-80,height-110\)\)/);

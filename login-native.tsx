@@ -2,11 +2,23 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  GeometryReader, Navigation, NavigationStack, List, ScrollView, Section, Text,
+  GeometryReader, Navigation, NavigationStack, ScrollView, Text,
   TextField, SecureField, Button, Image, useState,
-  VStack, HStack, Spacer, modifiers, useRef,
+  VStack, HStack, Spacer, useRef,
 } from 'scripting';
-import { NativeProgressContent } from './progress-native';
+
+// The system sheet hosts a compact, centered glass dialog. Its contents remain
+// scrollable when the keyboard, a small screen, or larger text reduces space.
+function GlassPopup({children}: {children:any}) {
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="hidden" presentationBackground="clear">
+    <GeometryReader>{proxy => <VStack alignment="center" frame={{width:proxy.size.width,height:proxy.size.height,alignment:'center'}}>
+      <ScrollView frame={{width:Math.min(380,Math.max(0,proxy.size.width-40)),maxHeight:Math.max(120,proxy.size.height-40)}}
+        glassEffect={{type:'rect',cornerRadius:24}}>
+        {children}
+      </ScrollView>
+    </VStack>}</GeometryReader>
+  </NavigationStack>;
+}
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
   const dismiss = Navigation.useDismiss();
@@ -17,9 +29,8 @@ function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle
   const valid = account.length > 0 && account.length <= 100 &&
     password.length > 0 && password.length <= 512;
 
-  return <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
-    <ScrollView>
-      <VStack alignment="leading" spacing={14} padding={20}>
+  return <GlassPopup>
+    <VStack alignment="leading" spacing={14} padding={20}>
         <Text font="title2" fontWeight="bold">{title}</Text>
         <VStack alignment="leading" spacing={14} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
           <TextField title="学号" prompt="请输入学号" value={username} onChanged={setUsername}
@@ -32,9 +43,8 @@ function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle
         }} />
         {allowReuse ? <Button buttonStyle="glass" title="使用现有登录信息继续" action={() => dismiss({reuse:true})} /> : null}
         <Button buttonStyle="glass" title="取消" action={() => dismiss(null)} />
-      </VStack>
-    </ScrollView>
-  </NavigationStack>;
+    </VStack>
+  </GlassPopup>;
 }
 
 function presentLoginView(title:string,confirmTitle:string,allowReuse=false){
@@ -74,13 +84,12 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   const maxLength=kind==='captcha'?32:otp?48:secret?512:120;
   const valid=response.length>0&&response.length<=maxLength;
 
-  return <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
-    <ScrollView>
-      <VStack alignment="leading" spacing={14} padding={20}>
+  return <GlassPopup>
+    <VStack alignment="leading" spacing={14} padding={20}>
         <Text font="title2" fontWeight="bold">{title}</Text>
         <VStack alignment="leading" spacing={12} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
           <Text>{label}</Text>
-          {image?<Image image={image} resizable={true} scaleToFit={true} frame={{width:280,height:155}} />:null}
+          {image?<Image image={image} resizable={true} scaleToFit={true} frame={{maxWidth:280,height:155}} />:null}
           {secret?
             <SecureField title={label} prompt="请输入" value={value} onChanged={setValue} />:
             <TextField title={label} prompt={otp?'请输入或填充验证码':'请输入'} value={value}
@@ -90,9 +99,8 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
         </VStack>
         <Button buttonStyle="glass" title="确认" disabled={!valid} action={()=>{if(valid)dismiss(response);}}/>
         <Button buttonStyle="glass" title="取消" action={()=>dismiss(null)}/>
-      </VStack>
-    </ScrollView>
-  </NavigationStack>;
+    </VStack>
+  </GlassPopup>;
 }
 
 export async function presentNativeTextForm(options:NativeInputOptions) {
@@ -126,37 +134,22 @@ type FreeRoomResult =
 type FreeRoomPage = FreeRoomResult | {kind: 'loading'};
 
 function FreeRoomView({page, retry}: {page: FreeRoomPage; retry: () => void}) {
-  if (page.kind === 'loading') {
-    return <NativeProgressContent title="正在查询空闲教室" />;
-  }
-  return <GeometryReader navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline">
-    {proxy=>(
-      <ScrollView>
-        <VStack
-          modifiers={modifiers().padding(24).frame({
-            maxWidth:'infinity',minHeight:proxy.size.height,alignment:'center',
-          })}
-        >
-          {page.kind === 'error' ? (
-            <VStack alignment="center" spacing={14}>
-              <Text font="body" foregroundStyle="secondaryLabel" multilineTextAlignment="center">{page.message}</Text>
-              <Button buttonStyle="glass" title="重试" systemImage="arrow.clockwise" action={retry} />
-            </VStack>
-          ) : (
-            <VStack alignment="center" spacing={20}>
-              <Text font="headline">今天 · {page.date}</Text>
-              {page.rooms.map(({period, room}) => (
-                <VStack key={period} alignment="center" spacing={4}>
-                  <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
-                  <Text font="title2" fontWeight="semibold" multilineTextAlignment="center">{room}</Text>
-                </VStack>
-              ))}
-            </VStack>
-          )}
-        </VStack>
-      </ScrollView>
-    )}
-  </GeometryReader>;
+  if (page.kind === 'loading') return <VStack spacing={12} padding={20}>
+    <Image systemName="calendar" font={48} foregroundStyle="systemBlue" />
+    <Text font="headline">正在查询空闲教室</Text>
+  </VStack>;
+  return <VStack alignment="center" spacing={16} padding={16}>
+    {page.kind === 'error' ? <VStack spacing={12}>
+      <Text foregroundStyle="secondaryLabel" multilineTextAlignment="center">{page.message}</Text>
+      <Button buttonStyle="glass" title="重试" systemImage="arrow.clockwise" action={retry} />
+    </VStack> : <VStack alignment="center" spacing={16}>
+      <Text font="headline">今天 · {page.date}</Text>
+      {page.rooms.map(({period, room}) => <VStack key={period} spacing={4}>
+        <Text font="subheadline" foregroundStyle="secondaryLabel">{period}</Text>
+        <Text font="title2" fontWeight="semibold" multilineTextAlignment="center">{room}</Text>
+      </VStack>)}
+    </VStack>}
+  </VStack>;
 }
 
 export type DashboardOptions = {
@@ -238,7 +231,7 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
     setFreeRoomPage(null);
   };
   return (
-    <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
+    <GlassPopup>
       {freeRoomPage ? (
         <VStack spacing={8} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
           <HStack><Text font="headline">空闲教室</Text><Spacer />
@@ -246,8 +239,7 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
           <FreeRoomView page={freeRoomPage} retry={openFreeRooms} />
         </VStack>
       ) : (
-        <ScrollView>
-          <VStack alignment="leading" spacing={14} padding={20}>
+        <VStack alignment="leading" spacing={14} padding={20}>
             <HStack><Text font="title2" fontWeight="bold">CourseSync</Text><Spacer />
               <Button buttonStyle="glass" title="完成" action={() => dismiss(-1)} /></HStack>
             <VStack alignment="leading" spacing={10} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
@@ -263,10 +255,9 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
               {loadFreeRooms ? <DashboardAction title="查询空闲教室" systemImage="magnifyingglass.circle" action={openFreeRooms} /> : null}
               {canSignOut ? <DashboardAction title="退出当前登录" systemImage="arrow.right.circle" role="destructive" action={() => dismiss(1)} /> : null}
             </VStack>
-          </VStack>
-        </ScrollView>
+        </VStack>
       )}
-    </NavigationStack>
+    </GlassPopup>
   );
 }
 
@@ -299,9 +290,8 @@ function CalendarManageView(_options: CalendarManageOptions) {
   const validTitle = title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title);
 
   return (
-    <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
-      <ScrollView>
-        <VStack alignment="leading" spacing={14} padding={20}>
+    <GlassPopup>
+      <VStack alignment="leading" spacing={14} padding={20}>
           <Text font="title2" fontWeight="bold">新建 iCloud 日历</Text>
           <VStack padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
             <TextField title="日历名称" prompt="日历名称" value={newTitle} onChanged={setNewTitle} />
@@ -310,9 +300,8 @@ function CalendarManageView(_options: CalendarManageOptions) {
             if (validTitle) dismiss({ action: 'create', title });
           }} />
           <Button buttonStyle="glass" title="取消" action={() => dismiss(null)} />
-        </VStack>
-      </ScrollView>
-    </NavigationStack>
+      </VStack>
+    </GlassPopup>
   );
 }
 
@@ -335,9 +324,8 @@ type GlassDialogOptions = {
 function GlassDialog({options}: {options: GlassDialogOptions}) {
   const dismiss = Navigation.useDismiss();
   const [value, setValue] = useState(options.field?.value || '');
-  return <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
-    <ScrollView>
-      <VStack alignment="leading" spacing={14} padding={20}>
+  return <GlassPopup>
+    <VStack alignment="leading" spacing={14} padding={20}>
         <VStack alignment="leading" spacing={12} padding={18} glassEffect={{type:'rect',cornerRadius:20}}>
           <Text font="headline">{options.title}</Text>
           {options.message ? <Text font="body">{options.message}</Text> : null}
@@ -349,9 +337,8 @@ function GlassDialog({options}: {options: GlassDialogOptions}) {
           title={action.label} role={action.destructive ? 'destructive' : undefined}
           action={() => dismiss({index, value})} />)}
         {options.cancel ? <Button buttonStyle="glass" title={options.cancelLabel || '取消'} action={() => dismiss(null)} /> : null}
-      </VStack>
-    </ScrollView>
-  </NavigationStack>;
+    </VStack>
+  </GlassPopup>;
 }
 export async function presentNativeDialog(options: GlassDialogOptions): Promise<{index:number;value:string}|null> {
   const result = await Navigation.present({element:<GlassDialog options={options}/>, modalPresentationStyle:'pageSheet'});
