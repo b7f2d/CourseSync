@@ -3124,8 +3124,9 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const afternoonEvening=afternoon.filter(room=>contains(evening,room));
   let recommended='暂无可连续使用的教室';
   if(allDay.length)recommended='全天：'+allDay.map(name).join('、');
-  else if(day.length)recommended='白天：'+day.map(name).join('、');
-  else if(afternoonEvening.length)recommended='下午至晚上：'+afternoonEvening.map(name).join('、');
+  else if(day.length)recommended='白天：'+day.map(name).join('、')+(evening.length?'\n晚上：'+name(evening[0]):'');
+  else if(afternoonEvening.length)recommended=(morning.length?'上午：'+name(morning[0])+'\n':'')+'下午至晚上：'+afternoonEvening.map(name).join('、');
+  else if(morning.length&&afternoon.length&&evening.length)recommended='上午：'+name(morning[0])+'\n下午：'+name(afternoon[0])+'\n晚上：'+name(evening[0]);
   const show=rooms=>rooms.length?rooms.map(name).join('、'):'无空闲教室';
   return [
     {period:'建议教室',room:recommended},

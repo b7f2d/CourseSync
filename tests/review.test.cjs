@@ -2333,9 +2333,9 @@ test('room recommendations preserve every ranked room and only combine continuou
  a.deepEqual(describe(m.resolveDayRooms([a1,a2],[a1,a2],[a1,b])),[
   '建议教室：全天：博远楼JC101','上午：博远楼JC101、博远楼JC203',
   '下午：博远楼JC101、博远楼JC203','晚上：博远楼JC101、博观楼JB105']);
- a.match(describe(m.resolveDayRooms([a1],[a1,a2],[b]))[0],/白天：博远楼JC101/);
- a.match(describe(m.resolveDayRooms([a1],[a2],[a2,b]))[0],/下午至晚上：博远楼JC203/);
- a.match(describe(m.resolveDayRooms([a1],[a2],[a1]))[0],/暂无可连续/);
+ a.equal(m.resolveDayRooms([a1],[a1,a2],[b])[0].room,'白天：博远楼JC101\n晚上：博观楼JB105');
+ a.equal(m.resolveDayRooms([a1],[a2],[a2,b])[0].room,'上午：博远楼JC101\n下午至晚上：博远楼JC203');
+ a.equal(m.resolveDayRooms([a1],[a2],[b])[0].room,'上午：博远楼JC101\n下午：博远楼JC203\n晚上：博观楼JB105');
 });
 
 test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
@@ -2359,7 +2359,7 @@ test('NUFE free classroom query only requests today in China time and merges per
  a.deepEqual(progress,[0.25,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
-   {period:'建议教室',room:'白天：博远楼JC101'},
+   {period:'建议教室',room:'白天：博远楼JC101\n晚上：博远楼JC403'},
    {period:'上午',room:'博远楼JC101'},
    {period:'下午',room:'博远楼JC101'},
    {period:'晚上',room:'博远楼JC403'}
