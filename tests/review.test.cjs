@@ -674,6 +674,7 @@ test('background term rotation includes future terms and resumes from the previo
  a.deepEqual(choose(4),[3,2,1]);
  a.deepEqual(choose(1),[3,5,4]);
  a.deepEqual(choose(99),[3,5,4]);
+ a.deepEqual(Array.from(m.selectTermIds(info,{lastBackgroundHistoryTerm:4,retryTermIds:[5,2]},false)),[3,5,2]);
  a.deepEqual(Array.from(m.selectTermIds({current:3,semesters:[{id:3}]},{},false)),[3]);
  a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[3,1,2,4,5]);
 });
@@ -751,7 +752,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  e.m.HTTP.prototype.json=readTerm;
  queried.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','160','159','exams']);
+ a.deepEqual(queried,['161','159','160','exams']);
  a.equal(e.store.read().runStatus,'success');
 });
 test('an unreadable exam response reports the reason and stops after one exam request',async()=>{
@@ -1388,9 +1389,9 @@ test('App refresh fetches all courses; scheduled sync rotates two other terms in
  a.equal(e.state.termErrors[0].sid,'160');
  failHistorical=false;
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,159,158]);
+ a.deepEqual(fetched.splice(0),[161,160,159]);
  await e.m.synchronize(e.state,e.store,e.calendar,false,()=>{});
- a.deepEqual(fetched.splice(0),[161,157,162]);
+ a.deepEqual(fetched.splice(0),[161,158,157]);
  await e.m.synchronize(e.state,e.store,e.calendar,true,()=>{});
  a.deepEqual(fetched.splice(0),[161,157,158,159,160,162]);
  const pending=e.state.semesters['160'];

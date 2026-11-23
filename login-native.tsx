@@ -171,7 +171,11 @@ function formatRoomResults(date, rooms) {
   const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
   const sections=rooms.map(({period,room})=>{
     const heading=periods[period] || period;
-    return heading+'\n'+String(room || '').replace(/、/g,'\n');
+    const content=String(room || '').split('\n').map(line=>{
+      const match=line.match(/^(.*?：)(.+、.+?)(（第[^）]+节）)$/);
+      return match ? match[1]+match[2].split('、').map(value=>value+match[3]).join('\n') : line.replace(/、/g,'\n');
+    }).join('\n');
+    return heading+'\n'+content;
   });
   return ['今天 · '+date,...sections].join('\n\n');
 }
@@ -204,10 +208,10 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
         const roomText = result.kind === 'error' ? result.message :
           formatRoomResults(result.date,result.rooms);
-        const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
+        const roomActions = result.kind === 'error' ? [{label:'重试'}] : [{label:'返回'}];
         // System dialogs do not expose content inset controls. A leading line
         // keeps the title clear of the rounded top when long content scrolls.
-        const selected = await chooseNativeAction({title:'\n空闲教室',message:roomText,actions:roomActions,cancelButton:true,cancelLabel:'返回'});
+        const selected = await chooseNativeAction({title:'\n空闲教室',message:roomText,actions:roomActions,cancelButton:result.kind === 'error',cancelLabel:'返回'});
         if (result.kind === 'error' && selected === 0) retry = true;
       }
       continue;

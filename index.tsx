@@ -2772,7 +2772,9 @@ function selectTermIds(info,state,interactive){
   if(interactive)return [info.current,...available.filter(sid=>sid!==info.current).sort((a,b)=>a-b)];
   const otherTerms=available.filter(sid=>sid!==info.current).sort((a,b)=>b-a);
   const next=otherTerms.indexOf(state.lastBackgroundHistoryTerm)+1;
-  return [info.current,...otherTerms.slice(next).concat(otherTerms.slice(0,next)).slice(0,2)];
+  const retry=(state.retryTermIds||[]).map(Number).find(sid=>otherTerms.includes(sid));
+  const rotation=otherTerms.slice(next).concat(otherTerms.slice(0,next)).filter(sid=>sid!==retry);
+  return [info.current,...(retry===undefined?[]:[retry]),...rotation].slice(0,3);
 }
 async function verifyUnchangedTerm(adapter,sid,anchor,events){
   const expected=new Map(events.map(event=>[event.id,event]));
@@ -2841,6 +2843,8 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   }
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   delete state.historySyncCheckpoint;
+  state.retryTermIds=(Array.isArray(state.retryTermIds)?state.retryTermIds:[]).map(Number).filter(sid=>info.semesters.some(term=>term.id===sid)&&sid!==info.current);
+  const retrySid=!interactive?state.retryTermIds[0]:undefined;
   const selected=selectTermIds(info,state,interactive);
   const pendingSid=Number(interrupted?.sid);
   let sids=selected;
@@ -2862,7 +2866,8 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     if(!interactive)http.deadline=workDeadline;
     try {
     budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
-    if(rotating)state.lastBackgroundHistoryTerm=sid;
+    if(rotating&&sid!==retrySid)state.lastBackgroundHistoryTerm=sid;
+    state.retryTermIds=state.retryTermIds.filter(id=>id!==sid);
     let anchor,normalized;
     if(usts){
       stage('请求学期 '+sid+' 课表数据');
@@ -2902,6 +2907,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     state.tx={id:uuid(),sid:String(sid),anchor,name,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length}};
     store.write(state);await finishTx(state,store,adapter,budget,interactive);
     } catch(e) {
+      if(rotating&&!state.retryTermIds.includes(sid))state.retryTermIds.push(sid);
       if(rotating&&e.code==='BUDGET'&&!state.tx){
         for(const deferred of sids.slice(position))state.termErrors.push({sid:String(deferred),code:e.code});
         break;
@@ -2961,6 +2967,7 @@ async function signOut(state,store){
   state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
   delete state.historySyncCheckpoint;
   delete state.lastBackgroundHistoryTerm;
+  delete state.retryTermIds;
   state.failures=0;state.lastError=null;
   state.runStatus='signed_out';state.credentialCloudStatus=null;
   store.write(state);
