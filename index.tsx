@@ -2217,7 +2217,12 @@ function errorMessage(error,state){
   // Report only a local source line, never exception messages or raw stacks.
   const match=typeof error?.stack==='string'?/\bindex\.(?:tsx|js):(\d{1,7})(?::(\d{1,5}))?/.exec(error.stack):null;
   const location=match?'\n代码位置：index '+match[1]+(match[2]?':'+match[2]:''):'';
-  return '阶段：'+stage+'\n错误代码：'+code+'\n诊断标识：D2'+location+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
+  // Only allow fixed API names, never include the exception message itself.
+  const apiNames=['actionSheet','presentNativeDashboard','loadFreeRooms','createNativeProgressView','pause','finish','setTitle','resume','show'];
+  const rawMessage=typeof error?.message==='string'?error.message:'';
+  const api=apiNames.find(name=>new RegExp('\\b'+name+'\\b').test(rawMessage));
+  const clue=api?'\n关联接口：'+api:'';
+  return '阶段：'+stage+'\n错误代码：'+code+'\n诊断标识：D3'+location+clue+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
 function stampStage(state,store,stage,persist=true){
   const at=new Date().toISOString();
@@ -3267,6 +3272,8 @@ async function runAttempt() {
     }
     if(interactive){
       state=store.read();
+      // A failure before synchronization must not reuse an earlier run's stage.
+      state.lastStage='准备主菜单';
     }
     // Skip the dashboard after logout so reopening the script starts with credentials.
     if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
@@ -3288,6 +3295,7 @@ async function runAttempt() {
       let selected=-1;
       const nav=hostAPI('Navigation');
       if(typeof nav?.present==='function'){
+        state.lastStage='打开主菜单';
         selected=await presentNativeDashboard({
           state,schoolName,canSignOut,statusMessage,
           loadFreeRooms:canFreeRooms?loadFreeRoomPage:undefined
@@ -3305,6 +3313,7 @@ async function runAttempt() {
       if(selected===null||selected===undefined||selected<0)return;
       signOutRequested=canSignOut&&selected===1;
     }
+    if(state)state.lastStage='准备获取同步锁';
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
       // Never record a second task as a failed synchronization.
@@ -3316,6 +3325,7 @@ async function runAttempt() {
       return;
     }
     locked=true;state=store.read();
+    state.lastStage='准备同步';
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.

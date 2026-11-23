@@ -2583,3 +2583,15 @@ test('type-error diagnostics report only safe local source coordinates',async()=
  a.match(report,/代码位置：index 123:45/);
  a.doesNotMatch(report,/secret-password|secret-user|private/);
 });
+
+test('dashboard errors are not attributed to the previous run exam stage',async()=>{
+ const e=await env({hostEnv:'index'}), alerts=[];
+ e.state.lastStage='更新考试日程';
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__nativeDashboardMock=async()=>{throw new TypeError('fixture');};
+ e.sandbox.__sdk.Dialog.alert=async options=>alerts.push(options);
+ await executeDaily(e);
+ a.equal(alerts.length,1);
+ a.match(alerts[0].message,/阶段：打开主菜单/);
+ a.doesNotMatch(alerts[0].message,/阶段：更新考试日程/);
+});
