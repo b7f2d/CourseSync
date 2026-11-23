@@ -2484,6 +2484,33 @@ test('classroom fallback finds the longest consecutive free lessons without rela
  a.match(rows[0].room,/晚上：博远楼JC101（第11—13节）/);
 });
 
+test('classroom fallback preserves daytime continuity and adds the available evening lessons',async()=>{
+ const {m}=await env();
+ const day={id:1,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
+ const night={id:2,nameZh:'博观楼JB201',building:{nameZh:'博观楼'},floor:2};
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;
+   return {roomList:units.length>1?(units[0]==='11'?[]:[day]):(['11','12'].includes(units[0])?[night]:[])};
+ }};
+ const rows=await m.queryDayRooms(http,'2026-11-23');
+ a.equal(rows[0].room,'白天：博远楼JC101（第1—10节）\n晚上：博观楼JB201（第11—12节）');
+ a.equal(rows[1].room,'博远楼JC101');a.equal(rows[2].room,'博远楼JC101');
+ a.match(rows[3].room,/无完整时段/);
+});
+
+test('classroom fallback preserves afternoon-evening continuity and adds morning lessons',async()=>{
+ const {m}=await env();
+ const shared={id:1,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
+ const morning={id:2,nameZh:'博观楼JB201',building:{nameZh:'博观楼'},floor:2};
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;
+   return {roomList:units.length>1?(units[0]==='1'?[]:[shared]):(['2','3','4'].includes(units[0])?[morning]:[])};
+ }};
+ const rows=await m.queryDayRooms(http,'2026-11-23');
+ a.equal(rows[0].room,'上午：博观楼JB201（第2—4节）\n下午至晚上：博远楼JC101（第6—13节）');
+ a.match(rows[1].room,/无完整时段/);a.equal(rows[2].room,'博远楼JC101');a.equal(rows[3].room,'博远楼JC101');
+});
+
 test('no free lessons is reported honestly and a failed individual query is not treated as empty',async()=>{
  const {m}=await env();
  let mode='empty';

@@ -3191,6 +3191,12 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
       const span=best.start===best.end?String(best.start):best.start+'—'+best.end;
       return names[index]+'：'+roomName(best.room)+'（第'+span+'节）';
     });
+    const sameRoom=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):roomName(a)===roomName(b));
+    const shared=(first,second)=>first.filter((room,index)=>roomName(room)&&first.findIndex(other=>sameRoom(other,room))===index&&second.some(other=>sameRoom(other,room)));
+    const daytime=shared(full[0],full[1]);
+    const afternoonEvening=shared(full[1],full[2]);
+    if(daytime.length)suggestions.splice(0,2,'白天：'+daytime.map(roomName).join('、')+'（第1—10节）');
+    else if(afternoonEvening.length)suggestions.splice(1,2,'下午至晚上：'+afternoonEvening.map(roomName).join('、')+'（第6—13节）');
     rows[0].room=suggestions.join('\n');
     for(const {index} of missing)rows[index+1].room='无完整时段空闲教室（见建议）';
   }
