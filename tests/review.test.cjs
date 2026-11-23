@@ -2397,7 +2397,7 @@ test('NUFE free classroom query only requests today in China time and merges per
  };
  const progress=[];
  const result=await e.m.queryFreeRoomsToday(http,()=>{},value=>progress.push(value),Date.parse('2026-11-15T16:30:00Z'));
- a.deepEqual(progress,[0.25,0.5,0.75,1]);
+ a.deepEqual(progress,[0.25,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
    {period:'建议教室',room:'白天：博远楼JC101'},
@@ -2449,7 +2449,7 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  };
  await e.m.run();
  a.equal(results.kind,'ready');
- a.deepEqual(progress,[0.25,0.5,0.75,1]);
+ a.deepEqual(progress,[0.25,1]);
  a.equal(results.rooms[0].room,'全天：博远楼JC101');
  a.equal(results.rooms.length,4);
  a.equal(failure.kind,'error');
@@ -2510,7 +2510,7 @@ test('dashboard errors are not attributed to the previous run exam stage',async(
  a.doesNotMatch(alerts[0].message,/阶段：更新考试日程/);
 });
 
-test('classroom query uses exactly the requested lesson boundaries without a partial fallback',async()=>{
+test('classroom fallback finds the longest consecutive free lessons without relaxing full-period lists',async()=>{
  const {m}=await env();const called=[];
  const room={id:11,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
  const http={json:async(_url,{body})=>{
@@ -2518,7 +2518,37 @@ test('classroom query uses exactly the requested lesson boundaries without a par
    return {roomList:units.includes('10')?[]:[room]};
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
- a.deepEqual(called.sort(),['1,2,3,4,5','11,12,13','6,7,8,9,10'].sort());
- a.equal(rows[2].period,'下午');a.equal(rows[2].room,'无空闲教室');
- a.match(rows[0].room,/暂无可连续/);
+ for(const segment of ['1,2,3,4,5','6,7,8,9,10','11,12,13','6','7','8','9','10'])a.ok(called.includes(segment));
+ a.equal(rows[2].period,'下午');a.match(rows[2].room,/无完整时段/);
+ a.match(rows[0].room,/上午：博远楼JC101（第1—5节）/);
+ a.match(rows[0].room,/下午：博远楼JC101（第6—9节）/);
+ a.match(rows[0].room,/晚上：博远楼JC101（第11—13节）/);
+});
+
+test('no free lessons is reported honestly and a failed individual query is not treated as empty',async()=>{
+ const {m}=await env();
+ let mode='empty';
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;
+   if(mode==='fail'&&units.length===1&&units[0]==='7')throw Error('network');
+   return {roomList:[]};
+ }};
+ const rows=await m.queryDayRooms(http,'2026-11-23');
+ for(const label of ['上午','下午','晚上'])a.match(rows[0].room,new RegExp(label+'：无可用教室'));
+ mode='fail';await a.rejects(()=>m.queryDayRooms(http,'2026-11-23'),/network/);
+});
+
+test('fallback prefers longest contiguous block then building priority and ignores gaps',async()=>{
+ const {m}=await env();
+ const preferred={id:1,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
+ const longer={id:2,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1};
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;
+   if(units.length>1)return {roomList:[]};
+   const n=Number(units[0]);
+   return {roomList:[...(n===1||n===3?[preferred]:[]),...(n>=2&&n<=4?[longer]:[])]};
+ }};
+ const rows=await m.queryDayRooms(http,'2026-11-23');
+ a.match(rows[0].room,/上午：博观楼JB101（第2—4节）/);
+ a.match(rows[0].room,/下午：无可用教室/);a.match(rows[0].room,/晚上：无可用教室/);
 });

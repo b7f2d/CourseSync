@@ -3100,6 +3100,15 @@ function offlineAgenda(state,now=Date.now()) {
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
 
+function compareFreeRooms(a,b){
+  const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
+  const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName]||99;
+  if(bpA!==bpB)return bpA-bpB;
+  const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
+  if(flA!==flB)return flA-flB;
+  return String(a.nameZh||a.name||'').localeCompare(String(b.nameZh||b.name||''));
+}
+
 async function queryFreeRoomsForPeriod(http,date,units){
   const payload={
     campusId:2,buildingId:'',roomId:'',roomType:undefined,seatsForLessonGte:'',
@@ -3110,14 +3119,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
   return data.roomList.filter(r=>{
     const bName=r.building?.nameZh||r.buildingName;
     return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
-  }).sort((a,b)=>{
-    const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName];
-    const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName];
-    if(bpA!==bpB)return bpA-bpB;
-    const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
-    if(flA!==flB)return flA-flB;
-    return String(a.nameZh||a.name).localeCompare(String(b.nameZh||b.name));
-  });
+  }).sort(compareFreeRooms);
 }
 
 const MORNING_UNITS=['1','2','3','4','5'];
@@ -3146,17 +3148,67 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   ];
 }
 
+// Query individual lessons only for a period with no completely free room.
+// Never infer availability for a lesson whose request failed.
 async function queryDayRooms(http,date,onProgress=()=>{}){
-  let completed=0;
-  const requests=[queryFreeRoomsForPeriod(http,date,MORNING_UNITS),
-    queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS),
-    queryFreeRoomsForPeriod(http,date,EVENING_UNITS)];
-  const results=await Promise.allSettled(requests.map(request=>request.then(value=>{
-    onProgress(0.25+0.25*++completed);return value;
-  })));
-  const rejected=results.find(result=>result.status==='rejected');
-  if(rejected)throw rejected.reason;
-  return resolveDayRooms(results[0].value,results[1].value,results[2].value);
+  const periods=[MORNING_UNITS,AFTERNOON_UNITS,EVENING_UNITS];
+  const names=['上午','下午','晚上'];
+  const fullResults=await Promise.allSettled(periods.map(units=>queryFreeRoomsForPeriod(http,date,units)));
+  const fullFailure=fullResults.find(result=>result.status==='rejected');
+  if(fullFailure)throw fullFailure.reason;
+  const full=fullResults.map(result=>result.value);
+  const rows=resolveDayRooms(...full);
+  const missing=periods.map((units,index)=>full[index].length?null:{index,units}).filter(Boolean);
+  if(missing.length){
+    const tasks=missing.flatMap(({index,units})=>units.map(unit=>({index,unit})));
+    const slots=periods.map(()=>new Map());
+    let next=0;
+    const worker=async()=>{
+      while(next<tasks.length){
+        const task=tasks[next++];
+        slots[task.index].set(task.unit,await queryFreeRoomsForPeriod(http,date,[task.unit]));
+      }
+    };
+    const workers=await Promise.allSettled(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
+    const workerFailure=workers.find(result=>result.status==='rejected');
+    if(workerFailure)throw workerFailure.reason;
+    const roomName=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
+    const roomKey=r=>r.id!=null?'id:'+String(r.id):'name:'+roomName(r);
+    const bestFor=(units,perSlot)=>{
+      const rooms=new Map();
+      for(const unit of units)for(const room of perSlot.get(unit)||[]){
+        const key=roomKey(room);if(!roomName(room))continue;
+        if(!rooms.has(key))rooms.set(key,{room,free:new Set()});
+        rooms.get(key).free.add(Number(unit));
+      }
+      const candidates=[];
+      for(const {room,free} of rooms.values()){
+        let start=null,previous=null;
+        for(const unit of [...units.map(Number),Infinity]){
+          if(free.has(unit)){
+            if(start===null)start=unit;
+            previous=unit;
+          }else if(start!==null){
+            candidates.push({room,start,end:previous,length:previous-start+1});
+            start=null;previous=null;
+          }
+        }
+      }
+      candidates.sort((a,b)=>b.length-a.length||compareFreeRooms(a.room,b.room)||a.start-b.start);
+      return candidates[0]||null;
+    };
+    const suggestions=periods.map((units,index)=>{
+      if(full[index].length)return names[index]+'：'+roomName(full[index][0])+'（第'+units[0]+'—'+units.at(-1)+'节）';
+      const best=bestFor(units,slots[index]);
+      if(!best)return names[index]+'：无可用教室';
+      const span=best.start===best.end?String(best.start):best.start+'—'+best.end;
+      return names[index]+'：'+roomName(best.room)+'（第'+span+'节）';
+    });
+    rows[0].room=suggestions.join('\n');
+    for(const {index} of missing)rows[index+1].room='无完整时段空闲教室（见建议）';
+  }
+  onProgress(1);
+  return rows;
 }
 
 async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now=Date.now()){
