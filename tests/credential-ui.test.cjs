@@ -211,3 +211,13 @@ test('native fallback shows all choices and supports cancel without executing an
  assert.equal(calls[0].cancelLabel,'取消');assert.match(calls[1].message,/请输入有效的选项序号/);
  assert.equal(await choose(options),null);
 });
+
+test('page-backed credential and verification forms use plain native controls with cancel last',()=>{
+ for (const [start,end] of [['function LoginView','function presentLoginView'],['function NativeInputView','export async function presentNativeTextForm']]) {
+   const view=native.slice(native.indexOf(start),native.indexOf(end));
+   assert.match(view,/<NavigationStack/);
+   assert.match(view,/<List/);
+   assert.doesNotMatch(view,/GlassPopup|glassEffect|buttonStyle="glass"/);
+   assert.ok(view.lastIndexOf('title="取消"')>view.lastIndexOf('title="确认"'));
+ }
+});

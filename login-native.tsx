@@ -2,7 +2,7 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Dialog, GeometryReader, Navigation, NavigationStack, ScrollView, Text,
+  Dialog, GeometryReader, Navigation, NavigationStack, List, Section, ScrollView, Text,
   TextField, SecureField, Button, Image, useState,
   VStack, HStack, Spacer, useRef,
 } from 'scripting';
@@ -29,22 +29,23 @@ function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle
   const valid = account.length > 0 && account.length <= 100 &&
     password.length > 0 && password.length <= 512;
 
-  return <GlassPopup>
-    <VStack alignment="leading" spacing={14} padding={20}>
-        <Text font="title2" fontWeight="bold">{title}</Text>
-        <VStack alignment="leading" spacing={14} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-          <TextField title="学号" prompt="请输入学号" value={username} onChanged={setUsername}
-            textContentType="username" textInputAutocapitalization="never" />
-          <SecureField title="密码" prompt="请输入密码" value={password} onChanged={setPassword}
-            textContentType="password" />
-        </VStack>
-        <Button buttonStyle="glass" title={confirmTitle} disabled={!valid} action={() => {
+  return <NavigationStack presentationDetents={['medium','large']} presentationDragIndicator="visible">
+    <List navigationTitle={title} navigationBarTitleDisplayMode="inline" listStyle="insetGroup">
+      <Section>
+        <TextField title="学号" prompt="请输入学号" value={username} onChanged={setUsername}
+          textContentType="username" textInputAutocapitalization="never" />
+        <SecureField title="密码" prompt="请输入密码" value={password} onChanged={setPassword}
+          textContentType="password" />
+      </Section>
+      <Section>
+        <Button title={confirmTitle} disabled={!valid} action={() => {
           if (valid) dismiss({ username: account, password });
         }} />
-        {allowReuse ? <Button buttonStyle="glass" title="使用现有登录信息继续" action={() => dismiss({reuse:true})} /> : null}
-        <Button buttonStyle="glass" title="取消" action={() => dismiss(null)} />
-    </VStack>
-  </GlassPopup>;
+        {allowReuse ? <Button title="使用现有登录信息继续" action={() => dismiss({reuse:true})} /> : null}
+      </Section>
+      <Section><Button title="取消" action={() => dismiss(null)} /></Section>
+    </List>
+  </NavigationStack>;
 }
 
 function presentLoginView(title:string,confirmTitle:string,allowReuse=false){
@@ -84,23 +85,21 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   const maxLength=kind==='captcha'?32:otp?48:secret?512:120;
   const valid=response.length>0&&response.length<=maxLength;
 
-  return <GlassPopup>
-    <VStack alignment="leading" spacing={14} padding={20}>
-        <Text font="title2" fontWeight="bold">{title}</Text>
-        <VStack alignment="leading" spacing={12} padding={16} glassEffect={{type:'rect',cornerRadius:20}}>
-          <Text>{label}</Text>
-          {image?<Image image={image} resizable={true} scaleToFit={true} frame={{maxWidth:280,height:155}} />:null}
-          {secret?
-            <SecureField title={label} prompt="请输入" value={value} onChanged={setValue} />:
-            <TextField title={label} prompt={otp?'请输入或填充验证码':'请输入'} value={value}
-              onChanged={setValue} autofocus={!image} textContentType={otp?'oneTimeCode':undefined}
-              keyboardType={otp?'numberPad':'default'} textInputAutocapitalization="never"
-              autocorrectionDisabled={true}/>}
-        </VStack>
-        <Button buttonStyle="glass" title="确认" disabled={!valid} action={()=>{if(valid)dismiss(response);}}/>
-        <Button buttonStyle="glass" title="取消" action={()=>dismiss(null)}/>
-    </VStack>
-  </GlassPopup>;
+  return <NavigationStack presentationDetents={['medium','large']} presentationDragIndicator="visible">
+    <List navigationTitle={title} navigationBarTitleDisplayMode="inline" listStyle="insetGroup">
+      <Section header={<Text>{label}</Text>}>
+        {image?<Image image={image} resizable={true} scaleToFit={true} frame={{maxWidth:280,height:155}} />:null}
+        {secret?
+          <SecureField title={label} prompt="请输入" value={value} onChanged={setValue} />:
+          <TextField title={label} prompt={otp?'请输入或填充验证码':'请输入'} value={value}
+            onChanged={setValue} autofocus={!image} textContentType={otp?'oneTimeCode':undefined}
+            keyboardType={otp?'numberPad':'default'} textInputAutocapitalization="never"
+            autocorrectionDisabled={true}/>}
+      </Section>
+      <Section><Button title="确认" disabled={!valid} action={()=>{if(valid)dismiss(response);}}/></Section>
+      <Section><Button title="取消" action={()=>dismiss(null)}/></Section>
+    </List>
+  </NavigationStack>;
 }
 
 export async function presentNativeTextForm(options:NativeInputOptions) {
