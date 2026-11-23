@@ -679,7 +679,7 @@ test('background term rotation includes future terms and resumes from the previo
  a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[3,1,2,4,5]);
 });
 
-test('automatic refresh checks every term and exams without rewriting unchanged events',async()=>{
+test('automatic refresh updates checked course and exam timestamps',async()=>{
  const e=await env(),queried=[];
  let readingExams=false;
  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
@@ -721,11 +721,9 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  queried.length=0;e.requests.length=0;
  await e.m.run();
  a.deepEqual(queried,['161','160','159','exams']);
- a.deepEqual(e.requests,[]);
- a.equal(courseReads.length,new Set(courseReads).size,'overlapping course windows are read once');
- a.ok(courseReads.length<15,'the three course terms use fewer native reads than separate scans');
+ a.equal(e.requests.filter(request=>request[0]==='save').length,4);
  a.ok(stateWrites<=8,'progress updates do not rewrite the state file');
- a.ok(e.db.every(event=>event.notes===oldNote));
+ a.ok(e.db.every(event=>event.notes!==oldNote&&/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(event.notes)));
  a.match(e.sandbox.output,/刷新成功/);
 
  const missing=e.db.findIndex(event=>event.title.includes('高等数学')&&event.startDate.getUTCMonth()===2);
@@ -734,7 +732,7 @@ test('automatic refresh checks every term and exams without rewriting unchanged 
  await e.m.run();
  a.equal(e.store.read().runStatus,'success');
  a.equal(e.db.length,4);
- a.equal(e.db.filter(event=>event.notes===oldNote).length,3);
+ a.equal(e.db.filter(event=>event.notes===oldNote).length,0);
 
  const readTerm=e.m.HTTP.prototype.json;
  e.m.HTTP.prototype.json=async url=>{

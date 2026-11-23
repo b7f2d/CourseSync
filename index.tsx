@@ -2639,7 +2639,7 @@ async function chooseAnchor(sid,name,http,state,store,{calendar,termDetail}={}) 
 }
 
 // New and changed events keep recovery markers until the native IDs are indexed.
-// Automatic runs keep readable timestamps on unchanged events.
+// Each successfully checked term receives the current readable timestamp.
 async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{},refreshTimestamp=true){
   const term=state.semesters[String(sid)];
   if(!term)return;
@@ -2898,6 +2898,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
       const index=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
       if(index){
         state.semesters[sid]={...old,events:p.events,index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
+        await polishTermNotes(calendar,state,store,sid,budget);
         continue;
       }
     }
@@ -2905,7 +2906,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
     stage('写入学期 '+sid+' 的日历事件');
     state.tx={id:uuid(),sid:String(sid),anchor,name,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length}};
-    store.write(state);await finishTx(state,store,adapter,budget,interactive);
+    store.write(state);await finishTx(state,store,adapter,budget,true);
     } catch(e) {
       if(rotating&&!state.retryTermIds.includes(sid))state.retryTermIds.push(sid);
       if(rotating&&e.code==='BUDGET'&&!state.tx){
@@ -3384,7 +3385,7 @@ async function runAttempt() {
       return calendar;
     }:calendar,interactive,progress,manualAuth);
     try{
-      await syncExams(http,state,store,calendar,progress,Date.now(),http.before,interactive);
+      await syncExams(http,state,store,calendar,progress,Date.now(),http.before,true);
       state.lastExamError=null;
     }catch(error){
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
