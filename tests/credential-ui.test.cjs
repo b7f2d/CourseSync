@@ -228,6 +228,8 @@ test('classroom result formatting separates recommendation and lesson periods wi
  assert.match(message,/仅包含博远楼、博观楼、博文楼/);
  assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n完整空闲教室列表\n上午 · 第1—5节/);
  assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
+ assert.match(message,/博观楼202\n下午 · 第6—10节/);
+ assert.match(message,/无完整时段空闲教室（见建议）\n晚上 · 第11—13节/);
  assert.match(message,/晚上 · 第11—13节\n博文楼303/);
  const partial=format('2026-11-23',[{period:'建议教室',room:'白天：博远楼101、博观楼202（第1—10节）'}]);
  assert.match(partial,/白天：\n博远楼101（第1—10节）\n博观楼202（第1—10节）/);

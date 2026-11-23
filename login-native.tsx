@@ -179,7 +179,9 @@ function formatRoomResults(date, rooms) {
     }).join('\n');
     return (period==='上午'?'完整空闲教室列表\n':'')+heading+'\n'+content;
   });
-  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼',...sections].join('\n\n');
+  const firstPeriod=rooms.findIndex(({period})=>period==='上午');
+  const grouped=firstPeriod<0?sections:[...sections.slice(0,firstPeriod),sections.slice(firstPeriod).join('\n')];
+  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼',...grouped].join('\n\n');
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
