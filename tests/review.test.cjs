@@ -145,7 +145,7 @@ test('shortcut sync still returns Intent.text and writes calendar without backgr
 test('native foreground progress presentation names courses and exams',()=>{
  const progress=fs.readFileSync(__dirname+'/../progress-native.tsx','utf8');
  a.match(progress,/正在同步课程和考试/);
- a.ok(progress.includes('navigationTitle={title}'));
+ a.ok(progress.includes('{title}</Text>'));
  a.equal(progress.includes('<Button'),false);
  a.ok(progress.includes("modalPresentationStyle:'pageSheet'"));
  a.ok(source.includes('读取考试日程|更新考试日程'));
@@ -2558,4 +2558,20 @@ test('widgetCacheProjection includes synced exams alongside courses',async()=>{
  a.ok(payload);
  a.equal(payload.events.length,2);
  a.ok(payload.events.some(ev=>ev.title==='（考试）线性代数'&&ev.location==='博远楼 202'));
+});
+
+test('glass dialog preserves selected action, cancellation and input without invoking system dialog',async()=>{
+ const e=await env({mode:'menu',hostEnv:'index'}), calls=[];
+ e.sandbox.__nativeDialogMock=async options=>{calls.push(options);return {index:1,value:'My Calendar'};};
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>{throw Error('unexpected system dialog');};
+ const dialog=new e.m.ScriptingAdapter.Alert();
+ dialog.title='选择'; dialog.addAction('第一项');dialog.addDestructiveAction('第二项');dialog.addCancelAction('取消');
+ a.equal(await dialog.presentSheet(),1);
+ a.equal(calls[0].actions[1].destructive,true);
+ a.equal(calls[0].cancelLabel,'取消');
+ const prompt=new e.m.ScriptingAdapter.Alert();prompt.addTextField('名称','CourseSync');prompt.addAction('保存');prompt.addCancelAction('取消');
+ e.sandbox.__nativeDialogMock=async()=>({index:0,value:'My Calendar'});
+ a.equal(await prompt.presentAlert(),0);a.equal(prompt.textFieldValue(0),'My Calendar');
+ e.sandbox.__nativeDialogMock=async()=>null;
+ a.equal(await prompt.presentAlert(),-1);
 });

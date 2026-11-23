@@ -13,7 +13,7 @@ const credential=index.slice(start,end);
 test('credential form is native-only; fallback also uses iOS secure Dialog',()=>{
  assert.match(credential,/presentNativeCredentialForm\(title\)/);
  assert.match(credential,/if\(!config\.runsInApp\)fail\('AUTH_INTERACTIVE_REQUIRED'\)/);
- assert.match(credential,/HostDialog\.confirm\(\{/);
+ assert.match(credential,/await confirm\(/);
  assert.match(credential,/return await fallbackCredentialForm\(\{title\}\)/);
  assert.doesNotMatch(credential,/new WebView|loadHTML|autocomplete=|addScriptMessageHandler|nufeCredentials/);
 });
@@ -130,21 +130,23 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryFreeRoomsToday/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
- assert.match(native,/navigationDestination=\{\{/);
+ assert.doesNotMatch(native,/navigationDestination=\{\{/);
+ assert.match(native,/roomQuery\.current\.revision\+\+/);
  assert.match(native,/<FreeRoomView page=\{freeRoomPage\}/);
  assert.match(native,/if \(page\.kind === 'loading'\) \{\s*return <NativeProgressContent title="正在查询空闲教室" \/>;\s*\}\s*return <GeometryReader/);
  const freeRoom=native.slice(native.indexOf('function FreeRoomView'),native.indexOf('export type DashboardOptions'));
  assert.match(freeRoom,/<ScrollView>[\s\S]*minHeight:proxy\.size\.height,alignment:'center'/);
  assert.match(progress,/<NativeProgressContent title=\{title\}/);
- assert.match(progress,/<GeometryReader navigationTitle=\{title\}[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
- assert.match(progress,/const iconWidth=Math\.max\(0,Math\.min\(220,width-48,height-48\)\)/);
+ assert.match(progress,/<GeometryReader>[\s\S]*frame=\{\{width,height,alignment:'center'\}\}/);
+ assert.match(progress,/const iconWidth=Math\.max\(0,Math\.min\(120,width-80,height-110\)\)/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
 
 test('native dashboard presents an app-like interface with rich background and card styling',()=>{
  assert.match(native,/export async function presentNativeDashboard/);
  assert.match(native,/function DashboardView/);
- assert.match(native,/navigationTitle="CourseSync"/);
+ assert.match(native,/<Text font="title2" fontWeight="bold">CourseSync<\/Text>/);
+ assert.match(native,/glassEffect=\{\{type:'rect',cornerRadius:20\}\}/);
  assert.match(native,/title="立即刷新"/);
  assert.doesNotMatch(native,/管理日程/);
  assert.match(native,/title="查询空闲教室"/);

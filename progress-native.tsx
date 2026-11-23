@@ -1,7 +1,7 @@
 // One native progress sheet. No WebKit, fabricated percentage,
 // timer polling, sensitive stage details or repeated re-presentation.
 import {
-  GeometryReader, Image, Navigation, NavigationStack, VStack, useState,
+  GeometryReader, Image, Navigation, NavigationStack, Text, VStack, useState,
 } from 'scripting';
 
 type ProgressSession={
@@ -16,11 +16,12 @@ type ProgressSession={
 };
 
 export function NativeProgressContent({title}:{title:string}) {
-  return <GeometryReader navigationTitle={title} navigationBarTitleDisplayMode="inline">
+  return <GeometryReader>
     {proxy=>{
       const {width,height}=proxy.size;
-      const iconWidth=Math.max(0,Math.min(220,width-48,height-48));
+      const iconWidth=Math.max(0,Math.min(120,width-80,height-110));
       return <VStack alignment="center" spacing={0} frame={{width,height,alignment:'center'}}>
+        <VStack spacing={12} padding={20} glassEffect={{type:'rect',cornerRadius:28}}>
         <Image
           systemName="calendar"
           resizable={true}
@@ -28,7 +29,8 @@ export function NativeProgressContent({title}:{title:string}) {
           foregroundStyle="systemBlue"
           frame={{width:iconWidth,height:iconWidth}}
         />
-
+          <Text font="headline" multilineTextAlignment="center">{title}</Text>
+        </VStack>
       </VStack>;
     }}
   </GeometryReader>;
@@ -47,7 +49,7 @@ function ProgressScreen({session}:{session:ProgressSession}) {
       if(session.closed||session.hidden)try{dismiss();}catch(_){}
     });
   }
-  return <NavigationStack>
+  return <NavigationStack presentationDetents={['medium', 'large']} presentationDragIndicator="visible">
     <NativeProgressContent title={title} />
   </NavigationStack>;
 }

@@ -48,19 +48,20 @@ const backgroundDeadline=HostScript.env==='intent'?Date.now()+26000:Infinity;
 const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
 let presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm;
-let presentNativeDashboard,presentNativeCalendarManager,createNativeProgressView;
+let presentNativeDashboard,presentNativeCalendarManager,presentNativeDialog,createNativeProgressView;
 // Test-only injections simulate the index host without invoking native modules.
 if(globalThis.__COURSESYNC_TEST__){
   presentNativeCredentialForm=(...a)=>globalThis.__nativeCredentialMock(...a);
   presentNativeTextForm=(...a)=>globalThis.__nativeTextMock(...a);
   presentNativeRefreshForm=(...a)=>globalThis.__nativeRefreshMock(...a);
+  presentNativeDialog=(...a)=>globalThis.__nativeDialogMock?globalThis.__nativeDialogMock(...a):Promise.reject(new Error('No native dialog mock'));
   presentNativeDashboard=(...a)=>globalThis.__nativeDashboardMock?globalThis.__nativeDashboardMock(...a):-1;
   presentNativeCalendarManager=(...a)=>globalThis.__calendarManagerMock?globalThis.__calendarManagerMock(...a):null;
   createNativeProgressView=(...a)=>globalThis.__progressUIFactory(...a);
 }else if(config.runsInApp){
   const native=await import('./login-native');
   ({presentNativeCredentialForm,presentNativeTextForm,presentNativeRefreshForm,
-    presentNativeDashboard,presentNativeCalendarManager}=native);
+    presentNativeDashboard,presentNativeCalendarManager,presentNativeDialog}=native);
   ({createNativeProgressView}=await import('./progress-native'));
 }
 
@@ -121,8 +122,14 @@ class Alert{
  addTextField(placeholder,value=''){this.fields.push({placeholder,value,secure:false});}
  addSecureTextField(placeholder,value=''){this.fields.push({placeholder,value,secure:true});}
  textFieldValue(i){return this.values[i]??'';}
- async presentSheet(){const n=await HostDialog.actionSheet({title:this.title,message:this.message,actions:this.actions,cancelButton:this.cancel});return n==null?-1:n;}
+ async presentGlass(){
+   if(!config.runsInApp||typeof presentNativeDialog!=='function')return undefined;
+   try{return await presentNativeDialog({title:this.title,message:this.message,actions:this.actions,cancel:this.cancel,cancelLabel:this.cancelLabel,field:this.fields[0]});}catch(_){return undefined;}
+ }
+ async presentSheet(){const result=await this.presentGlass();if(result!==undefined)return result===null?-1:result.index;const n=await HostDialog.actionSheet({title:this.title,message:this.message,actions:this.actions,cancelButton:this.cancel});return n==null?-1:n;}
  async presentAlert(){
+   const result=await this.presentGlass();
+   if(result!==undefined){if(result===null)return -1;if(this.fields.length)this.values=[result.value];return result.index;}
    if(this.fields.length){const f=this.fields[0];const value=await HostDialog.prompt({title:this.title,message:this.message,placeholder:f.placeholder,defaultValue:f.value,obscureText:f.secure,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0]?.label||'继续'});if(value===null)return -1;this.values=[value];return 0;}
    if(this.cancel&&this.actions.length===1)return await HostDialog.confirm({title:this.title,message:this.message,cancelLabel:this.cancelLabel,confirmLabel:this.actions[0].label})?0:-1;
    if(this.actions.length>1)return this.presentSheet();
@@ -763,17 +770,13 @@ async function input(title,label,secure=false,options={}) {
       return code;
     }catch(e){
       if(e?.code==='CANCELLED')throw e;
-      const recover=await HostDialog.confirm({
-        title:'原生输入窗口不可用',
-        message:'无法打开原生输入窗口。是否改用系统输入框继续？',
-        cancelLabel:'取消',confirmLabel:'使用系统输入框'
-      });
+      const recover=await confirm('原生输入窗口不可用','无法打开原生输入窗口。是否改用系统输入框继续？','使用系统输入框','取消');
       if(!recover)fail('CANCELLED');
     }
   }
   return await legacyInput(title,label,secure);
 }
-async function confirm(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('确认');a.addCancelAction('取消');return await a.presentAlert()===0;}
+async function confirm(title,message,confirmLabel='确认',cancelLabel='取消') {const a=new Alert();a.title=title;a.message=message;a.addAction(confirmLabel);a.addCancelAction(cancelLabel);return await a.presentAlert()===0;}
 async function notice(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('好');await a.presentAlert();}
 // Read known login-form inputs as inert text; no WebView, no embedded page scripts.
 // Values are decoded only after selection. Never log or persist form fields.
@@ -1165,11 +1168,7 @@ async function credentialForm({title='CourseSync 登录'}={}){
   }
   // The only fallback is still a native iOS Dialog (two secure prompts).
   // Ask before showing them; never silently downgrade the combined form.
-  const consent=await HostDialog.confirm({
-    title:'原生登录窗口不可用',
-    message:'无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？',
-    cancelLabel:'取消登录',confirmLabel:'继续'
-  });
+  const consent=await confirm('原生登录窗口不可用','无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？','继续','取消登录');
   if(!consent)fail('CANCELLED');
   return await fallbackCredentialForm({title});
 }
@@ -2323,12 +2322,10 @@ async function requestCalendarName(state){
     if(result?.action!=='create')fail('CANCELLED');
     return validCalendarName(result.title);
   }
-  const title=await HostDialog.prompt({
-    title:'新建 iCloud 日历',placeholder:'日历名称',defaultValue:'CourseSync',
-    cancelLabel:'取消',confirmLabel:'创建并绑定'
-  });
-  if(title==null)fail('CANCELLED');
-  return validCalendarName(title);
+  const prompt=new Alert();prompt.title='新建 iCloud 日历';
+  prompt.addTextField('日历名称','CourseSync');prompt.addAction('创建并绑定');prompt.addCancelAction('取消');
+  if(await prompt.presentAlert()<0)fail('CANCELLED');
+  return validCalendarName(prompt.textFieldValue(0));
 }
 async function pickCalendar(state,store,beforePrompt){
   let all=await visibleCalendars();
