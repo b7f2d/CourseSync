@@ -162,7 +162,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.match(calls[0].message,/南京财经大学[\s\S]*已同步[\s\S]*CourseSync/);
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
- assert.match(calls[2].message,/第一节：博远楼 101/);
+ assert.match(calls[2].message,/第一节\n博远楼 101/);
 });
 
 test('calendar naming uses native prompt, validates entries and retains retry value',async()=>{
@@ -220,4 +220,19 @@ test('page-backed credential and verification forms use plain native controls wi
    assert.doesNotMatch(view,/GlassPopup|glassEffect|buttonStyle="glass"/);
    assert.ok(view.lastIndexOf('title="取消"')>view.lastIndexOf('title="确认"'));
  }
+});
+
+
+test('classroom result formatting separates recommendation and lesson periods without hiding rooms',()=>{
+ const vm=require('node:vm');
+ const code=native.slice(native.indexOf('function formatRoomResults('),native.indexOf('\nexport async function presentNativeDashboard('));
+ const format=vm.runInNewContext(code+'\nformatRoomResults');
+ const message=format('2026-11-23',[
+  {period:'建议教室',room:'白天：博远楼101、博观楼202'},
+  {period:'上午',room:'博远楼101、博观楼202'},
+  {period:'下午',room:'无完整时段空闲教室（见建议）'},
+  {period:'晚上',room:'博文楼303'}]);
+ assert.match(message,/建议教室\n白天：博远楼101\n博观楼202\n\n上午 · 第1—5节/);
+ assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
+ assert.match(message,/晚上 · 第11—13节\n博文楼303/);
 });

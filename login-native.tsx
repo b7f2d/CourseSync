@@ -301,6 +301,17 @@ async function chooseNativeAction(options) {
   return null;
 }
 
+// Native dialog messages have one font style. Separate sections and put each
+// classroom on its own line so the period and recommendations remain scannable.
+function formatRoomResults(date, rooms) {
+  const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
+  const sections=rooms.map(({period,room})=>{
+    const heading=periods[period] || period;
+    return heading+'\n'+String(room || '').replace(/、/g,'\n');
+  });
+  return ['今天 · '+date,...sections].join('\n\n');
+}
+
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
   const {state, schoolName, canSignOut, statusMessage, loadFreeRooms} = options;
   const stateLabel = state?.signedOut ? '未登录' : state?.runStatus === 'failed' ? '刷新失败' :
@@ -328,7 +339,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         try { result = await loadFreeRooms(() => true, () => {}); }
         catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
         const roomText = result.kind === 'error' ? result.message :
-          ['今天 · '+result.date, ...result.rooms.map(({period,room}) => period+'：'+room)].join('\n');
+          formatRoomResults(result.date,result.rooms);
         const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
         const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:true,cancelLabel:'返回'});
         if (result.kind === 'error' && selected === 0) retry = true;
