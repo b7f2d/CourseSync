@@ -3120,12 +3120,11 @@ async function queryFreeRoomsForPeriod(http,date,units){
   });
 }
 
-const MORNING_UNITS=['1','2','3','4'];
-const AFTERNOON_UNITS=['5','6','7','8','9'];
-const AFTERNOON_FALLBACK=['5','6','7','8'];
-const EVENING_UNITS=['10','11','12'];
+const MORNING_UNITS=['1','2','3','4','5'];
+const AFTERNOON_UNITS=['6','7','8','9','10'];
+const EVENING_UNITS=['11','12','13'];
 
-function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[],afternoonPartial=false){
+function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
   const name=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
   const same=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):name(a)===name(b));
   const unique=rooms=>rooms.filter((room,index)=>name(room)&&rooms.findIndex(other=>same(other,room))===index);
@@ -3135,34 +3134,29 @@ function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[],afternoonPartial=f
   const day=morning.filter(room=>contains(afternoon,room));
   const afternoonEvening=afternoon.filter(room=>contains(evening,room));
   let recommended='暂无可连续使用的教室';
-  if(!afternoonPartial&&allDay.length)recommended='全天：'+allDay.map(name).join('、');
-  else if(day.length)recommended=(afternoonPartial?'上午至下午第8节：':'白天：')+day.map(name).join('、');
-  else if(!afternoonPartial&&afternoonEvening.length)recommended='下午至晚上：'+afternoonEvening.map(name).join('、');
+  if(allDay.length)recommended='全天：'+allDay.map(name).join('、');
+  else if(day.length)recommended='白天：'+day.map(name).join('、');
+  else if(afternoonEvening.length)recommended='下午至晚上：'+afternoonEvening.map(name).join('、');
   const show=rooms=>rooms.length?rooms.map(name).join('、'):'无空闲教室';
   return [
     {period:'建议教室',room:recommended},
     {period:'上午',room:show(morning)},
-    {period:afternoonPartial?'下午（第5—8节）':'下午',room:show(afternoon)},
+    {period:'下午',room:show(afternoon)},
     {period:'晚上',room:show(evening)}
   ];
 }
 
 async function queryDayRooms(http,date,onProgress=()=>{}){
-  async function getAft(){
-    let rooms=await queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS);
-    if(rooms.length)return {rooms,partial:false};
-    rooms=await queryFreeRoomsForPeriod(http,date,AFTERNOON_FALLBACK);
-    return {rooms,partial:true};
-  }
   let completed=0;
-  const requests=[queryFreeRoomsForPeriod(http,date,MORNING_UNITS),getAft(),
+  const requests=[queryFreeRoomsForPeriod(http,date,MORNING_UNITS),
+    queryFreeRoomsForPeriod(http,date,AFTERNOON_UNITS),
     queryFreeRoomsForPeriod(http,date,EVENING_UNITS)];
   const results=await Promise.allSettled(requests.map(request=>request.then(value=>{
     onProgress(0.25+0.25*++completed);return value;
   })));
   const rejected=results.find(result=>result.status==='rejected');
   if(rejected)throw rejected.reason;
-  return resolveDayRooms(results[0].value,results[1].value.rooms,results[2].value,results[1].value.partial);
+  return resolveDayRooms(results[0].value,results[1].value,results[2].value);
 }
 
 async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now=Date.now()){

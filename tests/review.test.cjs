@@ -2377,9 +2377,6 @@ test('room recommendations preserve every ranked room and only combine continuou
  a.match(describe(m.resolveDayRooms([a1],[a1,a2],[b]))[0],/白天：博远楼JC101/);
  a.match(describe(m.resolveDayRooms([a1],[a2],[a2,b]))[0],/下午至晚上：博远楼JC203/);
  a.match(describe(m.resolveDayRooms([a1],[a2],[a1]))[0],/暂无可连续/);
- const partial=describe(m.resolveDayRooms([a1],[a1],[a1],true));
- a.match(partial[0],/上午至下午第8节/);a.doesNotMatch(partial[0],/全天/);
- a.match(partial[2],/第5—8节/);
 });
 
 test('NUFE free classroom query only requests today in China time and merges periods without modifying calendar',async()=>{
@@ -2394,7 +2391,7 @@ test('NUFE free classroom query only requests today in China time and merges per
      const units=p.dateTimeSegmentCmd.units;
        // 今天：上午、下午为同一个博远楼JC101，晚上为博远楼JC403 -> 合并为白天+晚上
        if(units.includes('1'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
-       if(units.includes('5'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
+       if(units.includes('6'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
    }
  };
@@ -2513,16 +2510,15 @@ test('dashboard errors are not attributed to the previous run exam stage',async(
  a.doesNotMatch(alerts[0].message,/阶段：更新考试日程/);
 });
 
-test('afternoon fallback labels shorter availability and never promises full-day continuity',async()=>{
+test('classroom query uses exactly the requested lesson boundaries without a partial fallback',async()=>{
  const {m}=await env();const called=[];
  const room={id:11,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
  const http={json:async(_url,{body})=>{
    const units=JSON.parse(body).dateTimeSegmentCmd.units;called.push(units.join(','));
-   return {roomList:units.includes('9')?[]:[room]};
+   return {roomList:units.includes('10')?[]:[room]};
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
- a.equal(rows[0].period,'建议教室');a.match(rows[0].room,/上午至下午第8节/);
- a.doesNotMatch(rows[0].room,/全天/);
- a.equal(rows[2].period,'下午（第5—8节）');
- a.ok(called.includes('5,6,7,8,9'));a.ok(called.includes('5,6,7,8'));
+ a.deepEqual(called.sort(),['1,2,3,4,5','11,12,13','6,7,8,9,10'].sort());
+ a.equal(rows[2].period,'下午');a.equal(rows[2].room,'无空闲教室');
+ a.match(rows[0].room,/暂无可连续/);
 });
