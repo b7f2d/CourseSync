@@ -262,6 +262,28 @@ function DashboardView({ state, schoolName, canSignOut, statusMessage, loadFreeR
   );
 }
 
+// Some Scripting releases do not expose Dialog.actionSheet. Use the native
+// confirm dialog in that case, keeping every option available without a page.
+function systemDialog() {
+  return (typeof Dialog !== 'undefined' && Dialog) || (globalThis as any).Dialog;
+}
+async function chooseNativeAction(options) {
+  const dialog = systemDialog();
+  if (typeof dialog?.actionSheet === 'function') {
+    try { return await dialog.actionSheet(options); } catch (_) { /* try native confirms */ }
+  }
+  if (typeof dialog?.confirm !== 'function') throw new Error('NATIVE_DIALOG_UNAVAILABLE');
+  const actions = options.actions || [];
+  if (!actions.length) return null;
+  for (let index = 0; index < actions.length; index++) {
+    const selected = await dialog.confirm({title:options.title,message:options.message || '',
+      confirmLabel:actions[index].label,
+      cancelLabel:index === actions.length - 1 ? (options.cancelLabel || '取消') : '更多选项'});
+    if (selected) return index;
+  }
+  return null;
+}
+
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
   const {state, schoolName, canSignOut, statusMessage, loadFreeRooms} = options;
   const stateLabel = state?.signedOut ? '未登录' : state?.runStatus === 'failed' ? '刷新失败' :
@@ -278,7 +300,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
   while (true) {
     const actions = [{label:'立即刷新'}, ...(loadFreeRooms ? [{label:'查询空闲教室'}] : []),
       ...(canSignOut ? [{label:'退出当前登录',destructive:true}] : [])];
-    const selection = await Dialog.actionSheet({title:'CourseSync',message,actions,cancelButton:false});
+    const selection = await chooseNativeAction({title:'CourseSync',message,actions,cancelButton:false});
     if (selection == null || selection < 0) return 'dismiss';
     if (selection === 0) return 0;
     if (loadFreeRooms && selection === 1) {
@@ -294,7 +316,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         const roomText = result.kind === 'error' ? result.message :
           ['今天 · '+result.date, ...result.rooms.map(({period,room}) => period+'：'+room)].join('\n');
         const roomActions = result.kind === 'error' ? [{label:'重试'}, {label:'返回'}] : [{label:'返回'}];
-        const selected = await Dialog.actionSheet({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:false});
+        const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:false});
         if (result.kind === 'error' && selected === 0) retry = true;
       }
       continue;
@@ -332,14 +354,14 @@ function CalendarManageView(_options: CalendarManageOptions) {
 export async function presentNativeCalendarManager(_options: CalendarManageOptions): Promise<CalendarManageResult> {
   let initial = 'CourseSync';
   while (true) {
-    const result = await Dialog.prompt({title:'新建 iCloud 日历',placeholder:'日历名称',
+    const result = await systemDialog().prompt({title:'新建 iCloud 日历',placeholder:'日历名称',
       defaultValue:initial,cancelLabel:'取消',confirmLabel:'创建并绑定'});
     if (result == null) return null;
     const title = result.trim();
     if (title.length >= 1 && title.length <= 60 && !/[\\/\r\n\x00-\x1f]/.test(title))
       return {action:'create',title};
     initial = result;
-    await Dialog.alert({title:'日历名称无效',message:'请输入 1 至 60 个字符，且不要包含斜杠或换行。',buttonLabel:'好'});
+    await systemDialog().alert({title:'日历名称无效',message:'请输入 1 至 60 个字符，且不要包含斜杠或换行。',buttonLabel:'好'});
   }
 }
 
@@ -371,22 +393,22 @@ function GlassDialog({options}: {options: GlassDialogOptions}) {
 }
 export async function presentNativeDialog(options: GlassDialogOptions): Promise<{index:number;value:string}|null> {
   if (options.field) {
-    const value = await Dialog.prompt({title:options.title,message:options.message,
+    const value = await systemDialog().prompt({title:options.title,message:options.message,
       placeholder:options.field.placeholder,defaultValue:options.field.value,
       obscureText:options.field.secure,cancelLabel:options.cancelLabel || '取消',
       confirmLabel:options.actions[0]?.label || '确认'});
     return value === null ? null : {index:0,value};
   }
   if (options.cancel && options.actions.length === 1) {
-    const ok = await Dialog.confirm({title:options.title,message:options.message || '',
+    const ok = await systemDialog().confirm({title:options.title,message:options.message || '',
       cancelLabel:options.cancelLabel || '取消',confirmLabel:options.actions[0].label});
     return ok ? {index:0,value:''} : null;
   }
   if (options.actions.length === 1 && !options.cancel) {
-    await Dialog.alert({title:options.title,message:options.message || '',buttonLabel:options.actions[0].label});
+    await systemDialog().alert({title:options.title,message:options.message || '',buttonLabel:options.actions[0].label});
     return {index:0,value:''};
   }
-  const index = await Dialog.actionSheet({title:options.title,message:options.message,
+  const index = await chooseNativeAction({title:options.title,message:options.message,
     actions:options.actions,cancelButton:options.cancel});
   return index == null || index < 0 ? null : {index,value:''};
 }

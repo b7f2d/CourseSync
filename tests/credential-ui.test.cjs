@@ -159,7 +159,8 @@ test('native dashboard presents an app-like interface with rich background and c
 
 test('system dashboard preserves actions, classroom results, retry, and logout',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('export async function presentNativeDashboard('),native.indexOf('\ntype CalendarManageOptions'))
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\ntype CalendarManageOptions'))
+   .replace('(globalThis as any).Dialog','globalThis.Dialog')
    .replace('export async function','async function')
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
@@ -183,11 +184,29 @@ test('calendar naming uses native prompt, validates entries and retains retry va
    .replace('_options: CalendarManageOptions','_options')
    .replace(': Promise<CalendarManageResult>','');
  const prompts=[],alerts=[],values=['bad/name',' My Calendar '];
- const run=vm.runInNewContext(source+'\npresentNativeCalendarManager',{Dialog:{
+ const run=vm.runInNewContext(source+'\npresentNativeCalendarManager',{systemDialog:()=>({
    prompt:async opts=>{prompts.push(opts);return values.shift();},alert:async opts=>alerts.push(opts)
- }});
+ })});
  const result=await run({});
  assert.equal(result.action,'create');assert.equal(result.title,'My Calendar');
  assert.equal(prompts[0].defaultValue,'CourseSync');assert.equal(prompts[1].defaultValue,'bad/name');
  assert.equal(alerts.length,1);
+});
+
+test('missing or broken actionSheet falls back to native confirmation choices',async()=>{
+ const vm=require('node:vm');
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nexport async function presentNativeDashboard('))
+   .replace('(globalThis as any).Dialog','globalThis.Dialog');
+ for (const broken of [false,true]) {
+   const seen=[], answers=[false,false,true];
+   const dialog={confirm:async options=>{seen.push(options);return answers.shift();}};
+   if(broken)dialog.actionSheet=async()=>{throw new TypeError('actionSheet unavailable');};
+   const choose=vm.runInNewContext(source+'\nchooseNativeAction',{Dialog:dialog});
+   const selected=await choose({title:'CourseSync',message:'已同步',actions:[
+     {label:'立即刷新'},{label:'查询空闲教室'},{label:'退出当前登录',destructive:true}
+   ]});
+   assert.equal(selected,2);
+   assert.deepEqual(seen.map(x=>x.confirmLabel),['立即刷新','查询空闲教室','退出当前登录']);
+   assert.equal(seen[2].cancelLabel,'取消');
+ }
 });
