@@ -1027,6 +1027,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   // Every successful school response is authoritative, including an empty list.
   // Scan historical managed exams as well so deletions are reflected in EventKit,
   // rather than merely dropping them from the widget cache.
+  state.lastStage='考试：计算核验范围';
   const windowSize=90*DAY;
   const storedIndex=state.examIndex||{};
   const storedStarts=Object.values(storedIndex).map(key=>{
@@ -1042,7 +1043,9 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     .map(start=>Math.floor(start/windowSize)*windowSize));
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   checkpoint();
+  state.lastStage='考试：合并旧日历';
   await migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint);
+  state.lastStage='考试：核对旧标题';
   const index=Object.assign(Object.create(null),state.examIndex);
   await upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint);
   const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
@@ -1059,6 +1062,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     }
     checkpoint();return [...owned.values()];
   };
+  state.lastStage='考试：读取已有日程';
   const rows=await read();
   if(!rows.length&&!target.size){
     state.exams=[];
@@ -1075,6 +1079,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   }
   const matches=(ev,exam)=>ev.title===exam.title&&+ev.startDate===exam.start&&
     +ev.endDate===exam.stop&&(ev.location||'')===exam.location;
+  state.lastStage='考试：保存日程';
   let saved=false;
   for(const [key,exam] of target){
     const existing=current.get(key);
@@ -1089,6 +1094,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   const written=saved?await read():rows;
   const writtenByKey=groupBy(written,keyOf);
   for(const [key,exam] of target)assert(writtenByKey.get(key)?.some(ev=>matches(ev,exam)),'CALENDAR_VERIFY');
+  state.lastStage='考试：核对并清理旧日程';
   const kept=new Set();
   let removed=false;
   for(const ev of written){
@@ -1115,6 +1121,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     location:exam.location||''
   }));
   store.write(state);
+  state.lastStage='考试：更新同步备注';
   const expectedNotes=readableNotes(null,new Date().toISOString());
   const validNotes=ev=>ev.notes===expectedNotes||(!refreshTimestamp&&hasSyncTimestamp(ev));
   let notesChanged=false;
@@ -2210,7 +2217,7 @@ function errorMessage(error,state){
   // Report only a local source line, never exception messages or raw stacks.
   const match=typeof error?.stack==='string'?/\bindex\.(?:tsx|js):(\d{1,7})(?::(\d{1,5}))?/.exec(error.stack):null;
   const location=match?'\n代码位置：index '+match[1]+(match[2]?':'+match[2]:''):'';
-  return '阶段：'+stage+'\n错误代码：'+code+location+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
+  return '阶段：'+stage+'\n错误代码：'+code+'\n诊断标识：D2'+location+'\n原因：'+reasonFor(code)+'\n建议：'+actionFor(code)+'\n时间：'+briefTime(new Date().toISOString())+'（北京时间）';
 }
 function stampStage(state,store,stage,persist=true){
   const at=new Date().toISOString();
