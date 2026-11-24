@@ -699,11 +699,15 @@ class HTTP {
     for(let hop=0;hop<12;hop++) {
       if(Date.now()-started>=chainLimit)fail('NETWORK_CHAIN_TIMEOUT');
       safeURL(url);this.before();this.trace('发送 '+method+' '+requestLabel(url));
-      const wait=1050-(Date.now()-this.last);
-      if(wait>0){
+      // Concurrent callers may wake together. Recheck the shared gate before
+      // reserving the next start; do not serialize the network response itself.
+      let wait=1050-(Date.now()-this.last);
+      while(wait>0){
         if(this.deadline-Date.now()<=wait)fail('BUDGET');
         await bounded(new Promise(r=>Timer.schedule(wait,false,r)),Math.min(3000,chainLimit-(Date.now()-started)),'NETWORK_CHAIN_TIMEOUT');
         this.before();
+        if(Date.now()-started>=chainLimit)fail('NETWORK_CHAIN_TIMEOUT');
+        wait=1050-(Date.now()-this.last);
       }
       this.last=Date.now();
       const req=new Request(url);req.method=method;req.timeoutInterval=15;req.allowInsecureRequest=false;
@@ -3121,15 +3125,44 @@ const MORNING_UNITS=['1','2','3','4','5'];
 const AFTERNOON_UNITS=['6','7','8','9','10'];
 const EVENING_UNITS=['11','12','13'];
 
+function freeRoomName(room){
+  return String(room?.nameZh||room?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
+}
+// Use indexed membership, keeping the existing ID-first/name-fallback semantics.
+function freeRoomLookup(){
+  const ids=new Set(),names=new Set(),namesWithoutId=new Set();
+  return {
+    has(room){
+      if(!room)return false;
+      const name=freeRoomName(room);
+      return room.id!=null?ids.has(String(room.id))||namesWithoutId.has(name):names.has(name);
+    },
+    add(room){
+      if(!room)return;
+      const name=freeRoomName(room);names.add(name);
+      if(room.id!=null)ids.add(String(room.id));else namesWithoutId.add(name);
+    }
+  };
+}
+function uniqueFreeRooms(rooms){
+  const seen=freeRoomLookup();
+  return rooms.filter(room=>{
+    const duplicate=seen.has(room);
+    seen.add(room);
+    return !!freeRoomName(room)&&!duplicate;
+  });
+}
+function sharedFreeRooms(first,second){
+  const lookup=freeRoomLookup();
+  for(const room of second)lookup.add(room);
+  return uniqueFreeRooms(first).filter(room=>lookup.has(room));
+}
 function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
-  const name=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
-  const same=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):name(a)===name(b));
-  const unique=rooms=>rooms.filter((room,index)=>name(room)&&rooms.findIndex(other=>same(other,room))===index);
-  const morning=unique(mornRooms),afternoon=unique(aftRooms),evening=unique(eveRooms);
-  const contains=(list,room)=>list.some(other=>same(other,room));
-  const allDay=morning.filter(room=>contains(afternoon,room)&&contains(evening,room));
-  const day=morning.filter(room=>contains(afternoon,room));
-  const afternoonEvening=afternoon.filter(room=>contains(evening,room));
+  const name=freeRoomName;
+  const morning=uniqueFreeRooms(mornRooms),afternoon=uniqueFreeRooms(aftRooms),evening=uniqueFreeRooms(eveRooms);
+  const day=sharedFreeRooms(morning,afternoon);
+  const allDay=sharedFreeRooms(day,evening);
+  const afternoonEvening=sharedFreeRooms(afternoon,evening);
   let recommended='暂无可连续使用的教室';
   if(allDay.length)recommended='全天：'+allDay.map(name).join('、');
   else if(day.length)recommended='白天：'+day.map(name).join('、')+(evening.length?'\n晚上：'+name(evening[0]):'');
@@ -3172,7 +3205,7 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
     };
     await Promise.all(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
     if(cancelled)throw cancelled;
-    const roomName=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
+    const roomName=freeRoomName;
     const roomKey=r=>r.id!=null?'id:'+String(r.id):'name:'+roomName(r);
     const bestFor=(units,perSlot)=>{
       const rooms=new Map();
@@ -3204,10 +3237,8 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
       const span=best.start===best.end?String(best.start):best.start+'—'+best.end;
       return names[index]+'：'+roomName(best.room)+'（第'+span+'节）'+(incomplete?'\n'+names[index]+'部分节次未能核验':'');
     });
-    const sameRoom=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):roomName(a)===roomName(b));
-    const shared=(first,second)=>first.filter((room,index)=>roomName(room)&&first.findIndex(other=>sameRoom(other,room))===index&&second.some(other=>sameRoom(other,room)));
-    const daytime=shared(full[0],full[1]);
-    const afternoonEvening=shared(full[1],full[2]);
+    const daytime=sharedFreeRooms(full[0],full[1]);
+    const afternoonEvening=sharedFreeRooms(full[1],full[2]);
     if(daytime.length)suggestions.splice(0,2,'白天：'+daytime.map(roomName).join('、')+'（第1—10节）');
     else if(afternoonEvening.length)suggestions.splice(1,2,'下午至晚上：'+afternoonEvening.map(roomName).join('、')+'（第6—13节）');
     rows[0].room=suggestions.join('\n');
