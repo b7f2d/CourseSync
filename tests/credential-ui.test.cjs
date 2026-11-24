@@ -42,7 +42,7 @@ test('first setup opens the native credential form directly',()=>{
  assert.match(index,/response\.schoolId===NUFE_SCHOOL\.id/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
  assert.match(index,/if\(signOutRequested\)\{await signOut\(state,store\);return;\}\s*if\(interactive\)/);
- assert.match(index,/if\(!manualAuth\)return;/);
+ assert.match(index,/if\(!manualAuth\)return returnToDashboard;/);
 });
 
 test('native OTP and CAPTCHA keep secrets in memory and use system keyboards',()=>{
@@ -81,11 +81,13 @@ test('foreground sync has no transition view and classrooms present a results li
  assert.doesNotMatch(create,/createNativeProgressView|Navigation\.present/);
  const dashboard=native.slice(native.indexOf('export async function presentNativeDashboard('),native.indexOf('\ntype CalendarManageOptions'));
  assert.doesNotMatch(dashboard,/createNativeProgressView|progress\.show|progress\.pause/);
- assert.match(dashboard,/if\(result.kind==='ready'\)await presentRoomResults\(result\)/);
- const results=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomResults('));
+ assert.match(dashboard,/await presentRoomQuery\(loadFreeRooms\)/);
+ const results=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
  assert.match(results,/<List navigationTitle="空闲教室"/);
  assert.match(results,/<Section key=\{period\}/);
- assert.match(results,/title="返回"/);
+ assert.match(results,/title=\{result\?'返回':'取消'\}/);
+ assert.match(results,/<ProgressView/);
+ assert.match(results,/title="重试"/);
 });
 
 test('routine refresh and re-login keep using the selected school',()=>{
@@ -128,7 +130,7 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/queryFreeRoomsToday/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
  assert.doesNotMatch(native,/navigationDestination=\{\{/);
- assert.match(native,/loadFreeRooms\(\(\) => true/);
+ assert.match(native,/await loadRooms\(isActive,updateProgress\)/);
  assert.match(native,/formatRoomResults\(result.date,result.rooms\)/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
@@ -146,10 +148,13 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  const vm=require('node:vm');
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
-   .replace("rooms: ReadyRooms['rooms']", 'rooms');
- const dashboard=native.slice(native.indexOf('async function presentRoomResults('),native.indexOf('\ntype CalendarManageOptions'))
-   .replace('result:ReadyRooms','result')
-   .replace('<RoomResultsView result={result}/>','result')
+   .replace("rooms: ReadyRooms['rooms']", 'rooms')
+   .replace('loadRooms:RoomLoader','loadRooms')
+   .replace('_value:number','_value')
+   .replace(' as const','');
+ const dashboard=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('\ntype CalendarManageOptions'))
+   .replace('loadRooms:RoomLoader','loadRooms')
+   .replace('<RoomResultsView loadRooms={loadRooms} isOpen={()=>open}/>','{loadRooms,isOpen:()=>open}')
    .replace('export async function','async function')
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
@@ -168,12 +173,19 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.match(calls[2].message,/第一节\n博远楼 101/);
 
  const presented=[];
- sandbox.Navigation.present=async options=>presented.push(options);
+ sandbox.useEffect=()=>{};
+ sandbox.ProgressView=true;
+ sandbox.Navigation.present=async ({element,modalPresentationStyle})=>{
+   assert.equal(modalPresentationStyle,'pageSheet');
+   assert.equal(element.isOpen(),true);
+   presented.push({element,result:await element.loadRooms(element.isOpen,()=>{})});
+ };
  selections.push(1,0);
  rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',room:'博远楼JC101'}]});
  assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()}),0);
  assert.equal(presented.length,1);
- assert.equal(presented[0].element.rooms[0].room,'博远楼JC101');
+ assert.equal(presented[0].result.rooms[0].room,'博远楼JC101');
+ assert.equal(presented[0].element.isOpen(),false);
 });
 
 test('calendar naming uses native prompt, validates entries and retains retry value',async()=>{
@@ -236,7 +248,7 @@ test('page-backed credential and verification forms use plain native controls wi
 
 test('classroom result formatting separates recommendation and lesson periods without hiding rooms',()=>{
  const vm=require('node:vm');
- const code=native.slice(native.indexOf('const ROOM_SCOPE'),native.indexOf('function RoomResultsView('))
+ const code=native.slice(native.indexOf('const ROOM_SCOPE'),native.indexOf('async function readRoomResults('))
    .replace("rooms: ReadyRooms['rooms']", 'rooms');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
@@ -244,7 +256,7 @@ test('classroom result formatting separates recommendation and lesson periods wi
   {period:'上午',room:'博远楼101、博观楼202'},
   {period:'下午',room:'无完整时段空闲教室（见建议）'},
   {period:'晚上',room:'博文楼303'}]);
- assert.match(message,/仅查询博远楼、博观楼、博文楼/);
+ assert.match(message,/仙林校区 · 博远楼、博观楼、博文楼/);
  assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n整段空闲教室\n上午 · 第1—5节/);
  assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
  assert.match(message,/博观楼202\n下午 · 第6—10节/);

@@ -175,6 +175,17 @@ test('widget mirror blocks unverified transactions, filters old semesters, and k
  a.equal(e.m.publishWidgetCache(e.state,now),false);
  a.equal(e.widgetRecords.get('CourseSync.Widget.Courses.v1').events.length,1);
 });
+test('a busy timetable keeps complete weeks in the widget cache',async()=>{
+ const e=await env(),now=Date.parse('2026-11-03T00:00:00Z');
+ const week1=Array.from({length:220},(_,i)=>lesson({id:'near-'+i,start:'2026-11-03T05:30:00Z',end:'2026-11-03T06:55:00Z'}));
+ const week2=Array.from({length:190},(_,i)=>lesson({id:'later-'+i,start:'2026-11-11T05:30:00Z',end:'2026-11-11T06:55:00Z'}));
+ e.baseline([...week2,...week1]);e.state.lastCheck=new Date(now).toISOString();
+ a.equal(e.m.publishWidgetCache(e.state,now),true);
+ const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
+ a.equal(saved.coverageEnd,'2026-11-08T16:00:00.000Z');
+ a.equal(saved.events.length,220);
+ a.ok(saved.events.every(event=>event.id.startsWith('near-')));
+});
 test('widget mirroring fails safely if native Storage is absent or rejects writes',async()=>{
  const e=await env();
  e.baseline([lesson()]);e.state.lastCheck='2026-11-02T00:00:00Z';
@@ -637,16 +648,6 @@ test('silent deletion no-op fails post-write verification',async()=>{const e=awa
 test('calendar write error retains transaction for recovery',async()=>{const e=await env();e.state.tx=tx([],[lesson()]);e.setSaveFailure(true);await a.rejects(()=>e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{}));a.ok(e.state.tx);a.ok(e.files.has(e.store.path(e.state.tx.backupName)));});
 test('transaction snapshot exists before first mutation',async()=>{const e=await env();e.state.tx=tx([],[lesson()]);const adapter=new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store);const save=adapter.save.bind(adapter);adapter.save=async(...args)=>{a.ok(e.state.tx.backupName);a.ok(e.files.has(e.store.path(e.state.tx.backupName)));return save(...args)};await e.m.finishTx(e.state,e.store,adapter,()=>{});a.equal(e.state.tx,null);});
 test('backup failure prevents every calendar write',async()=>{const e=await env();e.state.tx=tx([],[lesson()]);const old=e.store.fm.writeString;e.store.fm.writeString=(p,t)=>{if(p.includes('同步前'))return;old(p,t)};await a.rejects(()=>e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{}),code('BACKUP_FAILED'));a.equal(e.requests.length,0);});
-test('dedicated cleanup requires an existing verified baseline',async()=>{const e=await env();e.add(lesson(),{notes:'old'});await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('EMPTY_SOURCE'));a.equal(e.requests.length,0);});
-test('dedicated cleanup refuses to delete old entries when new lesson missing',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson(),{notes:'old'});await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('CALENDAR_VERIFY'));a.equal(e.requests.length,0);});
-test('dedicated cleanup automatically removes unmarked old content and preserves new lesson',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old ICS'});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);a.equal(e.db.length,1);a.equal(e.m.eventRecord(e.db[0],e.state.owner).id,'lesson-1');a.equal(e.state.lastLegacyCleanupRemaining,0);});
-test('dedicated cleanup never deletes any other calendar content',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});const foreign=e.add(lesson(),{cal:e.other,notes:'personal'});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);a.ok(e.db.some(x=>x.identifier===foreign.identifier));});
-test('series removal of individual occurrences covers every visible date',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());for(let i=0;i<4;i++)e.add(lesson(),{id:'old-series',notes:'old recurring',offset:i*7*86400000});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);a.equal(e.db.length,1);a.equal(e.state.lastLegacyCleanupCount,4);});
-test('whole-series native removal does not retry stale occurrence objects',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.setSeries(true);for(let i=0;i<4;i++)e.add(lesson(),{id:'old-series',notes:'old recurring',offset:i*7*86400000});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);a.equal(e.db.length,1);a.equal(e.state.lastLegacyCleanupCount,1);});
-test('unverified legacy deletion reports failure, never success',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});e.setNoRemove(true);await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('LEGACY_VERIFY'));a.equal(e.state.lastLegacyCleanupRemaining,1);});
-test('legacy snapshot includes all observed occurrences before removal',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());for(let i=0;i<2;i++)e.add(lesson(),{id:'old-series',notes:'old recurring',offset:i*7*86400000});await e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store);const backup=e.files.get(e.store.path(e.state.lastLegacyReportName));a.equal(JSON.parse(backup).events.length,3);a.match(JSON.parse(backup).limitation,/series deletion/);});
-test('legacy invitation is preserved, preventing outbound cancellation',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());const ev=e.add(lesson(),{notes:'meeting invitation'});ev.attendees=[{name:'someone'}];await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('LEGACY_INVITATION'));a.ok(e.db.some(x=>x.identifier===ev.identifier));});
-test('unbound calendar cannot be purged',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());await a.rejects(()=>e.m.replaceDedicatedLegacy(e.other,e.state,e.store),code('CALENDAR_READONLY'));a.equal(e.requests.length,0);});
 test('ICS output escapes text and folds at 75 UTF8 bytes',async()=>{const {m}=await env();const text=m.ics([lesson({title:'中文'.repeat(80)+'\nX;,'})]);a.match(text,/\\nX\\;\\,/);for(const line of text.split('\r\n'))a.ok(Buffer.byteLength(line)<=75);a.match(text,/DTSTART:20260907T000000Z/);a.doesNotMatch(text,/教师|张老师/);});
 test('diagnostics never expose native raw error contents',async()=>{const {m}=await env();a.doesNotMatch(m.errorMessage(Error('password=VERY_SECRET'),{lastStage:'测试阶段'}),/VERY_SECRET/);});
 test('bounded work rejects hung WebView and clears timer',async()=>{const {m}=await env();await a.rejects(()=>m.bounded(new Promise(()=>{}),10,'WEBVIEW_TIMEOUT'),code('WEBVIEW_TIMEOUT'));});
@@ -666,6 +667,28 @@ function loggedIn(e,sourceRaw){
  e.m.HTTP.prototype.json=async function(url){return typeof sourceRaw==='function'?sourceRaw(url):sourceRaw;};
 }
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
+test('manual refresh reports success in the unlocked dashboard and reuses verified schedules',async()=>{
+ const e=await env({hostEnv:'index'}),seen=[];
+ e.keys.set('CourseSync.Local.v1.school-choice','nufe');
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ e.sandbox.__nativeDashboardMock=async({state})=>{
+   a.equal(e.store.fm.fileExists(e.store.path('run-lock.json')),false);
+   seen.push(state.runStatus);
+   return seen.length%2===1?0:'dismiss';
+ };
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ const snapshots=()=>[...e.files.keys()].filter(path=>path.includes('同步前快照-'));
+ a.equal(snapshots().length,1);
+ const original=e.db[0].identifier;
+ e.db[0].notes='同步：2025-01-01 08:00';
+ await e.m.run();
+ a.deepEqual(seen,[undefined,'success','success','success']);
+ a.equal(snapshots().length,1);
+ a.equal(e.db[0].identifier,original);
+ a.notEqual(e.db[0].notes,'同步：2025-01-01 08:00');
+});
 test('background term rotation includes future terms and resumes from the previous cursor',async()=>{
  const {m}=await env();
  const info={current:3,semesters:[{id:1},{id:2},{id:3},{id:4},{id:5}]};
@@ -929,13 +952,23 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
  a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
  a.match(e.m.actionFor('CALENDAR_READONLY'),/原日历/);
 });
-test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
+test('daily refresh updates managed courses, deduplicates matching imports and preserves unrelated events',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
- e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
+ e.baseline([old,cancelled]);e.add(old);e.add(cancelled);
+ for(const i of [0,2])e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});
+ const personal=e.add(old,{cal:e.other,notes:'personal'});
+ const unrelated=e.add(lesson({title:'个人安排'}),{notes:'personal'});
+ const invitation=e.add(old,{notes:'invitation'});invitation.attendees=[{name:'guest'}];
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const own=e.db.filter(x=>x.calendar.identifier===e.calendar.identifier);a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));a.ok(e.db.some(x=>x.identifier===personal.identifier));a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
+ const managed=()=>e.db.filter(x=>x.calendar.identifier===e.calendar.identifier&&x.notes.startsWith('同步：'));
+ const own=managed();a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));
+ for(const event of [personal,unrelated,invitation])a.ok(e.db.some(x=>x.identifier===event.identifier));
+ a.equal(e.db.some(x=>x.identifier==='old-ics'),false);
+ a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);
+ a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
  // A second entire run must change neither logical nor native event IDs.
- const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();a.equal(e.db.filter(x=>x.calendar.identifier===e.calendar.identifier).map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
+ const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();
+ a.equal(managed().map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
 test('end-to-end malformed source preserves every old event and reports one failure',async()=>{const e=await env();e.baseline([lesson()]);const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});loggedIn(e,{});await executeDaily(e);a.ok(e.db.some(x=>x.identifier===own.identifier));a.ok(e.db.some(x=>x.identifier===legacy.identifier));a.equal(e.requests.length,0);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.equal(e.store.read().lastError,'SCHEMA');});
 test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'EMPTY_SOURCE');a.match(e.notices[0].title,/失败/);});
@@ -1014,7 +1047,6 @@ test('automatic login without credentials stops before submitting password',asyn
 test('automatic login encountering MFA never opens UI or attempts codes',async()=>{const e=await env();const http={get:async()=>({url:'https://authserver.nufe.edu.cn/authserver/login',text:'isMultifactor=true'})};await a.rejects(()=>e.m.coursePage(http,false),code('AUTH_INTERACTIVE_REQUIRED'));});
 test('automatic captcha requirement never encrypts or submits password',async()=>{const e=await env();let posts=0;const http={jar:new e.m.CookieJar(),get:async(url,opt)=>{if(opt&&opt.body)posts++;return {text:''}},authJSON:async()=>({isNeed:true})};const page={url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1s1"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};await a.rejects(()=>e.m.passwordLogin(http,page,'sample','local-password',false),code('AUTH_INTERACTIVE_REQUIRED'));a.equal(posts,0);});
 test('cookie RFC default path also applies to directory endpoint itself',async()=>{const {m}=await env();const jar=new m.CookieJar();jar.ingest('https://jwxt.nufe.edu.cn/student/login',{'set-cookie':'x=v'});a.equal(jar.header('https://jwxt.nufe.edu.cn/student'),'x=v');a.equal(jar.header('https://jwxt.nufe.edu.cn/student/course'),'x=v');a.equal(jar.header('https://jwxt.nufe.edu.cn/students'),'');});
-test('an invitation anywhere stops dedicated deletion before first remove',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});const invitation=e.add(lesson(),{notes:'invitation'});invitation.attendees=[{name:'guest'}];await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('LEGACY_INVITATION'));a.equal(e.requests.filter(x=>x[0]==='remove').length,0);});
 
 test('owned series is replaced with a standalone new target after backup',async()=>{const e=await env();e.add(lesson(),{id:'owned-series'});e.add(lesson(),{id:'owned-series',offset:7*86400000});e.setSeries(true);e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,'owned-series');a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,'lesson-1');});
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
@@ -1082,10 +1114,6 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  a.deepEqual(ids(),initialIds);
  a.equal(exams().find(x=>x.identifier===finished.identifier).title,'（考试）旧考试');
  a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
- e.store.acquire();
- try{await e.m.replaceDedicatedLegacy(e.calendar,e.store.read(),e.store);}
- finally{e.store.release();}
- a.deepEqual(ids(),initialIds);
  body='<tr><td>无效响应</td></tr>';
  await e.m.run();
  a.match(alerts.at(-1).message,/EXAM_SCHEMA/);
@@ -1194,8 +1222,11 @@ test('calendar cancellation returns to the dashboard with a verified login and c
    a.deepEqual(e.requests,[]);
    a.deepEqual(alerts,[]);
    e.sandbox.__nativeDashboardMock=async options=>{
-     a.equal(options.state.calendarBindingPending,true);
-     return 0;
+     if(options.state.calendarBindingPending)return 0;
+     a.equal(options.state.runStatus,'success');
+     a.equal(options.state.calendarTitle,'课程和考试');
+     a.equal(e.store.fm.fileExists(e.store.path('run-lock.json')),false);
+     return 'dismiss';
    };
    e.sandbox.__calendarManagerMock=async()=>({action:'create',title:'课程和考试'});
    await e.m.run();
@@ -1586,8 +1617,9 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
    return options.actions.findIndex(x=>x.destructive||x.label==='退出登录');
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
-   a.match(options.message,/Cookie/);
-   a.match(options.message,/课表与日历不会删除/);
+   a.match(options.message,/本机的教务会话/);
+   a.match(options.message,/iCloud 钥匙串/);
+   a.match(options.message,/已同步的课程和考试仍可在 Apple 日历查看/);
    return true;
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
@@ -1728,7 +1760,7 @@ test('background sync after deliberate logout makes no school request or extra n
 test('project display name is CourseSync while stable internal identity is retained',()=>{
  const project=JSON.parse(fs.readFileSync(__dirname+'/../script.json','utf8'));
  a.equal(project.name,'CourseSync');
- a.match(project.description,/CourseSync/);
+ a.match(project.description,/Apple 日历.*空闲教室/);
  a.equal(project.localizedNames.en,'CourseSync');
  a.equal(project.localizedNames.zh,'CourseSync');
 });

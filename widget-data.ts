@@ -14,7 +14,7 @@ const LEGACY_MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
 // Storage is private to the CourseSync project (no shared:true). The
 // widget can use it even when the extension does not expose a FileManager
 // App Group root. The legacy file reader is a fallback for existing installs.
-export function readWidgetMirror(storage){
+export function readWidgetMirror(storage,now=Date.now()){
   if(!storage||typeof storage.get!=='function')return {kind:'empty',code:'STORAGE_UNAVAILABLE'};
   let obj;
   try{
@@ -25,6 +25,11 @@ export function readWidgetMirror(storage){
   if(!obj||obj.version!==1||!Array.isArray(obj.events)||
      obj.events.length>400||typeof obj.lastCheck!=='string')
     return {kind:'invalid',code:'STORAGE_SCHEMA'};
+  if(obj.coverageEnd!==undefined){
+    const end=typeof obj.coverageEnd==='string'?Date.parse(obj.coverageEnd):NaN;
+    if(!Number.isFinite(end))return {kind:'invalid',code:'STORAGE_SCHEMA'};
+    if(now>=end)return {kind:'empty',code:'CACHE_EXPIRED'};
+  }
   for(const e of obj.events){
     if(!e||typeof e.title!=='string'||typeof e.start!=='string'||
        typeof e.end!=='string'||typeof e.location!=='string'||
@@ -41,6 +46,7 @@ export function loadBestWidgetState(files,storage){
   // Access App Group only as an optional fallback; never fabricate its path.
   const file=loadWidgetState(files);
   if(file.kind==='ready')return file;
+  if(mirror.code==='CACHE_EXPIRED')return mirror;
   if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_EMPTY')
     return {kind:'empty',code:'OPEN_MAIN_ONCE'};
   if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_UNAVAILABLE')
@@ -83,6 +89,8 @@ export function loadWidgetState(files) {
   if(!state||state.version!==1||!state.semesters||
      typeof state.semesters!=='object'||Array.isArray(state.semesters))
     return {kind:'invalid',code:'CACHE_SCHEMA'};
+  if(!state.lastCheck&&!state.exams?.length&&!Object.values(state.semesters).some(term=>term?.events?.length))
+    return {kind:'empty',code:'NO_SYNC_YET'};
   return {kind:'ready',state};
 }
 
@@ -153,12 +161,12 @@ export function buildWidgetModel(state,now=Date.now()){
     empty:courses.length===0};
 }
 
-// Keep entries in time order and make room for today's active class if needed.
+// Keep entries in time order and make room for today's current or next item.
 export function selectVisibleCourses(day,limit=1){
   const all=Array.isArray(day?.courses)?day.courses:[];
-  const n=Math.max(1,Math.trunc(Number(limit)||1));
-  const active=day?.today?all.findIndex(course=>course.status==='current'):-1;
-  const offset=Math.max(0,active-n+1);
+  const n=Math.max(0,Math.min(all.length,Math.trunc(limit)||0));
+  const focus=day?.today?all.findIndex(course=>course.status!=='done'):-1;
+  const offset=focus>=n?Math.min(focus,all.length-n):0;
   return {courses:all.slice(offset,offset+n),hidden:Math.max(0,all.length-n)};
 }
 

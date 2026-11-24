@@ -10,7 +10,9 @@ test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
   assert.equal(data.name,'CourseSync');
   assert.equal(Object.hasOwn(data,'version'),false);
-  assert.match(data.description,/CourseSync/);
+  assert.equal(data.description,JSON.parse(read('package.json')).description);
+  for(const feature of ['Apple 日历','空闲教室','小组件','快捷指令'])
+    assert.ok(data.description.includes(feature));
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
@@ -21,17 +23,16 @@ test('script identity is independent of the selected school',()=>{
   assert.doesNotMatch(read('script.json'),/南京财经大学|苏州科技大学|南财/);
 });
 
-test('README distinguishes public CourseSync name from legacy installation identity',()=>{
+test('README uses the same label as the installed script',()=>{
   const readme=read('README.md');
   assert.match(readme,/^# CourseSync$/m);
-  assert.match(readme,/Scripting 脚本标识/);
-  assert.match(readme,/CourseSync/);
+  assert.match(readme,/打开 \*\*CourseSync\*\*/);
 });
 
 test('README describes NUFE as the only currently open school',()=>{
-  assert.match(read('README.md'),/当前仅开放\*\*南京财经大学\*\*/);
+  assert.match(read('README.md'),/南京财经大学的 iPhone 课表工具/);
   assert.doesNotMatch(read('README.md'),/苏州科技大学/);
-  assert.match(read('README.md'),/账号登录/);
+  assert.match(read('README.md'),/输入学校学号和密码/);
 });
 
 test('README remains text-only without image markup or references',()=>{
@@ -41,7 +42,7 @@ test('README remains text-only without image markup or references',()=>{
   assert.equal(readme.includes('<svg'),false);
   assert.equal(readme.includes('docs/images/'),false);
   assert.equal(readme.includes('!['),false);
-  assert.match(readme,/再次打开 CourseSync 时直接进入登录页/);
+  assert.match(readme,/已同步到 Apple 日历的课程和考试仍可查看/);
 });
 
 test('README points to the main branch for remote import',()=>{

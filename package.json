@@ -1,7 +1,8 @@
 {
   "name": "coursesync",
   "version": "2.0.0",
-  "description": "基于 Scripting 的 iOS 本地课表同步工具，支持 Apple 日历、小组件与快捷指令自动同步。",
+  "description": "同步课程和考试到 Apple 日历，查询空闲教室，支持课表小组件和快捷指令自动刷新。",
+  "private": true,
   "type": "commonjs",
   "scripts": {
     "test": "node --test tests/*.test.cjs"

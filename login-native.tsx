@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Dialog, Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, useState,
+  TextField, SecureField, Button, Image, ProgressView, useState, useEffect,
 } from 'scripting';
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
@@ -124,6 +124,7 @@ export type DashboardOptions = {
   statusMessage: string;
   loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void) => Promise<FreeRoomResult>;
 };
+type RoomLoader = NonNullable<DashboardOptions['loadFreeRooms']>;
 
 // Some Scripting releases do not expose Dialog.actionSheet. Use the native
 // confirm dialog in that case, keeping every option available without a page.
@@ -166,7 +167,7 @@ async function chooseNativeAction(options) {
   return null;
 }
 
-const ROOM_SCOPE='仅查询博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
+const ROOM_SCOPE='仙林校区 · 博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
 
 function roomResultSections(rooms: ReadyRooms['rooms']) {
   const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
@@ -192,39 +193,77 @@ function formatRoomResults(date, rooms) {
   return [date,ROOM_SCOPE,...grouped].join('\n\n');
 }
 
-function RoomResultsView({result}: {result:ReadyRooms}) {
+async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{}) {
+  try{return await loadRooms(isActive,updateProgress);}
+  catch(_){return {kind:'error',message:'查询失败，请稍后重试。'} as const;}
+}
+
+function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>boolean}) {
   const dismiss=Navigation.useDismiss();
-  const sections=roomResultSections(result.rooms);
+  const [result,setResult]=useState<FreeRoomResult|null>(null);
+  const [attempt,setAttempt]=useState(0);
+  const [connected,setConnected]=useState(false);
+  useEffect(()=>{
+    let active=true;
+    const isActive=()=>active&&isOpen();
+    void readRoomResults(loadRooms,isActive,value=>{
+      if(isActive()&&value>=0.25)setConnected(true);
+    }).then(next=>{if(isActive())setResult(next);});
+    return ()=>{active=false;};
+  },[attempt]);
+  const ready=result?.kind==='ready'?result:null;
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
     <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
-      toolbar={{cancellationAction:<Button title="返回" action={()=>dismiss()}/>}}>
-      <Section header={<Text>{result.date}</Text>}>
+      toolbar={{cancellationAction:<Button title={result?'返回':'取消'} action={()=>dismiss()}/>}}>
+      {!result?<Section>
+        <ProgressView progressViewStyle="circular"
+          label={<Text>{connected?'正在查询今天的空闲教室…':'正在连接教务系统…'}</Text>}/>
+      </Section>:null}
+      {result?.kind==='error'?<Section>
+        <Text>{result.message}</Text>
+        <Button title="重试" action={()=>{
+          setResult(null);setConnected(false);setAttempt(attempt+1);
+        }}/>
+      </Section>:null}
+      {ready?<Section header={<Text>{ready.date}</Text>}>
         <Text foregroundStyle="secondary">{ROOM_SCOPE}</Text>
-      </Section>
-      {sections.map(({period,heading,content})=>
+      </Section>:null}
+      {ready?roomResultSections(ready.rooms).map(({period,heading,content})=>
         <Section key={period} header={<Text>{heading}</Text>}>
           {content.map((line,index)=><Text key={index}>{line}</Text>)}
-        </Section>)}
+        </Section>):null}
     </List>
   </NavigationStack>;
 }
 
-async function presentRoomResults(result:ReadyRooms) {
-  if(typeof Navigation?.present==='function'){
+async function presentRoomQuery(loadRooms:RoomLoader) {
+  if(typeof Navigation?.present==='function'&&typeof useEffect==='function'&&ProgressView){
+    let open=true;
     try{
-      await Navigation.present({element:<RoomResultsView result={result}/>,modalPresentationStyle:'pageSheet'});
+      await Navigation.present({element:<RoomResultsView loadRooms={loadRooms} isOpen={()=>open}/>,
+        modalPresentationStyle:'pageSheet'});
       return;
     }catch(_){ /* fall back to a native dialog */ }
+    finally{open=false;}
   }
-  await chooseNativeAction({title:'空闲教室',message:formatRoomResults(result.date,result.rooms),
-    actions:[{label:'返回'}],cancelButton:false});
+  while(true){
+    const result=await readRoomResults(loadRooms);
+    if(result.kind==='ready'){
+      await chooseNativeAction({title:'空闲教室',message:formatRoomResults(result.date,result.rooms),
+        actions:[{label:'返回'}],cancelButton:false});
+      return;
+    }
+    const selected=await chooseNativeAction({title:'空闲教室',message:result.message,
+      actions:[{label:'重试'}],cancelButton:true,cancelLabel:'返回'});
+    if(selected!==0)return;
+  }
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
   const {state, schoolName, canSignOut, statusMessage, loadFreeRooms} = options;
-  const stateLabel = state?.signedOut ? '未登录' : state?.runStatus === 'failed' ? '刷新失败' :
-    state?.runStatus === 'partial' ? '部分完成' : state?.runStatus === 'success' ? '已同步' :
-    state?.calendarBindingPending && canSignOut ? '已登录' : '';
+  const outcomes={failed:'上次刷新失败',partial:'上次同步部分完成',success:'已同步',cancelled:'上次刷新已取消'};
+  const stateLabel=state?.signedOut?'未登录':state?.calendarBindingPending&&canSignOut?'已登录':
+    outcomes[state?.runStatus]||'';
   const calendar = state?.calendarBindingPending || !state?.calendarId ? '未绑定日历' :
     (state.calendarTitle || '专用课程和考试日历');
   const ms = Date.parse(state?.lastCheck || '');
@@ -241,19 +280,7 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
     if (selection == null || selection < 0) return 'dismiss';
     if (selection === 0) return 0;
     if (loadFreeRooms && selection === 1) {
-      let retry = true;
-      while (retry) {
-        retry = false;
-        let result: FreeRoomResult;
-        try { result = await loadFreeRooms(() => true, () => {}); }
-        catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
-        if(result.kind==='ready')await presentRoomResults(result);
-        else{
-          const selected=await chooseNativeAction({title:'空闲教室',message:result.message,
-            actions:[{label:'重试'}],cancelButton:true,cancelLabel:'返回'});
-          retry=selected===0;
-        }
-      }
+      await presentRoomQuery(loadFreeRooms);
       continue;
     }
     if (canSignOut && selection === (loadFreeRooms ? 2 : 1)) return 1;

@@ -97,6 +97,8 @@ test('reads only latest verified generation of App Group cache without fallback 
   a.equal(broken.code,'CACHE_JSON');
   files.readAsStringSync=()=>JSON.stringify(make([]));
   a.equal(core.loadWidgetState(files).kind,'ready');
+  files.readAsStringSync=()=>JSON.stringify({version:1,semesters:{},calendarBindingPending:true});
+  a.equal(core.loadWidgetState(files).code,'NO_SYNC_YET');
 });
 
 test('widget reads the same shared directory and state file as the sync engine without statSync',()=>{
@@ -168,6 +170,17 @@ test('broken Storage mirror never discloses data and can fall back to verified f
  a.equal(fallback.kind,'ready');
  a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
 });
+test('a bounded widget snapshot expires at the first week it could not include',()=>{
+ const now=date('2026-11-02T05:00:00Z');
+ const mirror={version:1,lastCheck:new Date(now).toISOString(),events:[],
+   coverageEnd:'2026-11-08T16:00:00Z'};
+ const storage={get:()=>mirror};
+ a.equal(core.readWidgetMirror(storage,now).kind,'ready');
+ a.equal(core.readWidgetMirror(storage,date(mirror.coverageEnd)).code,'CACHE_EXPIRED');
+ mirror.coverageEnd='invalid';
+ a.equal(core.readWidgetMirror(storage,now).code,'STORAGE_SCHEMA');
+});
+
 test('the full week stays visible from Monday through Sunday, including empty days',()=>{
  const state=make([
    ev('mon','周一课程','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
@@ -218,12 +231,17 @@ test('overflow keeps courses chronological and shows today’s active course',()
  a.deepEqual(titles(core.selectVisibleCourses(otherDay,2)),['早课','第二节']);
  a.deepEqual(titles(core.selectVisibleCourses(today,1)),['第三节']);
  const two=core.selectVisibleCourses(today,2);
- a.deepEqual(titles(two),['第二节','第三节']);
+ a.deepEqual(titles(two),['第三节','第四节']);
  a.equal(two.hidden,2);
  const all=core.selectVisibleCourses(today,5);
  a.equal(all.courses.length,4);
  a.equal(all.hidden,0);
  a.equal(core.selectVisibleCourses({courses:[]},1).hidden,0);
+ a.equal(core.selectVisibleCourses(today,0).hidden,4);
+ a.equal(core.selectVisibleCourses(today,0).courses.length,0);
+ const duringBreak={today:true,courses:courses.map(course=>({...course,
+   status:course.status==='current'?'done':course.status}))};
+ a.deepEqual(titles(core.selectVisibleCourses(duringBreak,1)),['第四节']);
 });
 test('widget has an adaptive canvas and simple plus-N remaining classes',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
@@ -252,7 +270,7 @@ test('renderer measures actual widget geometry and omits overflow-prone footer',
  a.match(ui,/GeometryReader/);
  a.match(ui,/proxy\.size\.width/);
  a.match(ui,/proxy\.size\.height/);
- a.match(ui,/const courses=day\.courses/);
+ a.match(ui,/fitWeekDay\(layout,day\.courses\.length\)/);
  a.doesNotMatch(ui,/course\.teacher/);
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
@@ -344,10 +362,9 @@ test('classroom labels wrap long room numbers without losing characters',()=>{
 
 test('weekly cards include the end time in medium and large layouts',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function DayColumn('));
- a.match(card,/const time=start\+\(\(compact\|\|stackTimes\)\?'\\n':'–'\)\+course\.endLabel/);
- a.match(card,/fixedSize=\{\{horizontal:false,vertical:true\}\}[\s\S]*?\{time\}/);
- a.doesNotMatch(card,/compact\?start:start/);
+ const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function fitWeekDay('));
+ a.match(card,/const time=start\+\(stackTimes\?'\\n':'–'\)\+course\.endLabel/);
+ a.match(card,/lineLimit=\{stackTimes\?2:1\}[\s\S]*?\{time\}/);
 });
 test('medium and large widgets draw the same seven days with status colors and chronological overflow',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
@@ -355,10 +372,10 @@ test('medium and large widgets draw the same seven days with status colors and c
  a.match(panel,/model\.days\.map\(day=><DayColumn/);
  a.match(ui,/day\.label/);
  a.match(ui,/day\.dateLabel/);
- a.doesNotMatch(ui,/\+\{hidden\} 项/);
+ a.match(ui,/\+\{hidden\}/);
  a.match(ui,/current\?COLORS.white:COLORS.dark/);
- a.match(ui,/\.padding\(compact\?3:4\)[\s\S]*?\.frame\(\{width,alignment:'topLeading'\}\)[\s\S]*?\.background/);
- a.match(ui,/course\.location\?<Text font=\{8\} fixedSize=\{\{horizontal:false,vertical:true\}\}/);
+  a.match(ui,/\.padding\(cardPadding\)[\s\S]*?\.frame\(\{width,height:cardHeight,alignment:'topLeading'\}\)[\s\S]*?\.background/);
+ a.match(ui,/location\?<Text font=\{8\} lineLimit=\{locationLines\}/);
  a.match(ui,/exam\?'考 ':'/);
  a.doesNotMatch(ui,/近日课表|自动更新|昨天|明天/);
 });
@@ -381,12 +398,12 @@ test('missing cache is an honest empty state; widget never writes, authenticates
 
 test('systemSmall uses measured width and height without wasting space on spacers',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
- const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function EmptyPanel('));
+ const section=ui.slice(ui.indexOf('function SmallPanel('),ui.indexOf('function AccessoryPanel('));
  a.match(section,/proxy\.size\.width,height=proxy\.size\.height/);
  a.match(section,/cardWidth=Math\.max\(0,width-2\*inset\)/);
  a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
  a.doesNotMatch(section,/<Spacer/);
- a.match(section,/lineLimit=\{accessory\?1:2\}/);
+ a.match(section,/lineLimit=\{2\}/);
  a.match(section,/今天还有 \{remaining\} 项/);
  a.match(section,/chosen\.location\?/);
  a.match(section,/model\.days\.map\(day=><VStack/);
@@ -403,14 +420,14 @@ test('all course text and card surfaces adapt to dark mode',()=>{
  a.doesNotMatch(ui,/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/);
 });
 
-test('dark mode has a pure black canvas with full-bleed root background for all families',()=>{
+test('home screen widgets have a pure black full-bleed root in dark mode',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8').replace(/\r\n/g,'\n');
  a.match(ui,/canvas:\{light:'#FFFFFF',dark:'#000000'\}/);
  a.equal((ui.match(/widgetBackground=\{COLORS\.canvas\}/g)||[]).length,3);
  a.equal((ui.match(/background=\{\{style:COLORS\.canvas\}\}/g)||[]).length,3);
  for(const [start,end] of [
   ['function WeeklyPanel(', 'function SmallPanel('],
-  ['function SmallPanel(', 'function EmptyPanel('],
+  ['function SmallPanel(', 'function AccessoryPanel('],
   ['function EmptyPanel(', 'const snapshot=']
  ]){
   const section=ui.slice(ui.indexOf(start),ui.indexOf(end));
@@ -430,22 +447,28 @@ test('all widget sizes hide teacher names without stripping teacher data from th
  a.equal(model.days[2].courses[0].title,'课程');
 });
 
-test('weekly columns use all available height and retain every course',()=>{
+test('weekly columns fit readable cards and the overflow count within measured bounds',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  const layout=vm.runInNewContext(ui.slice(ui.indexOf('function weeklyLayout('),ui.indexOf('function WeeklyPanel('))+'\nweeklyLayout');
+ const fit=vm.runInNewContext(ui.slice(ui.indexOf('function fitWeekDay('),ui.indexOf('function DayColumn('))+'\nfitWeekDay');
  for(const [width,height,compact] of [[275,140,true],[320,155,true],[330,330,false],[540,370,false]]){
    const result=layout(width,height,compact);
    const usedWidth=result.columnWidth*7+result.gap*6+result.inset*2;
    a.ok(usedWidth<=width&&width-usedWidth<7);
    a.equal(result.contentHeight,height-2*result.inset-28-result.gap);
+   a.equal(fit(result,1).limit,1);
+   for(const count of [1,2,4,7,13]){
+     const sample=fit(result,count);
+     const overflow=count>sample.limit;
+     const usedHeight=sample.limit*sample.height+Math.max(0,sample.limit-1)*result.gap+
+       (overflow?10+(sample.limit?result.gap:0):0);
+     a.ok(usedHeight<=result.contentHeight,JSON.stringify({width,height,count,sample}));
+     a.ok(sample.height>=result.minimumCardHeight);
+   }
  }
- const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function DayColumn('));
- const day=ui.slice(ui.indexOf('function DayColumn('),ui.indexOf('function weeklyLayout('));
- a.doesNotMatch(card,/frame\(\{width,height,/);
- a.match(card,/fixedSize=\{\{horizontal:false,vertical:true\}\}/);
- a.doesNotMatch(card,/lineLimit=\{compact\?2:3\}/);
- a.match(day,/courses\.map\(course=>/);
- a.doesNotMatch(day,/selectVisibleCourses|\+\{hidden\}/);
+ const medium=fit(layout(320,155,true),7),large=fit(layout(330,330,false),7);
+ a.ok(medium.limit>=2);
+ a.ok(large.limit>medium.limit);
 });
 test('active and finished card text is legible in both appearances',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
