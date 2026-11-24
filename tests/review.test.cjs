@@ -679,7 +679,7 @@ test('background term rotation includes future terms and resumes from the previo
  a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[3,1,2,4,5]);
 });
 
-test('automatic refresh updates checked course and exam timestamps',async()=>{
+test('automatic refresh updates checked course and exam timestamps',async t=>{
  const e=await env(),queried=[];
  let readingExams=false;
  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
@@ -709,7 +709,7 @@ test('automatic refresh updates checked course and exam timestamps',async()=>{
  const courseReads=[];
  const getEvents=e.Event.getAll;
  e.Event.getAll=(start,end,calendars)=>{
-   if(!readingExams&&+end-+start===90*86400000)courseReads.push(+start);
+   if(!readingExams)courseReads.push(+start);
    return getEvents(start,end,calendars);
  };
  let stateWrites=0;
@@ -722,6 +722,8 @@ test('automatic refresh updates checked course and exam timestamps',async()=>{
  await e.m.run();
  a.deepEqual(queried,['161','160','159','exams']);
  a.equal(e.requests.filter(request=>request[0]==='save').length,4);
+  t.diagnostic('Course calendar reads across three unchanged terms: '+courseReads.length);
+  a.ok(courseReads.length<=35,'reuse the verified course rows across terms, observed '+courseReads.length+' reads');
  a.ok(stateWrites<=8,'progress updates do not rewrite the state file');
  a.ok(e.db.every(event=>event.notes!==oldNote&&/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(event.notes)));
  a.match(e.sandbox.output,/刷新成功/);
@@ -2405,6 +2407,26 @@ test('NUFE free classroom query only requests today in China time and merges per
  a.equal(e.db.length,dbCountBefore);
 });
 
+test('classroom query uses the new Beijing date when login crosses midnight',async()=>{
+ const e=await env(),dates=[];
+ let now=Date.parse('2026-11-23T15:59:59Z');
+ e.sandbox.Date=class extends Date{static now(){return now;}};
+ const room={nameZh:'博远楼JC101',buildingName:'博远楼',floor:1};
+ const http={
+   get:async()=> {
+     now+=2000;
+     return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'};
+   },
+   json:async(_url,{body})=>{
+     dates.push(JSON.parse(body).dateTimeSegmentCmd.startDateTime);
+     return {roomList:[room]};
+   }
+ };
+ const result=await e.m.queryFreeRoomsToday(http);
+ a.equal(result.date,'2026-11-24');
+ a.deepEqual(dates,['2026-11-24','2026-11-24','2026-11-24']);
+});
+
 test('NUFE dashboard loads classroom rows and retryable failures without extra dialogs or calendar sync',async()=>{
  const e=await env({hostEnv:'index'});
  e.keys.set('CourseSync.Local.v1.cookies','[]');
@@ -2546,20 +2568,38 @@ test('classroom fallback preserves afternoon-evening continuity and adds morning
 
 test('no free lessons is reported honestly and a failed individual query is not treated as empty',async()=>{
  const {m}=await env();
+ const room={id:1,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1};
  let mode='empty';
  const http={json:async(_url,{body})=>{
    const units=JSON.parse(body).dateTimeSegmentCmd.units;
-   if(mode==='fail'&&units.length===1&&units[0]==='7')throw Error('network');
+   if(mode==='fail'&&units.length===1){
+     if(['7','11'].includes(units[0]))throw Error('network');
+     if(['1','2','6','8','9','10'].includes(units[0]))return {roomList:[room]};
+   }
    return {roomList:[]};
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
  for(const label of ['上午','下午','晚上'])a.match(rows[0].room,new RegExp(label+'：无可用教室'));
  mode='fail';const partial=await m.queryDayRooms(http,'2026-11-23');
- a.match(partial[0].room,/分节建议未能获取/);
+ a.match(partial[0].room,/上午：博远楼JC101（第1—2节）/);
+ a.match(partial[0].room,/下午：博远楼JC101（第8—10节）\n下午部分节次未能核验/);
+ a.match(partial[0].room,/晚上：分节建议未能获取/);
  for(const row of partial.slice(1))a.equal(row.room,'无空闲教室');
  await a.rejects(()=>m.queryDayRooms({json:async()=>{throw Error('network');}},'2026-11-23'),/network/);
  const filtered=await m.queryDayRooms({json:async()=>({roomList:[{nameZh:'德业楼Z4S118',building:{nameZh:'德业楼'},floor:1}]})},'2026-11-23');
  for(const row of filtered.slice(1))a.equal(row.room,'无空闲教室');
+});
+
+test('cancelling lesson fallback stops scheduling unchecked lessons',async()=>{
+ const {m}=await env(),started=[];
+ const http={json:async(_url,{body})=>{
+   const units=JSON.parse(body).dateTimeSegmentCmd.units;
+   if(units.length>1)return {roomList:[]};
+   started.push(units[0]);
+   throw Object.assign(new Error('cancelled'),{code:'CANCELLED'});
+ }};
+ await a.rejects(()=>m.queryDayRooms(http,'2026-11-23'),code('CANCELLED'));
+ a.ok(started.length>0&&started.length<=3);
 });
 
 test('fallback prefers longest contiguous block then building priority and ignores gaps',async()=>{

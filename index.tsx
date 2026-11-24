@@ -1811,22 +1811,23 @@ class CalendarAdapter {
     this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;
     this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;this.verifiedWindows=new Map();
   }
-  async scan(anchor,events=[],{reuseWindows=false}={}) {
+  async scan(anchor,events=[],{reuseWindows=false,refreshWindows=false}={}) {
     // Chunked bounded queries avoid EventKit's multi-year predicate limit.
     let lo=Date.parse(anchor+'T00:00:00+08:00')-30*DAY,hi=lo+500*DAY;
     for(const e of events){lo=Math.min(lo,Date.parse(e.start)-DAY);hi=Math.max(hi,Date.parse(e.end)+DAY);}
     assert(Number.isFinite(lo)&&Number.isFinite(hi)&&hi-lo<4*366*DAY,'SCAN_RANGE');
-    // Only unchanged-term checks share aligned reads. Transactions use fresh
-    // reads for their backups, writes, and verification.
+    // Unchanged terms can share aligned reads. Post-write checks refresh them
+    // before the next term can reuse them. Transactions always use fresh reads.
     if(!reuseWindows)this.verifiedWindows.clear();
+    const aligned=reuseWindows||refreshWindows;
     const found=new Map(),windowSize=90*DAY;
-    const first=reuseWindows?Math.floor(lo/windowSize)*windowSize:lo;
+    const first=aligned?Math.floor(lo/windowSize)*windowSize:lo;
     for(let start=first;start<hi;start+=windowSize){
       this.budget();
       this.store.check();
       let rows=reuseWindows?this.verifiedWindows.get(start):undefined;
       if(!rows){
-        const end=reuseWindows?start+windowSize:Math.min(hi,start+windowSize);
+        const end=aligned?start+windowSize:Math.min(hi,start+windowSize);
         const calendarEvents=await calendarRows(start,end,this.calendar);
         this.store.check();
         rows=[];
@@ -1834,11 +1835,11 @@ class CalendarAdapter {
           const rec=eventRecord(ev,this.owner,this.byNative);
           if(rec)rows.push({ev,rec});
         }
-        if(reuseWindows)this.verifiedWindows.set(start,rows);
+        if(aligned)this.verifiedWindows.set(start,rows);
       }
       for(const row of rows){
         const {ev}=row;
-        if(reuseWindows&&(+ev.endDate<=lo||+ev.startDate>=hi))continue;
+        if(aligned&&(+ev.endDate<=lo||+ev.startDate>=hi))continue;
         found.set(occurrenceKey(ev),row);
       }
     }
@@ -2640,11 +2641,11 @@ async function chooseAnchor(sid,name,http,state,store,{calendar,termDetail}={}) 
 
 // New and changed events keep recovery markers until the native IDs are indexed.
 // Each successfully checked term receives the current readable timestamp.
-async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{},refreshTimestamp=true){
+async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},refreshTimestamp=true,checked=null}={}){
   const term=state.semesters[String(sid)];
   if(!term)return;
-  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
-  const rows=(await adapter.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
+  const adapter=checked?.adapter||new CalendarAdapter(calendar,state.owner,store,budget,state);
+  const rows=checked?.rows||(await adapter.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
   const byId=new Map();
   for(const item of rows){
     const matches=byId.get(item.rec.id)||[];
@@ -2661,10 +2662,13 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{},r
     if(validNotes(ev)&&ev.title===title)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
+    if(!modified)adapter.verifiedWindows.clear();
     ev.title=title;ev.notes=expectedNotes;
     progress('更新课程和考试同步时间：'+rec.title);
     await ev.save();budget();modified++;
     if(ev.identifier!==nativeId){
+      adapter.byNative.delete(nativeId);
+      adapter.byNative.set(ev.identifier,rec);
       term.index[rec.id]=ev.identifier;
       store.write(state);
     }
@@ -2672,8 +2676,8 @@ async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{},r
   // EventKit may acknowledge a write without actually persisting it.
   // Re-read after changes before presenting the new timestamp as complete.
   if(modified){
-    const verified=new CalendarAdapter(calendar,state.owner,store,budget,state);
-    const after=(await verified.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
+    const after=(await adapter.scan(term.anchor,term.events,{refreshWindows:!!checked}))
+      .filter(x=>x.rec.sid===String(sid));
     const done=new Map();
     for(const item of after){
       const matches=done.get(item.rec.id)||[];
@@ -2763,7 +2767,7 @@ async function finishTx(state,store,adapter,budget,refreshTimestamp=true) {
     notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
     legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
   state.tx=null;store.write(state);
-  await polishTermNotes(adapter.calendar,state,store,tx.sid,budget,undefined,refreshTimestamp);
+  await polishTermNotes(adapter.calendar,state,store,tx.sid,budget,{refreshTimestamp});
   await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
 }
 function selectTermIds(info,state,interactive){
@@ -2779,9 +2783,8 @@ function selectTermIds(info,state,interactive){
 async function verifyUnchangedTerm(adapter,sid,anchor,events){
   const expected=new Map(events.map(event=>[event.id,event]));
   const index=Object.create(null);
-  const rows=await adapter.scan(anchor,events,{reuseWindows:true});
+  const rows=(await adapter.scan(anchor,events,{reuseWindows:true})).filter(row=>row.rec.sid===String(sid));
   for(const {ev,rec} of rows){
-    if(rec.sid!==String(sid))continue;
     const target=expected.get(rec.id);
     if(!target||!sameCalendarCourse(rec,target)||ev.title!==target.title||!hasSyncTimestamp(ev)||
        ev.isAllDay||ev.isDetached||ev.hasRecurrenceRules||ev.recurrenceRules?.length||ev.attendees?.length)
@@ -2789,7 +2792,7 @@ async function verifyUnchangedTerm(adapter,sid,anchor,events){
     expected.delete(rec.id);
     index[rec.id]=ev.identifier;
   }
-  return expected.size?null:index;
+  return expected.size?null:{index,rows};
 }
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Reserve time for releasing the lock and returning the Shortcuts result.
@@ -2895,10 +2898,10 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // A missing, duplicate or edited event still goes through the repair transaction.
     if(!interactive&&!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
        old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
-      const index=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
-      if(index){
-        state.semesters[sid]={...old,events:p.events,index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
-        await polishTermNotes(calendar,state,store,sid,budget);
+      const checked=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
+      if(checked){
+        state.semesters[sid]={...old,events:p.events,index:checked.index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
+        await polishTermNotes(calendar,state,store,sid,budget,{checked:{adapter,rows:checked.rows}});
         continue;
       }
     }
@@ -3171,24 +3174,20 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
   if(missing.length){
     const tasks=missing.flatMap(({index,units})=>units.map(unit=>({index,unit})));
     const slots=periods.map(()=>new Map());
+    let cancelled=null;
     let next=0;
     const worker=async()=>{
-      while(next<tasks.length){
+      while(!cancelled&&next<tasks.length){
         const task=tasks[next++];
-        slots[task.index].set(task.unit,await queryFreeRoomsForPeriod(http,date,[task.unit]));
+        try{
+          slots[task.index].set(task.unit,await queryFreeRoomsForPeriod(http,date,[task.unit]));
+        }catch(error){
+          if(diagnosticCode(error)==='CANCELLED')cancelled=error;
+        }
       }
     };
-    const workers=await Promise.allSettled(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
-    const workerFailure=workers.find(result=>result.status==='rejected');
-    // Full-period results are already verified. Optional lesson-level suggestions
-    // must not turn an empty successful query into a failed page.
-    if(workerFailure){
-      if(diagnosticCode(workerFailure.reason)==='CANCELLED')throw workerFailure.reason;
-      if(!full.some(list=>list.length))rows[0].room='无完整时段空闲教室；分节建议未能获取';
-      else rows[0].room+='\n分节建议未能获取';
-      onProgress(1);
-      return rows;
-    }
+    await Promise.all(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
+    if(cancelled)throw cancelled;
     const roomName=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
     const roomKey=r=>r.id!=null?'id:'+String(r.id):'name:'+roomName(r);
     const bestFor=(units,perSlot)=>{
@@ -3198,28 +3197,28 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
         if(!rooms.has(key))rooms.set(key,{room,free:new Set()});
         rooms.get(key).free.add(Number(unit));
       }
-      const candidates=[];
+      const lessonNumbers=units.map(Number);
+      let best=null;
       for(const {room,free} of rooms.values()){
-        let start=null,previous=null;
-        for(const unit of [...units.map(Number),Infinity]){
-          if(free.has(unit)){
-            if(start===null)start=unit;
-            previous=unit;
-          }else if(start!==null){
-            candidates.push({room,start,end:previous,length:previous-start+1});
-            start=null;previous=null;
-          }
+        let length=0;
+        for(const end of lessonNumbers){
+          length=free.has(end)?length+1:0;
+          if(!length)continue;
+          const start=end-length+1;
+          if(!best||length>best.length||
+            (length===best.length&&(compareFreeRooms(room,best.room)||start-best.start)<0))
+            best={room,start,end,length};
         }
       }
-      candidates.sort((a,b)=>b.length-a.length||compareFreeRooms(a.room,b.room)||a.start-b.start);
-      return candidates[0]||null;
+      return best;
     };
     const suggestions=periods.map((units,index)=>{
       if(full[index].length)return names[index]+'：'+roomName(full[index][0])+'（第'+units[0]+'—'+units.at(-1)+'节）';
       const best=bestFor(units,slots[index]);
-      if(!best)return names[index]+'：无可用教室';
+      const incomplete=slots[index].size<units.length;
+      if(!best)return names[index]+(incomplete?'：分节建议未能获取':'：无可用教室');
       const span=best.start===best.end?String(best.start):best.start+'—'+best.end;
-      return names[index]+'：'+roomName(best.room)+'（第'+span+'节）';
+      return names[index]+'：'+roomName(best.room)+'（第'+span+'节）'+(incomplete?'\n'+names[index]+'部分节次未能核验':'');
     });
     const sameRoom=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):roomName(a)===roomName(b));
     const shared=(first,second)=>first.filter((room,index)=>roomName(room)&&first.findIndex(other=>sameRoom(other,room))===index&&second.some(other=>sameRoom(other,room)));
@@ -3234,11 +3233,11 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
   return rows;
 }
 
-async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now=Date.now()){
+async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now){
   await coursePage(http,true,onStage);
   onStage();
   onProgress(0.25);
-  const date=localDateTime(new Date(now).toISOString()).slice(0,10);
+  const date=localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
   return {date,rooms:await queryDayRooms(http,date,onProgress)};
 }
 

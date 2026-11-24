@@ -116,6 +116,7 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false)
 type FreeRoomResult =
   | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
   | {kind: 'error'; message: string};
+type ReadyRooms = Extract<FreeRoomResult, {kind:'ready'}>;
 export type DashboardOptions = {
   state: any;
   schoolName: string;
@@ -165,23 +166,58 @@ async function chooseNativeAction(options) {
   return null;
 }
 
-// Native dialog messages have one font style. Separate sections and put each
-// classroom on its own line so the period and recommendations remain scannable.
-function formatRoomResults(date, rooms) {
+const ROOM_SCOPE='仅查询博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
+
+function roomResultSections(rooms: ReadyRooms['rooms']) {
   const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
-  const sections=rooms.map(({period,room})=>{
+  return rooms.map(({period,room})=>{
     const heading=periods[period] || period;
     const content=String(room || '').split('\n').map(line=>{
       const match=line.match(/^(.*?：)(.+、.+?)(（第[^）]+节）)$/);
       if(match)return match[1]+'\n'+match[2].split('、').map(value=>value+match[3]).join('\n');
-      if(period==='建议教室'&&line.includes('：'))return line.replace('：','：\n').replace(/、/g,'\n');
+      if(period==='建议教室'&&line.includes('、'))return line.replace('：','：\n').replace(/、/g,'\n');
+      if(line==='无空闲教室')return '无整段空闲教室';
       return line.replace(/、/g,'\n');
-    }).join('\n');
-    return (period==='上午'?'完整空闲教室列表\n':'')+heading+'\n'+content;
+    }).flatMap(line=>line.split('\n'));
+    return {period,heading,content};
   });
-  const firstPeriod=rooms.findIndex(({period})=>period==='上午');
+}
+
+function formatRoomResults(date, rooms) {
+  const results=roomResultSections(rooms);
+  const sections=results.map(({period,heading,content})=>
+    (period==='上午'?'整段空闲教室\n':'')+heading+'\n'+content.join('\n'));
+  const firstPeriod=results.findIndex(({period})=>period==='上午');
   const grouped=firstPeriod<0?sections:[...sections.slice(0,firstPeriod),sections.slice(firstPeriod).join('\n')];
-  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼，以及德经楼、德济楼、德正楼和德业楼的一楼普通教室',...grouped].join('\n\n');
+  return [date,ROOM_SCOPE,...grouped].join('\n\n');
+}
+
+function RoomResultsView({result}: {result:ReadyRooms}) {
+  const dismiss=Navigation.useDismiss();
+  const sections=roomResultSections(result.rooms);
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
+    <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
+      toolbar={{cancellationAction:<Button title="返回" action={()=>dismiss()}/>}}>
+      <Section header={<Text>{result.date}</Text>}>
+        <Text foregroundStyle="secondary">{ROOM_SCOPE}</Text>
+      </Section>
+      {sections.map(({period,heading,content})=>
+        <Section key={period} header={<Text>{heading}</Text>}>
+          {content.map((line,index)=><Text key={index}>{line}</Text>)}
+        </Section>)}
+    </List>
+  </NavigationStack>;
+}
+
+async function presentRoomResults(result:ReadyRooms) {
+  if(typeof Navigation?.present==='function'){
+    try{
+      await Navigation.present({element:<RoomResultsView result={result}/>,modalPresentationStyle:'pageSheet'});
+      return;
+    }catch(_){ /* fall back to a native dialog */ }
+  }
+  await chooseNativeAction({title:'空闲教室',message:formatRoomResults(result.date,result.rooms),
+    actions:[{label:'返回'}],cancelButton:false});
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
@@ -211,11 +247,12 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
         let result: FreeRoomResult;
         try { result = await loadFreeRooms(() => true, () => {}); }
         catch (_) { result = {kind:'error',message:'查询失败，请稍后重试。'}; }
-        const roomText = result.kind === 'error' ? result.message :
-          formatRoomResults(result.date,result.rooms);
-        const roomActions = result.kind === 'error' ? [{label:'重试'}] : [{label:'返回'}];
-        const selected = await chooseNativeAction({title:'空闲教室',message:roomText,actions:roomActions,cancelButton:result.kind === 'error',cancelLabel:'返回'});
-        if (result.kind === 'error' && selected === 0) retry = true;
+        if(result.kind==='ready')await presentRoomResults(result);
+        else{
+          const selected=await chooseNativeAction({title:'空闲教室',message:result.message,
+            actions:[{label:'重试'}],cancelButton:true,cancelLabel:'返回'});
+          retry=selected===0;
+        }
       }
       continue;
     }

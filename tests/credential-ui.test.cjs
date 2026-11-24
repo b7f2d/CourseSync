@@ -76,11 +76,16 @@ test('only school slider verification retains ephemeral, isolated WebKit',()=>{
  assert.match(slider,/connect-src 'none'; form-action 'none'/);
 });
 
-test('foreground sync and classroom query do not present transition views',()=>{
+test('foreground sync has no transition view and classrooms present a results list',()=>{
  const create=index.slice(index.indexOf('function createProgress('),index.indexOf('// Recognize a previously bound calendar'));
  assert.doesNotMatch(create,/createNativeProgressView|Navigation\.present/);
  const dashboard=native.slice(native.indexOf('export async function presentNativeDashboard('),native.indexOf('\ntype CalendarManageOptions'));
  assert.doesNotMatch(dashboard,/createNativeProgressView|progress\.show|progress\.pause/);
+ assert.match(dashboard,/if\(result.kind==='ready'\)await presentRoomResults\(result\)/);
+ const results=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomResults('));
+ assert.match(results,/<List navigationTitle="空闲教室"/);
+ assert.match(results,/<Section key=\{period\}/);
+ assert.match(results,/title="返回"/);
 });
 
 test('routine refresh and re-login keep using the selected school',()=>{
@@ -139,16 +144,20 @@ test('native dashboard retains its main actions',()=>{
 
 test('system dashboard preserves actions, classroom results, retry, and logout',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\ntype CalendarManageOptions'))
+ const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
+   .replace("rooms: ReadyRooms['rooms']", 'rooms');
+ const dashboard=native.slice(native.indexOf('async function presentRoomResults('),native.indexOf('\ntype CalendarManageOptions'))
+   .replace('result:ReadyRooms','result')
+   .replace('<RoomResultsView result={result}/>','result')
    .replace('export async function','async function')
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
    .replace('let result: FreeRoomResult','let result');
  const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'第一节',room:'博远楼 101'}]}];
- const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},
+ const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
    createNativeProgressView:()=>{throw Error('transition must not open');}};
- const show=vm.runInNewContext(source+'\npresentNativeDashboard',sandbox);
+ const show=vm.runInNewContext(helpers+dashboard+'\npresentNativeDashboard',sandbox);
  const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync'},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
  assert.equal(result,1);
  assert.equal(calls[0].title,'CourseSync');
@@ -157,6 +166,14 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.match(calls[1].message,/查询失败/);
  assert.equal(calls[2].title,'空闲教室');
  assert.match(calls[2].message,/第一节\n博远楼 101/);
+
+ const presented=[];
+ sandbox.Navigation.present=async options=>presented.push(options);
+ selections.push(1,0);
+ rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',room:'博远楼JC101'}]});
+ assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()}),0);
+ assert.equal(presented.length,1);
+ assert.equal(presented[0].element.rooms[0].room,'博远楼JC101');
 });
 
 test('calendar naming uses native prompt, validates entries and retains retry value',async()=>{
@@ -177,7 +194,7 @@ test('calendar naming uses native prompt, validates entries and retains retry va
 
 test('missing or broken actionSheet falls back to native confirmation choices',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nexport async function presentNativeDashboard('))
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_SCOPE'))
    .replace('(globalThis as any).Dialog','globalThis.Dialog');
  for (const broken of [false,true]) {
    const seen=[], answers=[false,false,true];
@@ -195,7 +212,7 @@ test('missing or broken actionSheet falls back to native confirmation choices',a
 
 test('native fallback shows all choices and supports cancel without executing an action',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nexport async function presentNativeDashboard('))
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_SCOPE'))
    .replace('(globalThis as any).Dialog','globalThis.Dialog');
  const calls=[],values=['0','2',null];
  const choose=vm.runInNewContext(source+'\nchooseNativeAction',{Dialog:{prompt:async o=>{calls.push(o);return values.shift();}}});
@@ -219,15 +236,16 @@ test('page-backed credential and verification forms use plain native controls wi
 
 test('classroom result formatting separates recommendation and lesson periods without hiding rooms',()=>{
  const vm=require('node:vm');
- const code=native.slice(native.indexOf('function formatRoomResults('),native.indexOf('\nexport async function presentNativeDashboard('));
+ const code=native.slice(native.indexOf('const ROOM_SCOPE'),native.indexOf('function RoomResultsView('))
+   .replace("rooms: ReadyRooms['rooms']", 'rooms');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
   {period:'建议教室',room:'白天：博远楼101、博观楼202'},
   {period:'上午',room:'博远楼101、博观楼202'},
   {period:'下午',room:'无完整时段空闲教室（见建议）'},
   {period:'晚上',room:'博文楼303'}]);
- assert.match(message,/仅包含博远楼、博观楼、博文楼/);
- assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n完整空闲教室列表\n上午 · 第1—5节/);
+ assert.match(message,/仅查询博远楼、博观楼、博文楼/);
+ assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n整段空闲教室\n上午 · 第1—5节/);
  assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
  assert.match(message,/博观楼202\n下午 · 第6—10节/);
  assert.match(message,/无完整时段空闲教室（见建议）\n晚上 · 第11—13节/);
