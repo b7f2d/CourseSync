@@ -33,76 +33,79 @@ function wrapLocation(value,width,fontSize=8){
   return result;
 }
 
-function CourseCard({course,layout,height}){
-  const {columnWidth:width,cardPadding,minimumCardHeight,stackTimes}=layout;
+// Measure all fields instead of assigning each an arbitrary one-line limit.
+function measureCourseCard(course,width,padding,titleFont,detailFont,stackTimes,shortExam=true){
+  const availableWidth=Math.max(1,width-2*padding-1);
+  const title=wrapLocation(shortExam?course.title.replace(/^（考试）/,'考 '):course.title,availableWidth,titleFont);
+  const location=wrapLocation(course.location,availableWidth,detailFont);
+  const time=stackTimes?course.startLabel+'\n'+course.endLabel:course.startLabel+'–'+course.endLabel;
+  const lines=value=>value?value.split('\n').length:0;
+  const titleLines=lines(title),locationLines=lines(location),timeLines=stackTimes?2:1;
+  const height=2*padding+titleLines*Math.ceil(titleFont*1.3)+
+    (timeLines+locationLines)*Math.ceil(detailFont*1.3)+(location?2:1)+2;
+  return {title,location,time,titleLines,locationLines,timeLines,titleFont,detailFont,height};
+}
+function CourseCard({course,layout,card}){
+  const {columnWidth:width,cardPadding}=layout;
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?COLORS.white:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   const detail=current?COLORS.activeDetail:done?COLORS.muted:COLORS.faint;
-  const examPrefix='（考试）';
-  const exam=course.title.startsWith(examPrefix);
-  const title=exam?course.title.slice(examPrefix.length):course.title;
-  const start=(exam?'考 ':'')+course.startLabel;
-  const time=start+(stackTimes?'\n':'–')+course.endLabel;
-  const availableWidth=width-2*cardPadding;
-  const extra=height-minimumCardHeight;
-  const titleFont=extra>=12?10:9;
-  const titleLines=Math.min(1+Math.min(2,Math.floor(extra/12)),
-    wrapLocation(title,availableWidth,titleFont).split('\n').length);
-  const wrappedLocation=wrapLocation(course.location,availableWidth);
-  const expandedLocation=extra>=36&&wrappedLocation.includes('\n');
-  const roomCode=course.location.match(/(?:[A-Z]+\d-)?[A-Z]*\d{2,4}(?:-\d{1,2})?(?=室?$)/i)?.[0];
-  const location=roomCode&&wrappedLocation.includes('\n')&&!expandedLocation?roomCode:wrappedLocation;
-  const locationLines=expandedLocation?2:1;
-  const cardHeight=minimumCardHeight+(titleLines-1)*12+(locationLines-1)*10-(location?0:10);
+  const {title,location,time,titleLines,locationLines,timeLines,titleFont,detailFont,height:cardHeight}=card;
   const cardStyle=modifiers().padding(cardPadding)
     .frame({width,height:cardHeight,alignment:'topLeading'})
     .background({style:bg,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="leading" spacing={1} modifiers={cardStyle}>
     <Text font={titleFont} fontWeight="semibold" lineLimit={titleLines}
-      multilineTextAlignment="leading" foregroundStyle={fg}>{title}</Text>
-    <Text font={8} foregroundStyle={detail} lineLimit={stackTimes?2:1}
+      minScaleFactor={0.9} multilineTextAlignment="leading" foregroundStyle={fg}>{title}</Text>
+    <Text font={detailFont} foregroundStyle={detail} lineLimit={timeLines}
       multilineTextAlignment="leading" minScaleFactor={0.8}>{time}</Text>
-    {location?<Text font={8} lineLimit={locationLines}
+    {location?<Text font={detailFont} lineLimit={locationLines} minScaleFactor={0.9}
       multilineTextAlignment="leading" foregroundStyle={detail}>{location}</Text>:null}
   </VStack>;
 }
-
-function fitWeekDay(layout,count){
-  const {contentHeight,gap,minimumCardHeight}=layout;
-  const capacity=Math.floor((contentHeight+gap)/(minimumCardHeight+gap));
-  const footer=count>capacity?10+gap:0;
-  const limit=Math.min(count,Math.max(0,Math.floor((contentHeight-footer+gap)/(minimumCardHeight+gap))));
-  const height=limit?Math.min(minimumCardHeight+42,Math.floor((contentHeight-footer-gap*(limit-1))/limit)):0;
-  return {limit,height};
+// Reserve overflow space and fit whole cards, prioritizing today's active/next course.
+function fitWeekDay(layout,day){
+  const {contentHeight,gap,columnWidth,cardPadding,stackTimes}=layout;
+  const count=day.courses.length;
+  const sizes=layout.compact?[[9,8],[8,7]]:[[11,9],[10,8],[9,8],[8,7]];
+  for(let limit=Math.min(count,Math.floor((contentHeight+gap)/(25+gap)));limit>0;limit--){
+    const {courses,hidden}=selectVisibleCourses(day,limit);
+    const footer=hidden?12+gap:0;
+    for(const [titleFont,detailFont] of sizes){
+      const cards=courses.map(course=>measureCourseCard(course,columnWidth,cardPadding,titleFont,detailFont,stackTimes));
+      const height=cards.reduce((sum,card)=>sum+card.height,0)+gap*(limit-1)+footer;
+      if(height<=contentHeight)return {courses,cards,hidden,height};
+    }
+  }
+  return {courses:[],cards:[],hidden:count,height:count?12:0};
 }
 
 function DayColumn({day,layout}){
-  const {columnWidth,gap}=layout;
-  const {limit,height}=fitWeekDay(layout,day.courses.length);
-  const {courses,hidden}=selectVisibleCourses(day,limit);
-  const headingStyle=modifiers().frame({width:columnWidth,height:28})
+  const {columnWidth,gap,headingHeight}=layout;
+  const {courses,cards,hidden}=fitWeekDay(layout,day);
+  const headingStyle=modifiers().frame({width:columnWidth,height:headingHeight})
     .background({style:day.today?COLORS.nextBg:COLORS.canvas,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="center" spacing={gap} frame={{width:columnWidth,alignment:'top'}}>
     <VStack spacing={1} modifiers={headingStyle}>
-      <Text font={11} fontWeight="bold" foregroundStyle={day.today?COLORS.blue:COLORS.dark}>{day.label}</Text>
-      <Text font={9} foregroundStyle={COLORS.faint}>{day.dateLabel}</Text>
+      <Text font={10} fontWeight="bold" foregroundStyle={day.today?COLORS.blue:COLORS.dark}>{day.label}</Text>
+      <Text font={8} foregroundStyle={COLORS.faint}>{day.dateLabel}</Text>
     </VStack>
-    {courses.map(course=><CourseCard key={course.id} course={course} layout={layout} height={height}/>)}
-    {hidden>0?<Text font={8} foregroundStyle={COLORS.faint} frame={{height:10}}>+{hidden}</Text>:null}
+    {courses.map((course,index)=><CourseCard key={course.id} course={course} layout={layout} card={cards[index]}/>)}
+    {hidden>0?<Text font={9} foregroundStyle={COLORS.faint} frame={{height:12}}>+{hidden}</Text>:null}
     {day.courses.length===0?<Text font={10} foregroundStyle={COLORS.muted}>—</Text>:null}
   </VStack>;
 }
 
 // Share the available height among each day's courses.
 function weeklyLayout(width,height,compact){
-  const inset=compact?9:12,gap=compact?3:4;
-  const cardPadding=compact?2:3;
+  const inset=compact?5:9,gap=compact?2:3;
+  const cardPadding=compact?1:2;
   const columnWidth=Math.max(1,Math.floor((width-2*inset-6*gap)/7));
-  const stackTimes=columnWidth<57;
-  const minimumCardHeight=(stackTimes?41:31)+2*cardPadding;
-  const contentHeight=Math.max(0,height-2*inset-28-gap);
-  return {inset,gap,cardPadding,columnWidth,contentHeight,minimumCardHeight,stackTimes};
+  const stackTimes=columnWidth-2*cardPadding<76;
+  const headingHeight=24;
+  const contentHeight=Math.max(0,height-2*inset-headingHeight-gap);
+  return {inset,gap,cardPadding,columnWidth,contentHeight,stackTimes,compact,headingHeight};
 }
 
 function WeeklyPanel({model,family}){
@@ -138,6 +141,10 @@ function SmallPanel({model}){
       const inset=height<155?9:12,gap=2;
       const cardWidth=Math.max(0,width-2*inset);
       const dayWidth=Math.max(1,Math.floor((cardWidth-6*gap)/7));
+      const cardBudget=Math.max(0,height-2*inset-30-(remaining>0?16:0));
+      const card=chosen?[13,12,11,10].map(font=>measureCourseCard(
+        chosen,cardWidth,6,font,Math.min(10,font-1),false,false
+      )).find(item=>item.height<=cardBudget):null;
       const cardStyle=modifiers().padding(6)
         .frame({width:cardWidth,alignment:'topLeading'})
         .background({style:bg,shape:{type:'rect',cornerRadius:8}});
@@ -155,14 +162,14 @@ function SmallPanel({model}){
               <Text font={9} foregroundStyle={COLORS.faint}>{day.courses.length||'–'}</Text>
             </VStack>)}
           </HStack>
-          {chosen?<VStack alignment="leading" spacing={2} modifiers={cardStyle}>
-            <Text font={13} fontWeight="semibold" lineLimit={2}
-              foregroundStyle={fg}>{chosen.title}</Text>
-            <Text font={10} lineLimit={1} minScaleFactor={0.85}
-              foregroundStyle={detail}>{chosen.startLabel}–{chosen.endLabel}</Text>
-            {chosen.location?<Text font={10} lineLimit={1}
-              foregroundStyle={detail}>{chosen.location}</Text>:null}
-          </VStack>:<Text font={11} foregroundStyle={COLORS.faint}>今天没有课程和考试</Text>}
+          {chosen&&card?<VStack alignment="leading" spacing={1} modifiers={cardStyle}>
+            <Text font={card.titleFont} fontWeight="semibold" lineLimit={card.titleLines}
+              minScaleFactor={0.9} foregroundStyle={fg}>{card.title}</Text>
+            <Text font={card.detailFont} lineLimit={card.timeLines} minScaleFactor={0.85}
+              foregroundStyle={detail}>{card.time}</Text>
+            {card.location?<Text font={card.detailFont} lineLimit={card.locationLines}
+              minScaleFactor={0.9} foregroundStyle={detail}>{card.location}</Text>:null}
+          </VStack>:<Text font={11} foregroundStyle={COLORS.faint}>{chosen?'日程过长，请查看日历':'今天没有课程和考试'}</Text>}
           {remaining>0?<Text font={9} foregroundStyle={COLORS.faint}>今天还有 {remaining} 项</Text>:null}
         </VStack>
       </VStack>;

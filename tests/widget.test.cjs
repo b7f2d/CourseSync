@@ -270,7 +270,7 @@ test('renderer measures actual widget geometry and omits overflow-prone footer',
  a.match(ui,/GeometryReader/);
  a.match(ui,/proxy\.size\.width/);
  a.match(ui,/proxy\.size\.height/);
- a.match(ui,/fitWeekDay\(layout,day\.courses\.length\)/);
+ a.match(ui,/fitWeekDay\(layout,day\)/);
  a.doesNotMatch(ui,/course\.teacher/);
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
@@ -362,9 +362,9 @@ test('classroom labels wrap long room numbers without losing characters',()=>{
 
 test('weekly cards include the end time in medium and large layouts',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- const card=ui.slice(ui.indexOf('function CourseCard('),ui.indexOf('function fitWeekDay('));
- a.match(card,/const time=start\+\(stackTimes\?'\\n':'–'\)\+course\.endLabel/);
- a.match(card,/lineLimit=\{stackTimes\?2:1\}[\s\S]*?\{time\}/);
+ const card=ui.slice(ui.indexOf('function measureCourseCard('),ui.indexOf('function fitWeekDay('));
+ a.match(card,/course\.startLabel\+'\\n'\+course\.endLabel/);
+ a.match(card,/lineLimit=\{timeLines\}[\s\S]*?\{time\}/);
 });
 test('medium and large widgets draw the same seven days with status colors and chronological overflow',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
@@ -375,8 +375,8 @@ test('medium and large widgets draw the same seven days with status colors and c
  a.match(ui,/\+\{hidden\}/);
  a.match(ui,/current\?COLORS.white:COLORS.dark/);
   a.match(ui,/\.padding\(cardPadding\)[\s\S]*?\.frame\(\{width,height:cardHeight,alignment:'topLeading'\}\)[\s\S]*?\.background/);
- a.match(ui,/location\?<Text font=\{8\} lineLimit=\{locationLines\}/);
- a.match(ui,/exam\?'考 ':'/);
+ a.match(ui,/location\?<Text font=\{detailFont\} lineLimit=\{locationLines\}/);
+ a.match(ui,/replace\(\/\^（考试）\/,'考 '\)/);
  a.doesNotMatch(ui,/近日课表|自动更新|昨天|明天/);
 });
 
@@ -403,9 +403,9 @@ test('systemSmall uses measured width and height without wasting space on spacer
  a.match(section,/cardWidth=Math\.max\(0,width-2\*inset\)/);
  a.match(section,/\.frame\(\{width:cardWidth,alignment:'topLeading'\}\)/);
  a.doesNotMatch(section,/<Spacer/);
- a.match(section,/lineLimit=\{2\}/);
+ a.match(section,/lineLimit=\{card\.titleLines\}/);
  a.match(section,/今天还有 \{remaining\} 项/);
- a.match(section,/chosen\.location\?/);
+ a.match(section,/card\.location\?/);
  a.match(section,/model\.days\.map\(day=><VStack/);
  a.match(section,/day\.courses\.length/);
  a.doesNotMatch(section,/chosen\.teacher/);
@@ -447,28 +447,40 @@ test('all widget sizes hide teacher names without stripping teacher data from th
  a.equal(model.days[2].courses[0].title,'课程');
 });
 
-test('weekly columns fit readable cards and the overflow count within measured bounds',()=>{
+test('weekly columns fit complete titles, start/end times, full locations and overflow within measured bounds',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- const layout=vm.runInNewContext(ui.slice(ui.indexOf('function weeklyLayout('),ui.indexOf('function WeeklyPanel('))+'\nweeklyLayout');
- const fit=vm.runInNewContext(ui.slice(ui.indexOf('function fitWeekDay('),ui.indexOf('function DayColumn('))+'\nfitWeekDay');
+ const pure=ui.slice(ui.indexOf('function wrapLocation('),ui.indexOf('function CourseCard('))+
+   ui.slice(ui.indexOf('function fitWeekDay('),ui.indexOf('function DayColumn('))+
+   ui.slice(ui.indexOf('function weeklyLayout('),ui.indexOf('function WeeklyPanel('));
+ const {fitWeekDay:fit,weeklyLayout:layout,measureCourseCard:measure}=vm.runInNewContext(
+   pure+'\n({fitWeekDay,weeklyLayout,measureCourseCard})',{selectVisibleCourses:core.selectVisibleCourses});
+ const course={title:'金融工程专业综合实验',location:'仙林 德业楼 Z4-110',startLabel:'08:20',endLabel:'11:25',status:'upcoming'};
  for(const [width,height,compact] of [[275,140,true],[320,155,true],[330,330,false],[540,370,false]]){
    const result=layout(width,height,compact);
    const usedWidth=result.columnWidth*7+result.gap*6+result.inset*2;
    a.ok(usedWidth<=width&&width-usedWidth<7);
-   a.equal(result.contentHeight,height-2*result.inset-28-result.gap);
-   a.equal(fit(result,1).limit,1);
    for(const count of [1,2,4,7,13]){
-     const sample=fit(result,count);
-     const overflow=count>sample.limit;
-     const usedHeight=sample.limit*sample.height+Math.max(0,sample.limit-1)*result.gap+
-       (overflow?10+(sample.limit?result.gap:0):0);
-     a.ok(usedHeight<=result.contentHeight,JSON.stringify({width,height,count,sample}));
-     a.ok(sample.height>=result.minimumCardHeight);
+     const day={today:true,courses:Array.from({length:count},(_,i)=>({...course,id:i,status:i===0?'current':'upcoming'}))};
+     const sample=fit(result,day);
+     a.equal(sample.hidden+sample.courses.length,count);
+     a.ok(sample.height<=result.contentHeight);
+     a.ok(sample.courses.length>=1,'at least the focused course must fit for typical long titles');
+     if(sample.courses.length)a.equal(sample.courses[0].id,0);
+     for(const card of sample.cards){
+       a.equal(card.title.replace(/\n/g,''),course.title);
+       a.equal(card.location.replace(/\n/g,''),course.location);
+       a.equal(card.time.replace(/\n/g,'–'),'08:20–11:25');
+       a.ok(card.titleLines>=1&&card.locationLines>=1);
+     }
    }
  }
- const medium=fit(layout(320,155,true),7),large=fit(layout(330,330,false),7);
- a.ok(medium.limit>=2);
- a.ok(large.limit>medium.limit);
+ const exam=measure({...course,title:'（考试）管理类综合能力'},42,2,9,8,true);
+ a.equal(exam.title.replace(/\n/g,''),'考 管理类综合能力');
+ const small=measure(course,132,6,12,10,false);
+ a.equal(small.location.replace(/\n/g,''),course.location);
+ a.equal(small.time,'08:20–11:25');
+ const smallExam=measure({...course,title:'（考试）管理类综合能力'},132,6,12,10,false,false);
+ a.equal(smallExam.title.replace(/\n/g,''),'（考试）管理类综合能力');
 });
 test('active and finished card text is legible in both appearances',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
