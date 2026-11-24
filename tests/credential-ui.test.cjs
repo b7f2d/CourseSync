@@ -266,3 +266,16 @@ test('classroom result formatting separates recommendation and lesson periods wi
  const partial=format('2026-11-23',[{period:'建议教室',room:'白天：博远楼101、博观楼202（第1—10节）'}]);
  assert.match(partial,/白天：\n博远楼101（第1—10节）\n博观楼202（第1—10节）/);
 });
+
+test('native room results group the three periods together and do not count empty placeholders',()=>{
+ const vm=require('node:vm');
+ const code=native.slice(native.indexOf('const ROOM_CAMPUS'),native.indexOf('async function readRoomResults('))
+   .replace("rooms: ReadyRooms['rooms']", 'rooms');
+ const sections=vm.runInNewContext(code+'\nroomResultSections')([
+   {period:'上午',room:'博远楼JC101、博观楼JB201'},
+   {period:'下午',room:'无空闲教室'},
+   {period:'晚上',room:'无完整时段空闲教室（见建议）'}]);
+ assert.deepEqual(Array.from(sections,row=>row.count),[2,0,0]);
+ assert.match(native,/<Section\s+header=\{<Text>整段空闲教室<\/Text>\}/);
+ assert.match(native,/font="subheadline" fontWeight="semibold" foregroundStyle="secondary"/);
+});
