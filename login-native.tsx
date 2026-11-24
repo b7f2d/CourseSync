@@ -196,11 +196,12 @@ export async function presentNativeDashboard(options: DashboardOptions): Promise
     new Date(ms + 8 * 3600000).toISOString().slice(0,16).replace('T',' ') :
     String(state.lastCheck).replace('T',' ').slice(0,16);
   const detail = statusMessage && !String(statusMessage).startsWith('上次刷新：') ? statusMessage : '';
-  const message = [schoolName, stateLabel, '日历：'+calendar, '上次刷新：'+lastTime, detail].filter(Boolean).join('\n');
+  const title = 'CourseSync-'+schoolName;
+  const message = ['日历：'+calendar+(stateLabel?'　　'+stateLabel:''), '上次刷新：'+lastTime, detail].filter(Boolean).join('\n');
   while (true) {
     const actions = [{label:'立即刷新'}, ...(loadFreeRooms ? [{label:'查询空闲教室'}] : []),
       ...(canSignOut ? [{label:'退出当前登录',destructive:true}] : [])];
-    const selection = await chooseNativeAction({title:'CourseSync',message,actions,cancelButton:true,cancelLabel:'取消'});
+    const selection = await chooseNativeAction({title,message,actions,cancelButton:true,cancelLabel:'取消'});
     if (selection == null || selection < 0) return 'dismiss';
     if (selection === 0) return 0;
     if (loadFreeRooms && selection === 1) {
