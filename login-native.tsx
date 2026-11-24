@@ -181,7 +181,7 @@ function roomResultSections(rooms: ReadyRooms['rooms']) {
       if(line==='无空闲教室')return '无整段空闲教室';
       return line.replace(/、/g,'\n');
     }).flatMap(line=>line.split('\n'));
-    const count=periods[period]&&room&&room!=='无空闲教室'?content.length:0;
+    const count=periods[period]?content.filter(line=>line.trim()&&!/^无(?:空闲教室|整段空闲教室|完整时段空闲教室)/.test(line)).length:0;
     return {period,heading,content,count};
   });
 }
@@ -231,12 +231,23 @@ function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>bo
       {ready?<Section>
         <Text font="subheadline" foregroundStyle="secondary">{ready.date} · {ROOM_CAMPUS}</Text>
       </Section>:null}
-      {sections.map(({period,heading,content,count},index)=>
-        <Section key={period} header={<Text>{heading}{count?' · '+count+' 间':''}</Text>}
-          footer={index===sections.length-1?<Text>{ROOM_SCOPE}</Text>:undefined}>
+      {sections.filter(({period})=>period==='建议教室').map(({period,heading,content})=>
+        <Section key={period} header={<Text>{heading}</Text>}>
           {content.map((line,index)=><Text key={index}
-            foregroundStyle={line==='无整段空闲教室'?'secondary':undefined}>{line}</Text>)}
+            font={line.endsWith('：')?'subheadline':'body'}
+            fontWeight={line.endsWith('：')?'semibold':undefined}
+            foregroundStyle={line.endsWith('：')?'secondary':undefined}>{line}</Text>)}
         </Section>)}
+      {sections.some(({period})=>period!=='建议教室')?<Section
+        header={<Text>整段空闲教室</Text>} footer={<Text>{ROOM_SCOPE}</Text>}>
+        {sections.filter(({period})=>period!=='建议教室').flatMap(({period,heading,content,count})=>[
+          <Text key={period} font="subheadline" fontWeight="semibold" foregroundStyle="secondary">
+            {heading}{count?' · '+count+' 间':''}
+          </Text>,
+          ...content.map((line,index)=><Text key={period+'-'+index}
+            foregroundStyle={/^无(?:整段|完整时段)空闲教室/.test(line)?'secondary':undefined}>{line}</Text>)
+        ])}
+      </Section>:null}
     </List>
   </NavigationStack>;
 }
