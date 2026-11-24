@@ -3184,6 +3184,8 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
     // must not turn an empty successful query into a failed page.
     if(workerFailure){
       if(diagnosticCode(workerFailure.reason)==='CANCELLED')throw workerFailure.reason;
+      if(!full.some(list=>list.length))rows[0].room='无完整时段空闲教室；分节建议未能获取';
+      else rows[0].room+='\n分节建议未能获取';
       onProgress(1);
       return rows;
     }
