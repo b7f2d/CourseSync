@@ -2710,3 +2710,19 @@ test('fallback prefers longest contiguous block then building priority and ignor
  a.match(rows[0].room,/上午：博观楼JB101（第2—4节）/);
  a.match(rows[0].room,/下午：无可用教室/);a.match(rows[0].room,/晚上：无可用教室/);
 });
+
+test('room membership indexes preserve ID-first and missing-ID name fallback',async()=>{
+ const {m}=await env();
+ const x={id:10,nameZh:'博远楼JC101'};
+ const y={id:11,nameZh:'博远楼JC101'};
+ const unnamedId={nameZh:'博远楼JC101'};
+ const other={id:12,nameZh:'博观楼JB201'};
+ const rows=m.resolveDayRooms([x,x,other],[unnamedId,other],[x,other]);
+ a.equal(rows[0].room,'全天：博远楼JC101、博观楼JB201');
+ a.equal(rows[1].room,'博远楼JC101、博观楼JB201');
+ a.equal(m.resolveDayRooms([x],[y],[other])[0].room,'上午：博远楼JC101\n下午：博远楼JC101\n晚上：博观楼JB201');
+});
+test('concurrent HTTP requests recheck shared request spacing after waking',()=>{
+ const http=source.slice(source.indexOf('class HTTP {'),source.indexOf('function schoolSession('));
+ a.match(http,/while\(wait>0\)[\s\S]*wait=1050-\(Date\.now\(\)-this\.last\);\s*\}\s*this\.last=Date\.now\(\)/);
+});
