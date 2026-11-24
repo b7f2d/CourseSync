@@ -478,27 +478,18 @@ function detailMonday(detail) {
     d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7); return d.toISOString().slice(0,10);
   } return null;
 }
-// Keep the room name on the first line and the map search address on the
-// second line. Let Apple Calendar resolve the named place; never write a
-// hard-coded geocoordinate or request the device's location.
-const NUFE_MAP_ADDRESS='南京财经大学仙林校区南门';
-function calendarRoomLabel(value){
-  const text=String(value||'').replace(/\r\n/g,'\n');
-  const suffix='\n'+NUFE_MAP_ADDRESS;
-  return text.endsWith(suffix)?text.slice(0,-suffix.length):text;
+// Compatibility cleanup for the former manually assigned map pins.
+// All normal calendar locations are again just the school-provided room text.
+function hasRetiredCalendarPin(event){
+  const structured=event.structuredLocation,geo=structured?.geoLocation;
+  if(structured?.radius!==0||structured.title!==(event.location||'')||!geo)return false;
+  const retired=[[32.10659,118.92093],[32.0885,118.75659],[32.10908,118.9214],
+    [32.10977,118.92155],[32.11043,118.92145],[32.11099,118.9211]];
+  return retired.some(([lat,lon])=>Math.abs(geo.latitude-lat)<0.00001&&Math.abs(geo.longitude-lon)<0.00001);
 }
-function calendarLocationText(record){
-  const room=calendarRoomLabel(record?.location);
-  return activeSchoolId==='nufe'&&room.trim()?room+'\n'+NUFE_MAP_ADDRESS:room;
-}
-function calendarLocationMatches(event,record){
-  return String(event.location||'').replace(/\r\n/g,'\n')===calendarLocationText(record);
-}
-function setCalendarLocation(event,record){
-  const location=calendarLocationText(record);
-  // Remove the old manually supplied coordinate before writing the named address.
-  if(event.structuredLocation)event.structuredLocation=null;
-  event.location=location;
+function restoreCalendarRoom(event,room){
+  if(hasRetiredCalendarPin(event))event.structuredLocation=null;
+  event.location=room;
 }
 
 function expand(raw, sid, anchor, teachingDates=null) {
@@ -873,9 +864,8 @@ function examRows(html) {
       .find(m=>attributes(m[1]).class?.split(/\s+/).includes('time'));
     const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
     assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
-    const place=text(cells[0].replace(time[0],''));
     rows.push({title:text(title[1]),time:text(time[2]),kind:text(cells[1].replace(title[0],'')),
-      location:examLocation(place)});
+      location:examLocation(text(cells[0].replace(time[0],'')))});
   }
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
@@ -1118,7 +1108,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     if(!current.has(key))current.set(key,ev);
   }
   const matches=(ev,exam)=>ev.title===exam.title&&+ev.startDate===exam.start&&
-    +ev.endDate===exam.stop&&calendarLocationMatches(ev,exam);
+    +ev.endDate===exam.stop&&(ev.location||'')===exam.location&&!hasRetiredCalendarPin(ev);
   state.lastStage='考试：保存日程';
   let saved=false;
   for(const [key,exam] of target){
@@ -1126,7 +1116,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     if(existing&&matches(existing,exam))continue;
     checkpoint();
     const ev=existing||new CalendarEvent();
-    ev.calendar=calendar;ev.title=exam.title;ev.notes=key;setCalendarLocation(ev,exam);
+    ev.calendar=calendar;ev.title=exam.title;ev.notes=key;restoreCalendarRoom(ev,exam.location);
     ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(exam.start);ev.endDate=new Date(exam.stop);
     await ev.save();
     saved=true;
@@ -1849,7 +1839,7 @@ function eventRecord(ev,owner,byNative=null) {
   const expected=legacyCalendarTitle({title:canonical,teachers});
   // Treat an unexpected manual title edit as a changed course, not a match.
   const title=actual===canonical||actual===expected?canonical:actual;
-  const rec={...meta,title,teachers,location:calendarRoomLabel(ev.location),start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
+  const rec={...meta,title,teachers,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
 }
 function hasSyncTimestamp(event){
@@ -1897,7 +1887,7 @@ class CalendarAdapter {
     }
     return [...found.values()];
   }
-  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;setCalendarLocation(ev,e);ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
+  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;restoreCalendarRoom(ev,e.location);ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
   async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner,this.byNative),'FOREIGN_EVENT');await ev.remove();this.store.check();}
 }
 async function applyTransaction(tx,adapter,budget=()=>{}) {
@@ -1975,7 +1965,7 @@ function legacyEventKey(e){
   return legacyText(e.title)+'\u0000'+a+'\u0000'+b;
 }
 function legacyLocationCompatible(a,b){
-  const first=legacyText(calendarRoomLabel(a)),second=legacyText(calendarRoomLabel(b));
+  const first=legacyText(a),second=legacyText(b);
   return !first||!second||first===second;
 }
 function selectLegacyDuplicates(rows,owner,state){
@@ -2607,13 +2597,13 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
     const items=byId.get(rec.id)||[];
     assert(items.length===1&&sameCalendarCourse(items[0].rec,rec),'CALENDAR_VERIFY');
     const ev=items[0].ev,title=rec.title;
-    const correctLocation=calendarLocationMatches(ev,rec);
-    if(validNotes(ev)&&ev.title===title&&correctLocation)continue;
+    const retiredPin=hasRetiredCalendarPin(ev);
+    if(validNotes(ev)&&ev.title===title&&!retiredPin)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     if(!modified)adapter.verifiedWindows.clear();
     ev.title=title;ev.notes=expectedNotes;
-    if(!correctLocation)setCalendarLocation(ev,rec);
+    if(retiredPin)restoreCalendarRoom(ev,rec.location);
     progress('更新课程和考试同步时间：'+rec.title);
     await ev.save();budget();modified++;
     if(ev.identifier!==nativeId){
@@ -2637,7 +2627,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
       budget();
       const matches=done.get(rec.id)||[];
       assert(matches.length===1&&sameCalendarCourse(matches[0].rec,rec)&&
-        matches[0].ev.title===rec.title&&calendarLocationMatches(matches[0].ev,rec)&&
+        matches[0].ev.title===rec.title&&!hasRetiredCalendarPin(matches[0].ev)&&
         validNotes(matches[0].ev),'CALENDAR_VERIFY');
     }
   }
@@ -2646,7 +2636,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
 function matchesOldCourse(ev,rec,state,prior){
   if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
-  const location=legacyText(calendarRoomLabel(ev.location));
+  const location=legacyText(ev.location);
   // An unchanged slot can still have a verified former room from the journal.
   if(location!==legacyText(rec.location)&&
      !(prior?.start===rec.start&&prior.end===rec.end&&location===legacyText(prior.location)))return false;
@@ -3454,7 +3444,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={calendarRoomLabel,calendarLocationText,calendarLocationMatches,setCalendarLocation,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
