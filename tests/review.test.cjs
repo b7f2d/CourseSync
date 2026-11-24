@@ -2308,7 +2308,7 @@ test('offline agenda excludes ended lessons and deduplicates cached semesters',a
  a.equal(result.split('课程甲').length-1,1);a.ok(!result.includes('旧课'));a.match(result,/08:00–10:00/);
 });
 
-test('NUFE free classroom query prioritizes original buildings and includes only first floors of De buildings',async()=>{
+test('NUFE free classroom query prioritizes first-floor De buildings before Bo buildings',async()=>{
  const e=await env();
  const http={
    json:async(url,opt)=>{
@@ -2346,16 +2346,16 @@ test('NUFE free classroom query prioritizes original buildings and includes only
  };
  const rooms=await e.m.queryFreeRoomsForPeriod(http,'2026-11-16',['1','2','3','4']);
  a.deepEqual(rooms.map(r=>r.nameZh),[
+   '德经楼Z1-101',
+   '德济楼Z2-101',
+   '德正楼Z3-101',
+   '德业楼Z4-101',
    '博远楼JC101',
    '博远楼JC203',
    '博观楼JB101',
    '博观楼JB202',
    '博文楼JA105',
-   '博文楼JA414',
-   '德经楼Z1-101',
-   '德济楼Z2-101',
-   '德正楼Z3-101',
-   '德业楼Z4-101'
+   '博文楼JA414'
  ]);
 });
 
