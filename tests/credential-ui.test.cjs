@@ -154,7 +154,8 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace(' as const','');
  const dashboard=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('\ntype CalendarManageOptions'))
    .replace('loadRooms:RoomLoader','loadRooms')
-   .replace('<RoomResultsView loadRooms={loadRooms} isOpen={()=>open}/>','{loadRooms,isOpen:()=>open}')
+   .replace('const trackedLoad:RoomLoader=', 'const trackedLoad=')
+   .replace('<RoomResultsView loadRooms={trackedLoad} isOpen={()=>open} onClose={()=>{open=false;}}/>','{loadRooms:trackedLoad,isOpen:()=>open,onClose:()=>{open=false;}}')
    .replace('export async function','async function')
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
@@ -278,4 +279,15 @@ test('native room results group the three periods together and do not count empt
  assert.deepEqual(Array.from(sections,row=>row.count),[2,0,0]);
  assert.match(native,/<Section\s+header=\{<Text>整段空闲教室<\/Text>\}/);
  assert.match(native,/font="subheadline" fontWeight="semibold" foregroundStyle="secondary"/);
+});
+
+test('room transition is centered, retains native navigation and cancels before dismissal',()=>{
+ const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
+ assert.match(view,/<VStack navigationTitle="空闲教室"[\s\S]*?alignment:'center'[\s\S]*?<ProgressView/);
+ assert.match(view,/const close=\(\)=>\{onClose\(\);dismiss\(\);\}/);
+ assert.match(view,/result\.kind==='error'\?<VStack/);
+ assert.match(view,/toolbar=\{toolbar\}/);
+ assert.doesNotMatch(view,/<ProgressView[^>]*progress=\{/);
+ const query=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('export async function presentNativeDashboard('));
+ assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });

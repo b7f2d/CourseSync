@@ -35,7 +35,6 @@ const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
 const HostCalendar=hostAPI('Calendar')||{},HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog')||{};
 const HostNotification=hostAPI('Notification')||{},hostFetch=hostAPI('fetch');
-const HostStorage=hostAPI('Storage');
 const __query=HostScript.queryParameters||{};
 const __intent=hostAPI('Intent');
 let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')__intentText=String(p.value||'');}catch(_){}
@@ -1043,7 +1042,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
   // Every successful school response is authoritative, including an empty list.
   // Scan historical managed exams as well so deletions are reflected in EventKit,
-  // rather than merely dropping them from the widget cache.
+  // rather than merely dropping them from the local record.
   state.lastStage='考试：计算核验范围';
   const windowSize=90*DAY;
   const storedIndex=state.examIndex||{};
@@ -2031,76 +2030,6 @@ async function clearLegacyReminders(state,store){
     state.reminderError=null;
   }catch(_){state.reminderError='NOTIFICATION_FAILED';}
   store.write(state);
-}
-// Minimal, private same-project cache for widget.tsx. In some Scripting
-// widget extensions the FileManager App Group path is unavailable even though
-// the main script can access its files. Storage has a per-script domain that
-// survives separate index/widget executions, so never use shared:true here.
-// No account, student ID, cookies, keys or calendar identifiers are copied.
-const WIDGET_CACHE_KEY='CourseSync.Widget.Courses.v1';
-const WIDGET_CACHE_LIMIT=400;
-function widgetCacheProjection(state,now=Date.now()){
-  if(!state||!state.semesters||typeof state.semesters!=='object')return null;
-  if(state.tx||!state.lastCheck)return null;
-  const earliest=now-8*DAY,latest=now+70*DAY,courses=[];
-  for(const term of Object.values(state.semesters)){
-    if(!term||!Array.isArray(term.events))continue;
-    for(const e of term.events){
-      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
-      const start=Date.parse(e.start),end=Date.parse(e.end);
-      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
-         end<earliest||start>latest)continue;
-      courses.push({
-        id:String(e.id||'').slice(0,100),
-        title:e.title.slice(0,90),
-        location:String(e.location||'').slice(0,65),
-        teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
-          .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
-          .join('、').slice(0,75),
-        start:e.start,end:e.end
-      });
-    }
-  }
-  if(Array.isArray(state.exams)){
-    for(const e of state.exams){
-      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
-      const start=Date.parse(e.start),end=Date.parse(e.end);
-      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
-         end<earliest||start>latest)continue;
-      courses.push({
-        id:String(e.id||'').slice(0,100),
-        title:examTitle(e.title,90),
-        location:String(e.location||'').slice(0,65),
-        teacher:'',
-        start:e.start,end:e.end
-      });
-    }
-  }
-  const payload={version:1,lastCheck:state.lastCheck,events:courses};
-  if(courses.length<=WIDGET_CACHE_LIMIT)return payload;
-  // Keep complete school weeks, beginning with the current Beijing week.
-  // A dense future period must not prevent a fresh snapshot of this week.
-  const weekLength=7*DAY,firstMonday=Date.parse('1970-01-05T00:00:00+08:00');
-  const weekStart=ms=>firstMonday+Math.floor((ms-firstMonday)/weekLength)*weekLength;
-  const currentWeek=weekStart(now),byWeek=groupBy(courses,event=>weekStart(Date.parse(event.start)));
-  const events=[];
-  for(let at=currentWeek;at<=latest;at+=weekLength){
-    const week=byWeek.get(at)||[];
-    if(events.length+week.length>WIDGET_CACHE_LIMIT){
-      if(at===currentWeek)return null;
-      return {...payload,events,coverageEnd:new Date(at).toISOString()};
-    }
-    events.push(...week);
-  }
-  return {...payload,events};
-}
-function publishWidgetCache(state,now=Date.now()){
-  const storage=HostStorage;
-  if(!storage||typeof storage.set!=='function')return false;
-  try{
-    const payload=widgetCacheProjection(state,now);
-    return !!(payload&&storage.set(WIDGET_CACHE_KEY,payload)===true);
-  }catch(_){return false;} // Must never fail the verified calendar sync.
 }
 function localDateTime(iso){return new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,16).replace('T',' ');}
 function ics(events,stamp=new Date().toISOString()) {
@@ -3305,8 +3234,6 @@ async function runAttempt() {
     }
     // Skip the dashboard after logout so reopening the script starts with credentials.
     if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
-      // Heal the widget cache from existing verified state even without network.
-      publishWidgetCache(state);
       const canSignOut=canOfferSignOut(state);
       const canFreeRooms=activeSchoolId==='nufe'&&!state.signedOut&&canSignOut;
       const schoolName=schoolById(activeSchoolId)?.name||'高校';
@@ -3428,18 +3355,7 @@ async function runAttempt() {
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
       state.lastExamError=diagnosticCode(error);
     }
-    // The last progress stage must identify failures after the exam step too.
-    state.lastStage='更新小组件数据';
     const examError=state.lastExamError;
-    publishWidgetCache(state);
-    // WidgetKit prefers the lightweight Storage mirror and may also use the
-    // original App Group snapshot if its path is exposed in this context. Reload requests
-    // are best effort and must never turn a successful sync into a failure.
-    try{
-      const widgets=hostAPI('Widget');
-      const reload=typeof widgets?.reloadUserWidgets==='function'?widgets.reloadUserWidgets:widgets?.reloadAll;
-      if(typeof reload==='function')Promise.resolve(reload.call(widgets)).catch(()=>{});
-    }catch(_){}
     state.lastStage='保存同步结果';
     state.runStatus=state.termErrors?.length||examError?'partial':'success';
     state.runCompletedAt=new Date().toISOString();
@@ -3512,7 +3428,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
