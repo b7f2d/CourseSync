@@ -1369,10 +1369,10 @@ test('exam location omits campus while preserving room or building',async()=>{
   ['（考试）金融风险管理','德经楼Z1-116']
  ]);
  a.deepEqual(Array.from(e.db,x=>[x.title,x.location]),[
-  ['（考试）高等数学','博远楼101\n南京财经大学仙林校区南门'],
-  ['（考试）线性代数','德业楼 202\n南京财经大学仙林校区南门'],
+  ['（考试）高等数学','博远楼101'],
+  ['（考试）线性代数','德业楼 202'],
   ['（考试）大学英语',''],
-  ['（考试）金融风险管理','德经楼Z1-116\n南京财经大学仙林校区南门']
+  ['（考试）金融风险管理','德经楼Z1-116']
  ]);
 });
 test('App refresh fetches all courses; scheduled sync rotates two other terms including future terms',async()=>{
@@ -2630,28 +2630,50 @@ test('concurrent HTTP requests recheck shared request spacing after waking',()=>
  a.match(http,/while\(wait>0\)[\s\S]*wait=1050-\(Date\.now\(\)-this\.last\);\s*\}\s*this\.last=Date\.now\(\)/);
 });
 
-test('NUFE calendar locations retain the room and use a named map address without coordinates',async()=>{
+test('NUFE calendar locations preserve the room label and use only verified building points',async()=>{
  const {m}=await env();
  const gate='南京财经大学仙林校区南门';
  const rec={location:'德业楼Z4-110'};
- const ev={location:rec.location,structuredLocation:{title:rec.location,geoLocation:{latitude:32.10659,longitude:118.92093}}};
+ const ev={location:rec.location+'\n'+gate,structuredLocation:{title:rec.location,geoLocation:{latitude:32.10659,longitude:118.92093}}};
  a.equal(m.calendarLocationMatches(ev,rec),false);
  m.setCalendarLocation(ev,rec);
- a.equal(ev.location,rec.location+'\n'+gate);
- a.equal(ev.structuredLocation,null);
- a.equal(m.calendarRoomLabel(ev.location),rec.location);
+ a.equal(ev.location,rec.location);
+ a.equal(ev.structuredLocation.title,rec.location);
+ a.equal(ev.structuredLocation.geoLocation.latitude,32.11099);
+ a.equal(ev.structuredLocation.geoLocation.longitude,118.9211);
  a.equal(m.calendarLocationMatches(ev,rec),true);
- a.equal(m.calendarLocationText({location:ev.location}),ev.location);
- for(const location of ['Z2-108','博观楼JB407微','其他场地']){
-   m.setCalendarLocation(ev,{location});
-   a.equal(ev.location,location+'\n'+gate);
-   a.equal(m.calendarRoomLabel(ev.location),location);
+ for(const [location,id,lat,lon] of [['德经楼Z1-116','Z1',32.10908,118.9214],['Z2-108','Z2',32.10977,118.92155],['德正楼','Z3',32.11043,118.92145]]){
+   a.equal(m.nufeBuildingFor({location}).id,id);
+   a.deepEqual(Array.from(m.nufeEventPoint({location})),[lat,lon]);
  }
- m.setCalendarLocation(ev,{location:''});
- a.equal(ev.location,'');
- a.equal(ev.structuredLocation,null);
+ for(const location of ['博文楼JA101','博观楼JB407微','博远楼JC204','其他场地','']){
+   a.equal(m.nufeEventPoint({location}),null);
+   m.setCalendarLocation(ev,{location});
+   a.equal(ev.location,location);
+   a.equal(ev.structuredLocation,null);
+ }
+ a.equal(m.nufeEventPoint({location:'Z1-101',campus:'福建路'}),null);
 });
-test('existing managed course receives the named address without replacing the event',async()=>{
+test('MapKit teaching hall lookup rejects ambiguous, off-campus and school-only hits and caches accepted results',async()=>{
+ const e=await env();
+ const b=e.m.nufeBuildingFor({location:'博观楼JB407微'});
+ const hit={name:'博观楼',formattedAddress:'南京财经大学仙林校区 文苑路3号',coordinate:{latitude:32.1082,longitude:118.9192}};
+ a.equal(e.m.selectTeachingPoint(b,[{...hit,name:'南京财经大学'}]),null);
+ a.equal(e.m.selectTeachingPoint(b,[{...hit,coordinate:{latitude:31,longitude:119}}]),null);
+ a.equal(e.m.selectTeachingPoint(b,[hit,{...hit,coordinate:{latitude:32.109,longitude:118.919}}]),null);
+ a.deepEqual(Array.from(e.m.selectTeachingPoint(b,[hit])),[32.1082,118.9192]);
+ const calls=[];
+ e.sandbox.__sdk.MapSearch={locate:async opts=>{calls.push(opts.query);return opts.query.endsWith('博观楼')?[hit]:[];}};
+ await e.m.resolveNufeTeachingPoints(e.state,e.store,true);
+ a.equal(calls.length,3);
+ a.deepEqual(Array.from(e.m.nufeEventPoint({location:'JB407微'})),[32.1082,118.9192]);
+ a.deepEqual(Array.from(e.state.nufeBuildingPoints.JB),[32.1082,118.9192]);
+ a.equal(e.m.nufeEventPoint({location:'JA101'}),null);
+ calls.length=0;
+ await e.m.resolveNufeTeachingPoints(e.state,e.store,false);
+ a.equal(calls.length,0);
+});
+test('existing managed course receives the verified building point without replacing the event',async()=>{
  const e=await env();
  const rec=lesson({location:'德业楼Z4-110',campus:'xianlin'});
  const old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
@@ -2663,6 +2685,6 @@ test('existing managed course receives the named address without replacing the e
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,id);
  a.equal(e.db[0].location,e.m.calendarLocationText(rec));
- a.equal(e.db[0].structuredLocation,null);
+ a.equal(e.db[0].structuredLocation.geoLocation.latitude,32.11099);
  a.equal(e.m.calendarLocationMatches(e.db[0],rec),true);
 });
