@@ -3099,7 +3099,7 @@ function isFirstFloorDeRoom(room){
   const building=room.building?.nameZh||room.buildingName;
   const code=String(room.nameZh||room.name||'').normalize('NFKC').replace(/（[^）]*）|\([^)]*\)/g,'').replace(/\s+/g,'').replace(building,'');
   const prefix=BUILDING_PRIORITY[building]-3;
-  return new RegExp('^Z'+prefix+'[A-Z]*[-–—]?1\\d{2}
+  return new RegExp('^Z'+prefix+'-1\\d{2}
 
 function compareFreeRooms(a,b){
   const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
