@@ -3097,12 +3097,13 @@ const BUILDING_PRIORITY=Object.freeze({'德经楼':1,'德济楼':2,'德正楼':3
 const ROOM_CODE_PREFIX=Object.freeze({'博远楼':'JC','博观楼':'JB','博文楼':'JA','德经楼':'Z1-','德济楼':'Z2-','德正楼':'Z3-','德业楼':'Z4-'});
 const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
 function isEligibleFreeRoom(room){
+  if(!room||typeof room!=='object')return false;
   const building=room.building?.nameZh||room.buildingName;
   const prefix=ROOM_CODE_PREFIX[building];
   if(typeof prefix!=='string')return false;
   const firstOnly=FIRST_FLOOR_BUILDINGS.has(building);
   if(firstOnly&&Number(room.floor)!==1)return false;
-  const name=String(room.nameZh||room.name||'').normalize('NFKC').trim();
+  const name=String(room.nameZh||room.name||'').trim();
   if(name.includes('微'))return false;
   const code=(name.startsWith(building)?name.slice(building.length):name).trim();
   if(!code.startsWith(prefix))return false;
@@ -3249,7 +3250,7 @@ async function loadFreeRoomPage(isActive,onProgress){
     if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
     if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
       return {kind:'error',message:'登录失败，请重新登录后再查询。'};
-    return {kind:'error',message:'查询失败，请稍后重试。'};
+    return {kind:'error',message:'查询失败\n错误代码：'+code+'\n原因：'+reasonFor(code)};
   }
 }
 
