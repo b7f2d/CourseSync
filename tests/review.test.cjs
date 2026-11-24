@@ -2664,3 +2664,25 @@ test('rollback removes structured exam locations while preserving classroom text
  a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
  a.equal(e.db[0].location,'博观楼JB407');a.equal(e.db[0].structuredLocation,null);
 });
+
+test('plain text native structured object is not treated as a leftover coordinate',async()=>{
+ const e=await env(),rec=lesson({location:'德业楼 Z4-110'}),old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
+ e.baseline([rec]);const term=e.state.semesters['161'];term.index={[rec.id]:old.identifier};
+ term.lastSuccess='2026-11-01T00:00:00.000Z';term.notesFormat=3;
+ old.structuredLocation={title:rec.location,geoLocation:null,radius:0};
+ const writes=e.requests.filter(x=>x[0]==='save').length;
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,161,()=>{});
+ a.equal(e.requests.filter(x=>x[0]==='save').length,writes);
+ a.equal(e.db[0].location,rec.location);
+});
+test('native automatic map resolution does not cause CALENDAR_VERIFY after plain room save',async()=>{
+ const e=await env(),rec=lesson({location:'德业楼 Z4-110'}),old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
+ const nativePin={title:rec.location,geoLocation:{latitude:32.1082,longitude:118.9192},radius:0};
+ old.structuredLocation=nativePin;
+ e.baseline([rec]);e.state.semesters['161'].index={[rec.id]:old.identifier};
+ const save=e.Event.prototype.save;
+ e.Event.prototype.save=async function(){this.structuredLocation=nativePin;return save.call(this);};
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,161,()=>{});
+ a.equal(e.db.length,1);a.equal(e.db[0].identifier,old.identifier);
+ a.equal(e.db[0].location,rec.location);
+});
