@@ -1997,6 +1997,7 @@ test('credential status surfaces dual-key migration instead of hiding it',async(
 
 test('v3 notes refresh after another successful unchanged-term sync',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec);
+ e.m.setCalendarLocation(ev,rec); // fixture represents an already migrated, unchanged event
  e.baseline([rec]);const term=e.state.semesters['161'];
  term.index={[rec.id]:ev.identifier};
  term.notesFormat=3;
@@ -2627,4 +2628,39 @@ test('room membership indexes preserve ID-first and missing-ID name fallback',as
 test('concurrent HTTP requests recheck shared request spacing after waking',()=>{
  const http=source.slice(source.indexOf('class HTTP {'),source.indexOf('function schoolSession('));
  a.match(http,/while\(wait>0\)[\s\S]*wait=1050-\(Date\.now\(\)-this\.last\);\s*\}\s*this\.last=Date\.now\(\)/);
+});
+
+test('NUFE structured location keeps classroom labels, corrects stale pins, and respects campus',async()=>{
+ const {m}=await env();
+ const rec={location:'德业楼Z4-110',campus:'xianlin'};
+ const ev={location:rec.location,structuredLocation:{title:rec.location,geoLocation:{latitude:30,longitude:120}}};
+ a.equal(m.calendarLocationMatches(ev,rec),false);
+ m.setCalendarLocation(ev,rec);
+ a.equal(ev.location,rec.location);
+ a.equal(ev.structuredLocation.title,rec.location);
+ a.equal(ev.structuredLocation.geoLocation.latitude,32.11099);
+ a.equal(ev.structuredLocation.geoLocation.longitude,118.9211);
+ a.equal(m.calendarLocationMatches(ev,rec),true);
+ a.deepEqual(Array.from(m.nufeEventPoint({location:'Z2-108'})),[32.10977,118.92155]);
+ a.deepEqual(Array.from(m.nufeEventPoint({location:'博观楼JB407微'})),[32.10659,118.92093]);
+ a.deepEqual(Array.from(m.nufeEventPoint({location:'A101',campus:'fujian'})),[32.0885,118.75659]);
+ a.equal(m.nufeEventPoint({location:'其他场地'}),null);
+ a.equal(m.nufeEventPoint({location:'德业楼Z4-110',campus:'qiaotou'}),null);
+ a.equal(m.nufeEventPoint({location:'',campus:'xianlin'}),null);
+ m.setCalendarLocation(ev,{location:'其他场地'});
+ a.equal(ev.structuredLocation,null);
+});
+test('existing managed course receives corrected coordinates without replacing the event',async()=>{
+ const e=await env();
+ const rec=lesson({location:'德业楼Z4-110',campus:'xianlin'});
+ const old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
+ old.structuredLocation={title:rec.location,geoLocation:{latitude:30,longitude:120}};
+ const id=old.identifier;
+ e.baseline([rec]);e.state.semesters['161'].index={[rec.id]:id};
+ e.state.semesters['161'].notesFormat=3;
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,161,()=>{});
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,id);
+ a.equal(e.db[0].location,rec.location);
+ a.equal(e.m.calendarLocationMatches(e.db[0],rec),true);
 });

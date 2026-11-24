@@ -478,6 +478,62 @@ function detailMonday(detail) {
     d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7); return d.toISOString().slice(0,10);
   } return null;
 }
+// NUFE campus/room coordinates are fixed public geographic data, not device GPS.
+// Building aliases: https://gzc.nufe.edu.cn/info/1066/1797.htm
+// WGS84 OpenStreetMap contributors: https://www.openstreetmap.org/copyright
+// Z1–Z4: ways 278003315–278003318; Xianlin campus fallback: south main
+// gate (way 368882841), Fujian Road campus: way 1416435260.
+// A/B/C locations without verified building coordinates use the campus gate,
+// not a made-up room coordinate. No per-event map search or geocoding.
+const NUFE_CAMPUS_POINTS=Object.freeze({
+  xianlin:[32.10659,118.92093],
+  fujian:[32.0885,118.75659]
+});
+const NUFE_BUILDING_POINTS=Object.freeze([
+  {pattern:/德经楼|专一|经济学科楼|(?:^|[\s（(])Z1(?:-|\s|S?\d|$)/i,point:[32.10908,118.9214]},
+  {pattern:/德济楼|专二|管理科学楼|(?:^|[\s（(])Z2(?:-|\s|S?\d|$)/i,point:[32.10977,118.92155]},
+  {pattern:/德[正政]楼|专三|法政学科楼|(?:^|[\s（(])Z3(?:-|\s|S?\d|$)/i,point:[32.11043,118.92145]},
+  {pattern:/德业楼|专四|理工学科楼|(?:^|[\s（(])Z4(?:-|\s|S?\d|$)/i,point:[32.11099,118.9211]}
+]);
+function nufeCampusHint(value){
+  const v=typeof value==='string'?value.trim():'';
+  if(!v)return '';
+  if(/^(?:南京财经大学)?仙林(?:校区)?$/.test(v))return 'xianlin';
+  if(/^(?:南京财经大学)?福建路(?:校区)?$/.test(v))return 'fujian';
+  if(/^(?:南京财经大学)?桥头(?:校区)?$/.test(v))return 'qiaotou';
+  return 'other';
+}
+function nufeEventPoint(record){
+  if(activeSchoolId!=='nufe')return null;
+  const room=String(record?.location||'').trim();
+  if(!room)return null;
+  const campus=record.campus||'';
+  if(campus&&campus!=='xianlin')return NUFE_CAMPUS_POINTS[campus]||null;
+  const building=NUFE_BUILDING_POINTS.find(row=>row.pattern.test(room));
+  if(building)return building.point;
+  if(campus==='xianlin'||/博[文观远园]楼|教[ABCＡＢＣ](?:\s|[-\d]|$)|(?:^|[\s（(])J[ABC](?:-|\s|S?\d|$)/i.test(room))
+    return NUFE_CAMPUS_POINTS.xianlin;
+  return null;
+}
+function calendarLocationMatches(event,record){
+  if((event.location||'')!==(record.location||''))return false;
+  const point=nufeEventPoint(record);
+  if(!point)return true;
+  const structured=event.structuredLocation,geo=structured?.geoLocation;
+  return structured?.title===record.location&&
+    Number.isFinite(geo?.latitude)&&Number.isFinite(geo?.longitude)&&
+    Math.abs(geo.latitude-point[0])<0.00001&&Math.abs(geo.longitude-point[1])<0.00001;
+}
+function setCalendarLocation(event,record){
+  const previous=event.location||'';
+  const location=record.location||'';
+  event.location=location;
+  const point=nufeEventPoint(record);
+  if(point)event.structuredLocation={title:location,
+    geoLocation:{latitude:point[0],longitude:point[1],timestamp:Date.now()},radius:0};
+  else if(previous!==location&&event.structuredLocation)event.structuredLocation=null;
+}
+
 function expand(raw, sid, anchor, teachingDates=null) {
   monday(anchor);
   assert(raw&&Array.isArray(raw.studentTableVms)&&raw.studentTableVms.length===1,'SCHEMA');
@@ -499,7 +555,7 @@ function expand(raw, sid, anchor, teachingDates=null) {
       const date=teachingDates?teachingDates.get(week*10+wd):
         new Date(Date.parse(anchor+'T00:00:00Z')+((week-1)*7+wd-1)*DAY).toISOString().slice(0,10);
       assert(date,'ANCHOR');
-      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.room||a.building].filter(Boolean).join(' '),teachers});
+      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.room||a.building].filter(Boolean).join(' '),...(nufeCampusHint(a.campus)?{campus:nufeCampusHint(a.campus)}:{}),teachers});
     }
   }
   events.sort((a,b)=>a.start.localeCompare(b.start)||a.title.localeCompare(b.title)||a.location.localeCompare(b.location));
@@ -850,8 +906,10 @@ function examRows(html) {
       .find(m=>attributes(m[1]).class?.split(/\s+/).includes('time'));
     const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
     assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
+    const place=text(cells[0].replace(time[0],''));
+    const campus=nufeCampusHint(/^(?:(?:仙林|福建路|桥头)(?:校区)?|\S+校区)(?=\s|$)/.exec(place)?.[0]);
     rows.push({title:text(title[1]),time:text(time[2]),kind:text(cells[1].replace(title[0],'')),
-      location:examLocation(text(cells[0].replace(time[0],'')))});
+      location:examLocation(place),...(campus?{campus}:{})});
   }
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
@@ -1036,7 +1094,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:examTitle(row.title),start,stop,location:row.location});
+    target.set(key,{title:examTitle(row.title),start,stop,location:row.location,campus:row.campus});
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
@@ -1094,7 +1152,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     if(!current.has(key))current.set(key,ev);
   }
   const matches=(ev,exam)=>ev.title===exam.title&&+ev.startDate===exam.start&&
-    +ev.endDate===exam.stop&&(ev.location||'')===exam.location;
+    +ev.endDate===exam.stop&&calendarLocationMatches(ev,exam);
   state.lastStage='考试：保存日程';
   let saved=false;
   for(const [key,exam] of target){
@@ -1102,7 +1160,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     if(existing&&matches(existing,exam))continue;
     checkpoint();
     const ev=existing||new CalendarEvent();
-    ev.calendar=calendar;ev.title=exam.title;ev.notes=key;ev.location=exam.location;
+    ev.calendar=calendar;ev.title=exam.title;ev.notes=key;setCalendarLocation(ev,exam);
     ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(exam.start);ev.endDate=new Date(exam.stop);
     await ev.save();
     saved=true;
@@ -1873,7 +1931,7 @@ class CalendarAdapter {
     }
     return [...found.values()];
   }
-  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
+  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;setCalendarLocation(ev,e);ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
   async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner,this.byNative),'FOREIGN_EVENT');await ev.remove();this.store.check();}
 }
 async function applyTransaction(tx,adapter,budget=()=>{}) {
@@ -2583,11 +2641,13 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
     const items=byId.get(rec.id)||[];
     assert(items.length===1&&sameCalendarCourse(items[0].rec,rec),'CALENDAR_VERIFY');
     const ev=items[0].ev,title=rec.title;
-    if(validNotes(ev)&&ev.title===title)continue;
+    const correctLocation=calendarLocationMatches(ev,rec);
+    if(validNotes(ev)&&ev.title===title&&correctLocation)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     if(!modified)adapter.verifiedWindows.clear();
     ev.title=title;ev.notes=expectedNotes;
+    if(!correctLocation)setCalendarLocation(ev,rec);
     progress('更新课程和考试同步时间：'+rec.title);
     await ev.save();budget();modified++;
     if(ev.identifier!==nativeId){
@@ -2611,7 +2671,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
       budget();
       const matches=done.get(rec.id)||[];
       assert(matches.length===1&&sameCalendarCourse(matches[0].rec,rec)&&
-        matches[0].ev.title===rec.title&&
+        matches[0].ev.title===rec.title&&calendarLocationMatches(matches[0].ev,rec)&&
         validNotes(matches[0].ev),'CALENDAR_VERIFY');
     }
   }
@@ -3428,7 +3488,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={nufeEventPoint,calendarLocationMatches,setCalendarLocation,nufeCampusHint,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
