@@ -11,7 +11,7 @@ test('Scripting metadata keeps the intended display identity',()=>{
   assert.equal(data.name,'CourseSync');
   assert.equal(Object.hasOwn(data,'version'),false);
   assert.equal(data.description,JSON.parse(read('package.json')).description);
-  for(const feature of ['Apple 日历','空闲教室','小组件','快捷指令'])
+  for(const feature of ['Apple 日历','空闲教室','快捷指令'])
     assert.ok(data.description.includes(feature));
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
@@ -69,13 +69,12 @@ test('CI validates the remote script without packaging or publishing',()=>{
   assert.match(read('.github/workflows/validate.yml'),/node --test tests\/\*\.test\.cjs/);
 });
 
-test('widget distribution includes the native entry and safe cache model',()=>{
-  const entry=read('widget.tsx');
-  assert.match(entry,/Widget\.present\(/);
-  assert.match(entry,/buildWidgetModel\(/);
-  assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
-  assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
+test('remote distribution contains only the active entry points',()=>{
+  assert.equal(fs.existsSync(path.join(root,'widget.tsx')),false);
+  assert.equal(fs.existsSync(path.join(root,'widget-data.ts')),false);
+  assert.doesNotMatch(read('script.json')+read('README.md')+read('package.json'),/小组件|widget/i);
   const index=read('index.tsx');
+  assert.doesNotMatch(index,/widgetCacheProjection|publishWidgetCache|reloadUserWidgets|hostAPI\('Widget'\)/);
   assert.equal(index.includes("from './login-native'"),false);
   assert.equal(index.includes("from './progress-native'"),false);
   assert.equal(index.includes("from './live_activity'"),false);
