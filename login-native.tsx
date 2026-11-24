@@ -181,7 +181,7 @@ function formatRoomResults(date, rooms) {
   });
   const firstPeriod=rooms.findIndex(({period})=>period==='上午');
   const grouped=firstPeriod<0?sections:[...sections.slice(0,firstPeriod),sections.slice(firstPeriod).join('\n')];
-  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼',...grouped].join('\n\n');
+  return ['今天 · '+date,'仅包含博远楼、博观楼、博文楼及德经楼、德济楼、德正楼、德业楼（一楼）',...grouped].join('\n\n');
 }
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
