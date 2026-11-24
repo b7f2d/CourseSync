@@ -118,7 +118,7 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  const loginSection=native.slice(0,native.indexOf('type FreeRoomResult'));
  assert.doesNotMatch(loginSection,/查询空闲教室|freeRooms/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
- assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'博远楼':1,'博观楼':2,'博文楼':3\}\)/);
+ assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5,'博观楼':6,'博文楼':7\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryFreeRoomsToday/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
