@@ -151,9 +151,8 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  const show=vm.runInNewContext(source+'\npresentNativeDashboard',sandbox);
  const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync'},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
  assert.equal(result,1);
- assert.equal(calls[0].title,'CourseSync-南京财经大学');
- assert.match(calls[0].message,/日历：CourseSync　　已同步/);
- assert.doesNotMatch(calls[0].message,/南京财经大学/);
+ assert.equal(calls[0].title,'CourseSync');
+ assert.match(calls[0].message,/南京财经大学[\s\S]*已同步[\s\S]*CourseSync/);
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
  assert.equal(calls[2].title,'空闲教室');
