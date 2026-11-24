@@ -3180,7 +3180,13 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
     };
     const workers=await Promise.allSettled(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
     const workerFailure=workers.find(result=>result.status==='rejected');
-    if(workerFailure)throw workerFailure.reason;
+    // Full-period results are already verified. Optional lesson-level suggestions
+    // must not turn an empty successful query into a failed page.
+    if(workerFailure){
+      if(diagnosticCode(workerFailure.reason)==='CANCELLED')throw workerFailure.reason;
+      onProgress(1);
+      return rows;
+    }
     const roomName=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
     const roomKey=r=>r.id!=null?'id:'+String(r.id):'name:'+roomName(r);
     const bestFor=(units,perSlot)=>{
@@ -3220,7 +3226,7 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
     if(daytime.length)suggestions.splice(0,2,'白天：'+daytime.map(roomName).join('、')+'（第1—10节）');
     else if(afternoonEvening.length)suggestions.splice(1,2,'下午至晚上：'+afternoonEvening.map(roomName).join('、')+'（第6—13节）');
     rows[0].room=suggestions.join('\n');
-    for(const {index} of missing)rows[index+1].room='无完整时段空闲教室（见建议）';
+    for(const {index} of missing)rows[index+1].room='无空闲教室';
   }
   onProgress(1);
   return rows;
