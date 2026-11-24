@@ -481,10 +481,19 @@ function detailMonday(detail) {
 // Clear structured pins on CourseSync-managed events, including the previous
 // building-map experiment. All normal locations are plain classroom text.
 function hasRetiredCalendarPin(event){
-  return !!event.structuredLocation;
+  // EventKit may represent a plain text location as a structured object too.
+  // Only a real coordinate needs migration, never the presence of an object.
+  try{
+    const geo=event.structuredLocation?.geoLocation;
+    return Number.isFinite(geo?.latitude)&&Number.isFinite(geo?.longitude);
+  }catch(_){return false;}
 }
 function restoreCalendarRoom(event,room){
-  if(hasRetiredCalendarPin(event))event.structuredLocation=null;
+  // Coordinate removal is best-effort: native calendar may resolve a text
+  // location again. Verification must only cover the authoritative room text.
+  if(hasRetiredCalendarPin(event)){
+    try{event.structuredLocation=null;}catch(_){}
+  }
   event.location=room;
 }
 
@@ -1104,12 +1113,12 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     if(!current.has(key))current.set(key,ev);
   }
   const matches=(ev,exam)=>ev.title===exam.title&&+ev.startDate===exam.start&&
-    +ev.endDate===exam.stop&&(ev.location||'')===exam.location&&!hasRetiredCalendarPin(ev);
+    +ev.endDate===exam.stop&&(ev.location||'')===exam.location;
   state.lastStage='考试：保存日程';
   let saved=false;
   for(const [key,exam] of target){
     const existing=current.get(key);
-    if(existing&&matches(existing,exam))continue;
+    if(existing&&matches(existing,exam)&&!hasRetiredCalendarPin(existing))continue;
     checkpoint();
     const ev=existing||new CalendarEvent();
     ev.calendar=calendar;ev.title=exam.title;ev.notes=key;restoreCalendarRoom(ev,exam.location);
@@ -2585,6 +2594,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
     const matches=byId.get(item.rec.id)||[];
     matches.push(item);byId.set(item.rec.id,matches);
   }
+  state.lastStage='核验学期 '+sid+' 的课程同步备注';
   const expectedNotes=readableNotes(null,term.lastSuccess);
   const validNotes=ev=>ev.notes===expectedNotes||(!refreshTimestamp&&hasSyncTimestamp(ev));
   let modified=0;
@@ -2623,7 +2633,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
       budget();
       const matches=done.get(rec.id)||[];
       assert(matches.length===1&&sameCalendarCourse(matches[0].rec,rec)&&
-        matches[0].ev.title===rec.title&&!hasRetiredCalendarPin(matches[0].ev)&&
+        matches[0].ev.title===rec.title&&
         validNotes(matches[0].ev),'CALENDAR_VERIFY');
     }
   }
@@ -2703,6 +2713,7 @@ async function finishTx(state,store,adapter,budget,refreshTimestamp=true) {
   let backup;try{backup=JSON.parse(store.fm.readString(store.path(tx.backupName)));}catch(_){fail('BACKUP_FAILED');}
   assert(backup.calendarId===adapter.calendar.identifier&&JSON.stringify(backup.before)===JSON.stringify(tx.before)&&JSON.stringify(backup.target)===JSON.stringify(tx.target),'BACKUP_FAILED');
   adapter.hasMarkerWrites=false;
+  state.lastStage='核验并更新学期 '+tx.sid+' 的日历事件';
   const index=await applyTransaction(tx,adapter,budget);
   const oldTerm=state.semesters[tx.sid];
   const sourceChanges=tx.changes.added+tx.changes.removed+tx.changes.changed;
@@ -2837,6 +2848,7 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     // A missing, duplicate or edited event still goes through the repair transaction.
     if(!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
        old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
+      stage('核验学期 '+sid+' 的日历事件');
       const checked=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
       if(checked){
         state.semesters[sid]={...old,events:p.events,index:checked.index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
