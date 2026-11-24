@@ -106,8 +106,8 @@ type RefreshFormOutcome=
   | {kind:'credentials';schoolId:string;username:string;password:string}
   | {kind:'reuse';schoolId:string};
 
-export async function presentNativeRefreshForm(schoolId:string,allowReuse=false):Promise<RefreshFormOutcome|null>{
-  const result=await presentLoginView('登录账号','开始刷新',allowReuse);
+export async function presentNativeRefreshForm(schoolId:string,allowReuse=false,title='登录账号'):Promise<RefreshFormOutcome|null>{
+  const result=await presentLoginView(title,'开始刷新',allowReuse);
   if(result?.reuse===true)return allowReuse?{kind:'reuse',schoolId}:null;
   const credentials=readNativeCredentials(result);
   return credentials?{kind:'credentials',schoolId,...credentials}:null;
@@ -167,7 +167,8 @@ async function chooseNativeAction(options) {
   return null;
 }
 
-const ROOM_SCOPE='仙林校区 · 博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
+const ROOM_CAMPUS='仙林校区';
+const ROOM_SCOPE='查询范围为博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
 
 function roomResultSections(rooms: ReadyRooms['rooms']) {
   const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
@@ -180,7 +181,8 @@ function roomResultSections(rooms: ReadyRooms['rooms']) {
       if(line==='无空闲教室')return '无整段空闲教室';
       return line.replace(/、/g,'\n');
     }).flatMap(line=>line.split('\n'));
-    return {period,heading,content};
+    const count=periods[period]&&room&&room!=='无空闲教室'?content.length:0;
+    return {period,heading,content,count};
   });
 }
 
@@ -190,7 +192,7 @@ function formatRoomResults(date, rooms) {
     (period==='上午'?'整段空闲教室\n':'')+heading+'\n'+content.join('\n'));
   const firstPeriod=results.findIndex(({period})=>period==='上午');
   const grouped=firstPeriod<0?sections:[...sections.slice(0,firstPeriod),sections.slice(firstPeriod).join('\n')];
-  return [date,ROOM_SCOPE,...grouped].join('\n\n');
+  return [date+' · '+ROOM_CAMPUS,...grouped,ROOM_SCOPE].join('\n\n');
 }
 
 async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{}) {
@@ -212,6 +214,7 @@ function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>bo
     return ()=>{active=false;};
   },[attempt]);
   const ready=result?.kind==='ready'?result:null;
+  const sections=ready?roomResultSections(ready.rooms):[];
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
     <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={{cancellationAction:<Button title={result?'返回':'取消'} action={()=>dismiss()}/>}}>
@@ -225,13 +228,15 @@ function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>bo
           setResult(null);setConnected(false);setAttempt(attempt+1);
         }}/>
       </Section>:null}
-      {ready?<Section header={<Text>{ready.date}</Text>}>
-        <Text foregroundStyle="secondary">{ROOM_SCOPE}</Text>
+      {ready?<Section>
+        <Text font="subheadline" foregroundStyle="secondary">{ready.date} · {ROOM_CAMPUS}</Text>
       </Section>:null}
-      {ready?roomResultSections(ready.rooms).map(({period,heading,content})=>
-        <Section key={period} header={<Text>{heading}</Text>}>
-          {content.map((line,index)=><Text key={index}>{line}</Text>)}
-        </Section>):null}
+      {sections.map(({period,heading,content,count},index)=>
+        <Section key={period} header={<Text>{heading}{count?' · '+count+' 间':''}</Text>}
+          footer={index===sections.length-1?<Text>{ROOM_SCOPE}</Text>:undefined}>
+          {content.map((line,index)=><Text key={index}
+            foregroundStyle={line==='无整段空闲教室'?'secondary':undefined}>{line}</Text>)}
+        </Section>)}
     </List>
   </NavigationStack>;
 }

@@ -110,6 +110,26 @@ test('foreground sync tracks stages without presenting a transition and never de
  progress('读取学期 161');await progress.finish('success');
  a.deepEqual(calls,[]);a.equal(e.state.lastStage,'读取学期 161');
 });
+test('foreground progress batches disk checkpoints while retaining every diagnostic stage',async()=>{
+ const e=await env({hostEnv:'index'});
+ let now=Date.now(),writes=0;
+ e.sandbox.Date=class extends Date{static now(){return now;}};
+ const write=e.store.write.bind(e.store);
+ e.store.write=state=>{writes++;return write(state);};
+ const progress=e.m.createProgress(e.state,e.store,true);
+ for(let i=1;i<=12;i++){
+   progress('阶段 '+i);
+   now+=300;
+ }
+ a.equal(writes,1);
+ a.equal(e.state.lastStage,'阶段 12');
+ a.equal(e.state.stageHistory.length,12);
+ now+=1500;
+ progress('开始核验');
+ a.equal(writes,2);
+ a.equal(e.store.read().lastStage,'开始核验');
+ a.equal(e.store.read().stageHistory.length,13);
+});
 
 test('background sync never opens any interactive progress UI',async()=>{
  const e=await env({hostEnv:'intent'}),calls=[];
@@ -955,14 +975,16 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
 test('daily refresh updates managed courses, deduplicates matching imports and preserves unrelated events',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
  e.baseline([old,cancelled]);e.add(old);e.add(cancelled);
- for(const i of [0,2])e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});
+ e.add(old,{id:'old-ics',notes:'legacy calendar import'});
+ e.add({...old,location:'教B202'},{id:'old-ics',notes:'legacy calendar import',offset:14*86400000});
  const personal=e.add(old,{cal:e.other,notes:'personal'});
  const unrelated=e.add(lesson({title:'个人安排'}),{notes:'personal'});
+ const conflictingRoom=e.add(lesson({location:'校外培训室'}),{notes:'personal'});
  const invitation=e.add(old,{notes:'invitation'});invitation.attendees=[{name:'guest'}];
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
  const managed=()=>e.db.filter(x=>x.calendar.identifier===e.calendar.identifier&&x.notes.startsWith('同步：'));
  const own=managed();a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));
- for(const event of [personal,unrelated,invitation])a.ok(e.db.some(x=>x.identifier===event.identifier));
+ for(const event of [personal,unrelated,invitation,conflictingRoom])a.ok(e.db.some(x=>x.identifier===event.identifier));
  a.equal(e.db.some(x=>x.identifier==='old-ics'),false);
  a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);
  a.ok(e.keys.has('CourseSync.Local.v1.person'));a.ok(e.keys.has('CourseSync.Local.v1.student'));
@@ -1026,6 +1048,46 @@ test('failed school authentication never saves a password',async()=>{
   await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
   a.equal(visits,1);
   a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
+});
+test('a different verified school account cannot replace the bound login or session',async()=>{
+  const e=await env({hostEnv:'index'});
+  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
+  const cas='https://authserver.nufe.edu.cn/authserver/login';
+  const key='CourseSync.Local.v1.cookies';
+  const cookie=value=>({name:'SESSION',value,domain:'jwxt.nufe.edu.cn',hostOnly:true,path:'/',expires:0});
+  const original=JSON.stringify([cookie('bound-session')]);
+  e.keys.set(key,original);
+  e.keys.set('CourseSync.Local.v1.person','100');
+  e.m.saveCredentials('bound-student','bound-password');
+  let submitted=false,person=200,sessionCookie='other-session';
+  const page=()=> 'var personId='+person+';var currentSemester={"id":161};';
+  e.m.HTTP.prototype.authJSON=async()=>({isNeed:false});
+  e.m.HTTP.prototype.get=async function(url,opt={}){
+    if(url===table)return {url,text:submitted?page():'login required'};
+    if(url.endsWith('/student/sso/login'))return {
+      url:cas,text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
+    };
+    if(url===cas&&opt.body){
+      submitted=true;
+      this.jar.set(cookie(sessionCookie));
+      this.persist(this.jar.cookies);
+      return {url:table,text:page()};
+    }
+    return {url,text:''};
+  };
+  const manualAuth={kind:'credentials',username:'other-student',password:'other-password'};
+  await a.rejects(()=>e.m.synchronize(e.state,e.store,e.calendar,true,null,manualAuth),code('ACCOUNT_CHANGED'));
+  a.equal(submitted,true);
+  a.equal(e.keys.get(key),original);
+  a.equal(e.m.readSavedCredentials().username,'bound-student');
+  a.equal(e.m.readSavedCredentials().password,'bound-password');
+  a.deepEqual(e.requests,[]);
+  person=100;sessionCookie='renewed-session';submitted=false;
+  e.m.HTTP.prototype.json=async()=>raw([activity({weekIndexes:[1]})]);
+  await e.m.synchronize(e.state,e.store,e.calendar,true,null,
+    {kind:'credentials',username:'bound-student',password:'renewed-password'});
+  a.equal(e.m.readSavedCredentials().password,'renewed-password');
+  a.ok(JSON.parse(e.keys.get(key)).some(item=>item.value==='renewed-session'));
 });
 test('one SMS challenge requires only its code and selects the schools trusted-device option',async()=>{
  const e=await env();let prompts=0,codePosts=0,submitBodies=[];

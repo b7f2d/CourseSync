@@ -30,7 +30,7 @@ test('native iOS credential sheet has both autofill fields and no WebView',()=>{
 
 test('first setup opens the native credential form directly',()=>{
  assert.match(native,/export async function presentNativeRefreshForm/);
- assert.match(native,/presentLoginView\('登录账号','开始刷新',allowReuse\)/);
+ assert.match(native,/presentLoginView\(title,'开始刷新',allowReuse\)/);
  assert.doesNotMatch(native,/选择学校|选择其他学校|下一步：账号密码/);
  assert.match(native,/title="使用现有登录信息继续"/);
  assert.match(native,/textContentType="username"/);
@@ -38,7 +38,7 @@ test('first setup opens the native credential form directly',()=>{
  assert.doesNotMatch(native,/教务接口|默认接口|统一认证根地址|SSO 登录入口|课表页面|学期详情|课表数据|WebView|fetch\(|Clipboard|console\.log/);
  assert.match(index,/id:'nufe',name:'南京财经大学'/);
  assert.match(index,/function prepareManualRefresh\(state,forceCredentials=false\)/);
- assert.match(index,/presentNativeRefreshForm\(NUFE_SCHOOL\.id,allowReuse\)/);
+ assert.match(index,/presentNativeRefreshForm\(NUFE_SCHOOL\.id,allowReuse,NUFE_SCHOOL\.name\+'登录'\)/);
  assert.match(index,/response\.schoolId===NUFE_SCHOOL\.id/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
  assert.match(index,/if\(signOutRequested\)\{await signOut\(state,store\);return;\}\s*if\(interactive\)/);
@@ -206,7 +206,7 @@ test('calendar naming uses native prompt, validates entries and retains retry va
 
 test('missing or broken actionSheet falls back to native confirmation choices',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_SCOPE'))
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_CAMPUS'))
    .replace('(globalThis as any).Dialog','globalThis.Dialog');
  for (const broken of [false,true]) {
    const seen=[], answers=[false,false,true];
@@ -224,7 +224,7 @@ test('missing or broken actionSheet falls back to native confirmation choices',a
 
 test('native fallback shows all choices and supports cancel without executing an action',async()=>{
  const vm=require('node:vm');
- const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_SCOPE'))
+ const source=native.slice(native.indexOf('function systemDialog()'),native.indexOf('\nconst ROOM_CAMPUS'))
    .replace('(globalThis as any).Dialog','globalThis.Dialog');
  const calls=[],values=['0','2',null];
  const choose=vm.runInNewContext(source+'\nchooseNativeAction',{Dialog:{prompt:async o=>{calls.push(o);return values.shift();}}});
@@ -248,7 +248,7 @@ test('page-backed credential and verification forms use plain native controls wi
 
 test('classroom result formatting separates recommendation and lesson periods without hiding rooms',()=>{
  const vm=require('node:vm');
- const code=native.slice(native.indexOf('const ROOM_SCOPE'),native.indexOf('async function readRoomResults('))
+ const code=native.slice(native.indexOf('const ROOM_CAMPUS'),native.indexOf('async function readRoomResults('))
    .replace("rooms: ReadyRooms['rooms']", 'rooms');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
@@ -256,7 +256,8 @@ test('classroom result formatting separates recommendation and lesson periods wi
   {period:'上午',room:'博远楼101、博观楼202'},
   {period:'下午',room:'无完整时段空闲教室（见建议）'},
   {period:'晚上',room:'博文楼303'}]);
- assert.match(message,/仙林校区 · 博远楼、博观楼、博文楼/);
+ assert.match(message,/2026-11-23 · 仙林校区/);
+ assert.match(message,/查询范围为博远楼、博观楼、博文楼/);
  assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n整段空闲教室\n上午 · 第1—5节/);
  assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
  assert.match(message,/博观楼202\n下午 · 第6—10节/);
