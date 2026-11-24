@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Dialog, Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, ProgressView, useState, useEffect,
+  TextField, SecureField, Button, Image, ProgressView, VStack, useState, useEffect,
 } from 'scripting';
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
@@ -200,7 +200,7 @@ async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProg
   catch(_){return {kind:'error',message:'查询失败，请稍后重试。'} as const;}
 }
 
-function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>boolean}) {
+function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpen:()=>boolean;onClose:()=>void}) {
   const dismiss=Navigation.useDismiss();
   const [result,setResult]=useState<FreeRoomResult|null>(null);
   const [attempt,setAttempt]=useState(0);
@@ -215,19 +215,27 @@ function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>bo
   },[attempt]);
   const ready=result?.kind==='ready'?result:null;
   const sections=ready?roomResultSections(ready.rooms):[];
+  const close=()=>{onClose();dismiss();};
+  const toolbar={cancellationAction:<Button title={result?'返回':'取消'} action={close}/>};
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
-    <List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
-      toolbar={{cancellationAction:<Button title={result?'返回':'取消'} action={()=>dismiss()}/>}}>
-      {!result?<Section>
-        <ProgressView progressViewStyle="circular"
-          label={<Text>{connected?'正在查询今天的空闲教室…':'正在连接教务系统…'}</Text>}/>
-      </Section>:null}
-      {result?.kind==='error'?<Section>
-        <Text>{result.message}</Text>
-        <Button title="重试" action={()=>{
-          setResult(null);setConnected(false);setAttempt(attempt+1);
-        }}/>
-      </Section>:null}
+    {!result?<VStack navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline"
+      toolbar={toolbar} spacing={12} padding={24}
+      frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
+      <ProgressView progressViewStyle="circular" scaleEffect={1.4}/>
+      <Text font="body" fontWeight="medium" multilineTextAlignment="center">
+        {connected?'正在查询空闲教室':'正在连接教务系统'}
+      </Text>
+    </VStack>:result.kind==='error'?<VStack navigationTitle="空闲教室"
+      navigationBarTitleDisplayMode="inline" toolbar={toolbar} spacing={14} padding={24}
+      frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
+      <Image systemName="exclamationmark.circle" font="largeTitle" foregroundStyle="secondary"/>
+      <Text font="headline">查询未完成</Text>
+      <Text font="subheadline" foregroundStyle="secondary" multilineTextAlignment="center">{result.message}</Text>
+      <Button title="重试" action={()=>{
+        setResult(null);setConnected(false);setAttempt(attempt+1);
+      }}/>
+    </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
+      toolbar={toolbar}>
       {ready?<Section>
         <Text font="subheadline" foregroundStyle="secondary">{ready.date} · {ROOM_CAMPUS}</Text>
       </Section>:null}
@@ -248,19 +256,31 @@ function RoomResultsView({loadRooms,isOpen}: {loadRooms:RoomLoader;isOpen:()=>bo
             foregroundStyle={/^无(?:整段|完整时段)空闲教室/.test(line)?'secondary':undefined}>{line}</Text>)
         ])}
       </Section>:null}
-    </List>
+    </List>}
   </NavigationStack>;
 }
 
 async function presentRoomQuery(loadRooms:RoomLoader) {
   if(typeof Navigation?.present==='function'&&typeof useEffect==='function'&&ProgressView){
-    let open=true;
+    let open=true,started=false;
+    const trackedLoad:RoomLoader=(isActive,updateProgress)=>{
+      started=true;
+      return loadRooms(isActive,updateProgress);
+    };
     try{
-      await Navigation.present({element:<RoomResultsView loadRooms={loadRooms} isOpen={()=>open}/>,
+      await Navigation.present({element:<RoomResultsView loadRooms={trackedLoad} isOpen={()=>open} onClose={()=>{open=false;}}/>,
         modalPresentationStyle:'pageSheet'});
       return;
-    }catch(_){ /* fall back to a native dialog */ }
-    finally{open=false;}
+    }catch(_){
+      // A failed presentation may already have started a request. Do not
+      // automatically issue a second request while the original is unwinding.
+      open=false;
+      if(started){
+        await chooseNativeAction({title:'空闲教室',message:'查询界面未能正常显示，请返回后重新查询。',
+          actions:[{label:'返回'}],cancelButton:false});
+        return;
+      }
+    }finally{open=false;}
   }
   while(true){
     const result=await readRoomResults(loadRooms);
