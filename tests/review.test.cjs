@@ -1997,6 +1997,7 @@ test('credential status surfaces dual-key migration instead of hiding it',async(
 
 test('v3 notes refresh after another successful unchanged-term sync',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec);
+ e.m.setCalendarLocation(ev,rec); // fixture represents an already migrated, unchanged event
  e.baseline([rec]);const term=e.state.semesters['161'];
  term.index={[rec.id]:ev.identifier};
  term.notesFormat=3;
