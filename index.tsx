@@ -3095,6 +3095,416 @@ function offlineAgenda(state,now=Date.now()) {
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3,'德经楼':4,'德济楼':5,'德正楼':6,'德业楼':7});
 const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
+function isFirstFloorDeRoom(room){
+  const building=room.building?.nameZh||room.buildingName;
+  const code=String(room.nameZh||room.name||'').normalize('NFKC').replace(/（[^）]*）|\([^)]*\)/g,'').replace(/\s+/g,'').replace(building,'');
+  const prefix=BUILDING_PRIORITY[building]-3;
+  return new RegExp('^Z'+prefix+'[A-Z]*[-–—]?1\\d{2}
+
+function compareFreeRooms(a,b){
+  const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
+  const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName]||99;
+  if(bpA!==bpB)return bpA-bpB;
+  const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
+  if(flA!==flB)return flA-flB;
+  return String(a.nameZh||a.name||'').localeCompare(String(b.nameZh||b.name||''));
+}
+
+async function queryFreeRoomsForPeriod(http,date,units){
+  const payload={
+    campusId:2,buildingId:'',roomId:'',roomType:undefined,seatsForLessonGte:'',
+    dateTimeSegmentCmd:{startDateTime:date,endDateTime:date,units:units}
+  };
+  const data=await http.json(NUFE_FREE_ROOM_ENDPOINT,{body:JSON.stringify(payload),json:true});
+  assert(Array.isArray(data?.roomList),'SCHEMA');
+  return data.roomList.filter(r=>{
+    const bName=r.building?.nameZh||r.buildingName;
+    return Boolean(BUILDING_PRIORITY[bName])&&(!FIRST_FLOOR_BUILDINGS.has(bName)||isFirstFloorDeRoom(r))&&!String(r.nameZh||r.name||'').includes('微');
+  }).sort(compareFreeRooms);
+}
+
+const MORNING_UNITS=['1','2','3','4','5'];
+const AFTERNOON_UNITS=['6','7','8','9','10'];
+const EVENING_UNITS=['11','12','13'];
+
+function resolveDayRooms(mornRooms=[],aftRooms=[],eveRooms=[]){
+  const name=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
+  const same=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):name(a)===name(b));
+  const unique=rooms=>rooms.filter((room,index)=>name(room)&&rooms.findIndex(other=>same(other,room))===index);
+  const morning=unique(mornRooms),afternoon=unique(aftRooms),evening=unique(eveRooms);
+  const contains=(list,room)=>list.some(other=>same(other,room));
+  const allDay=morning.filter(room=>contains(afternoon,room)&&contains(evening,room));
+  const day=morning.filter(room=>contains(afternoon,room));
+  const afternoonEvening=afternoon.filter(room=>contains(evening,room));
+  let recommended='暂无可连续使用的教室';
+  if(allDay.length)recommended='全天：'+allDay.map(name).join('、');
+  else if(day.length)recommended='白天：'+day.map(name).join('、')+(evening.length?'\n晚上：'+name(evening[0]):'');
+  else if(afternoonEvening.length)recommended=(morning.length?'上午：'+name(morning[0])+'\n':'')+'下午至晚上：'+afternoonEvening.map(name).join('、');
+  else if(morning.length&&afternoon.length&&evening.length)recommended='上午：'+name(morning[0])+'\n下午：'+name(afternoon[0])+'\n晚上：'+name(evening[0]);
+  const show=rooms=>rooms.length?rooms.map(name).join('、'):'无空闲教室';
+  return [
+    {period:'建议教室',room:recommended},
+    {period:'上午',room:show(morning)},
+    {period:'下午',room:show(afternoon)},
+    {period:'晚上',room:show(evening)}
+  ];
+}
+
+// Query individual lessons only for a period with no completely free room.
+// Never infer availability for a lesson whose request failed.
+async function queryDayRooms(http,date,onProgress=()=>{}){
+  const periods=[MORNING_UNITS,AFTERNOON_UNITS,EVENING_UNITS];
+  const names=['上午','下午','晚上'];
+  const fullResults=await Promise.allSettled(periods.map(units=>queryFreeRoomsForPeriod(http,date,units)));
+  const fullFailure=fullResults.find(result=>result.status==='rejected');
+  if(fullFailure)throw fullFailure.reason;
+  const full=fullResults.map(result=>result.value);
+  const rows=resolveDayRooms(...full);
+  const missing=periods.map((units,index)=>full[index].length?null:{index,units}).filter(Boolean);
+  if(missing.length){
+    const tasks=missing.flatMap(({index,units})=>units.map(unit=>({index,unit})));
+    const slots=periods.map(()=>new Map());
+    let next=0;
+    const worker=async()=>{
+      while(next<tasks.length){
+        const task=tasks[next++];
+        slots[task.index].set(task.unit,await queryFreeRoomsForPeriod(http,date,[task.unit]));
+      }
+    };
+    const workers=await Promise.allSettled(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
+    const workerFailure=workers.find(result=>result.status==='rejected');
+    if(workerFailure)throw workerFailure.reason;
+    const roomName=r=>String(r?.nameZh||r?.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
+    const roomKey=r=>r.id!=null?'id:'+String(r.id):'name:'+roomName(r);
+    const bestFor=(units,perSlot)=>{
+      const rooms=new Map();
+      for(const unit of units)for(const room of perSlot.get(unit)||[]){
+        const key=roomKey(room);if(!roomName(room))continue;
+        if(!rooms.has(key))rooms.set(key,{room,free:new Set()});
+        rooms.get(key).free.add(Number(unit));
+      }
+      const candidates=[];
+      for(const {room,free} of rooms.values()){
+        let start=null,previous=null;
+        for(const unit of [...units.map(Number),Infinity]){
+          if(free.has(unit)){
+            if(start===null)start=unit;
+            previous=unit;
+          }else if(start!==null){
+            candidates.push({room,start,end:previous,length:previous-start+1});
+            start=null;previous=null;
+          }
+        }
+      }
+      candidates.sort((a,b)=>b.length-a.length||compareFreeRooms(a.room,b.room)||a.start-b.start);
+      return candidates[0]||null;
+    };
+    const suggestions=periods.map((units,index)=>{
+      if(full[index].length)return names[index]+'：'+roomName(full[index][0])+'（第'+units[0]+'—'+units.at(-1)+'节）';
+      const best=bestFor(units,slots[index]);
+      if(!best)return names[index]+'：无可用教室';
+      const span=best.start===best.end?String(best.start):best.start+'—'+best.end;
+      return names[index]+'：'+roomName(best.room)+'（第'+span+'节）';
+    });
+    const sameRoom=(a,b)=>a&&b&&(a.id!=null&&b.id!=null?String(a.id)===String(b.id):roomName(a)===roomName(b));
+    const shared=(first,second)=>first.filter((room,index)=>roomName(room)&&first.findIndex(other=>sameRoom(other,room))===index&&second.some(other=>sameRoom(other,room)));
+    const daytime=shared(full[0],full[1]);
+    const afternoonEvening=shared(full[1],full[2]);
+    if(daytime.length)suggestions.splice(0,2,'白天：'+daytime.map(roomName).join('、')+'（第1—10节）');
+    else if(afternoonEvening.length)suggestions.splice(1,2,'下午至晚上：'+afternoonEvening.map(roomName).join('、')+'（第6—13节）');
+    rows[0].room=suggestions.join('\n');
+    for(const {index} of missing)rows[index+1].room='无完整时段空闲教室（见建议）';
+  }
+  onProgress(1);
+  return rows;
+}
+
+async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now=Date.now()){
+  await coursePage(http,true,onStage);
+  onStage();
+  onProgress(0.25);
+  const date=localDateTime(new Date(now).toISOString()).slice(0,10);
+  return {date,rooms:await queryDayRooms(http,date,onProgress)};
+}
+
+async function loadFreeRoomPage(isActive,onProgress){
+  const checkActive=()=>{if(!isActive())fail('CANCELLED');};
+  try{
+    checkActive();
+    const cookieKey=schoolKey(KEY);
+    const http=new HTTP(readCookieJar(),cookies=>{
+      checkActive();
+      Keychain.set(cookieKey,JSON.stringify(cookies));
+    },checkActive);
+    const results=await queryFreeRoomsToday(http,checkActive,onProgress);
+    return {kind:'ready',...results};
+  }catch(error){
+    const code=diagnosticCode(error);
+    if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
+    if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
+      return {kind:'error',message:'登录失败，请重新登录后再查询。'};
+    return {kind:'error',message:'查询失败，请稍后重试。'};
+  }
+}
+
+async function run() {
+  // Reopen the dashboard after the cancelled attempt has released its lock.
+  while(await runAttempt()){}
+  Script.complete();
+}
+async function runAttempt() {
+  __COURSESYNC_BOOT_PHASE='初始化本地存储';
+  migrateLegacyKeychainData();
+  const configuredSchool=loadSelectedSchool();
+  const savedReselectSchool=Keychain.contains(SCHOOL_RESELECT_KEY)?Keychain.get(SCHOOL_RESELECT_KEY):null;
+  const reselectSchool=savedReselectSchool||(configuredSchool!==NUFE_SCHOOL.id?configuredSchool:null);
+  activateSelectedSchool(reselectSchool||configuredSchool);
+  let store=new Store();
+  const parameter=String(args.shortcutParameter||'').trim();
+  const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
+  let state,locked=false,progress=null,signOutRequested=false,manualAuth=null,calendarCancelled=false;
+  try {
+    if(!interactive&&reselectSchool){
+      if(config.runsWithSiri)Script.setShortcutOutput('请打开 CourseSync 登录南京财经大学账号。');
+      return;
+    }
+    if(interactive){
+      state=store.read();
+      // A failure before synchronization must not reuse an earlier run's stage.
+      state.lastStage='准备主菜单';
+    }
+    // Skip the dashboard after logout so reopening the script starts with credentials.
+    if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
+      // Heal the widget cache from existing verified state even without network.
+      publishWidgetCache(state);
+      const canSignOut=canOfferSignOut(state);
+      const canFreeRooms=activeSchoolId==='nufe'&&!state.signedOut&&canSignOut;
+      const schoolName=schoolById(activeSchoolId)?.name||'高校';
+      const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'
+        ?'退出登录未完成，请重试。'
+        :state.signedOut
+          ?'点击「立即刷新」重新登录。'
+          :state.calendarBindingPending
+            ?'点击「立即刷新」绑定日历。'
+          :state.lastCheck
+            ?'上次刷新：'+localDateTime(state.lastCheck)
+            :'点击「立即刷新」开始同步。';
+
+      let selected=-1;
+      const nav=hostAPI('Navigation');
+      if(typeof nav?.present==='function'){
+        state.lastStage='打开主菜单';
+        selected=await presentNativeDashboard({
+          state,schoolName,canSignOut,statusMessage,
+          loadFreeRooms:canFreeRooms?loadFreeRoomPage:undefined
+        });
+      }
+      if(selected==='dismiss')return;
+      if(selected<0){
+        const menu=new Alert();menu.title='CourseSync';
+        menu.message=state.calendarBindingPending?'未绑定日历\n'+statusMessage:statusMessage;
+        menu.addAction('立即刷新');
+        if(canSignOut)menu.addDestructiveAction('退出登录');
+        menu.addCancelAction('关闭');
+        selected=await menu.presentSheet();
+      }
+      if(selected===null||selected===undefined||selected<0)return;
+      signOutRequested=canSignOut&&selected===1;
+    }
+    if(state)state.lastStage='准备获取同步锁';
+    const slot=await acquireSyncSlot(store,interactive);
+    if(slot!=='acquired'){
+      // Never record a second task as a failed synchronization.
+      // The original task remains responsible for the calendar and state.
+      if(interactive&&slot==='still-running')
+        await notice('前次任务未退出','已经请求取消，但前次任务仍持有有效锁，尚不能安全接管。请稍后重试；不会强制删除日历或并发同步。');
+      if(!interactive&&config.runsWithSiri)
+        Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
+      return;
+    }
+    locked=true;state=store.read();
+    state.lastStage='准备同步';
+    if(!state.owner){state.owner=uuid();store.write(state);}
+    // Attempt one safe password migration per invocation. Failures never block
+    // existing local credentials or trigger repeated school login attempts.
+    if(!state.signedOut&&Keychain.contains(schoolKey(CRED_KEY))){
+      try{
+        const migrated=migrateSavedCredentials();
+        state.credentialCloudStatus=migrated==='conflict'?'conflict':'synced';
+      }catch(_){state.credentialCloudStatus='unavailable';}
+      store.write(state);
+    }
+    await clearLegacyReminders(state,store);
+    if(signOutRequested){await signOut(state,store);return;}
+    if(interactive){
+      if(reselectSchool&&!savedReselectSchool)Keychain.set(SCHOOL_RESELECT_KEY,reselectSchool);
+      const hasCredentials=!state.signedOut&&(hasSavedCredentials()||Keychain.contains(schoolKey(KEY)));
+      const selectedSchool=state.signedOut||reselectSchool?null:loadSelectedSchool(null,true);
+      if(!selectedSchool){
+        const previousSchool=activeSchoolId;
+        manualAuth=await prepareManualRefresh(state,!!reselectSchool);
+        if(!manualAuth)return;
+        if(previousSchool!==activeSchoolId){
+          store.release();locked=false;state=null;
+          store=new Store();
+          if(await acquireSyncSlot(store,interactive)!=='acquired')fail('BUSY');
+          locked=true;state=store.read();
+          if(!state.owner){state.owner=uuid();store.write(state);}
+        }
+      }else if(!hasCredentials){
+        try{
+          const credentials=await credentialForm({title:schoolById(selectedSchool).name+'登录'});
+          manualAuth={kind:'credentials',...credentials};
+        }catch(error){
+          if(error.code==='CANCELLED')return;
+          throw error;
+        }
+      }
+    }
+    if(!interactive){
+      // Manual logout is intentional and must never cause background login or warning spam.
+      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
+      if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
+      if(state.calendarBindingPending){if(config.runsWithSiri)Script.setShortcutOutput('请在 Scripting 中绑定日历。');return;}
+      if(!state.calendarId)fail('CALENDAR_MISSING');
+    }
+    state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
+    __COURSESYNC_BOOT_PHASE='同步运行';
+    progress=createProgress(state,store,interactive);
+    let calendar;
+    if(!interactive){
+      progress('检查目标日历');
+      calendar=await pickCalendar(state,store);
+    }
+    await progress.start();
+    progress('连接教务系统');
+    const http=await synchronize(state,store,interactive?async()=>{
+      if(reselectSchool&&Keychain.get(SCHOOL_RESELECT_KEY)===reselectSchool)Keychain.remove(SCHOOL_RESELECT_KEY);
+      progress('检查目标日历');
+      try{
+        calendar=await pickCalendar(state,store,progress.pause);
+      }catch(error){
+        calendarCancelled=error?.code==='CANCELLED';
+        throw error;
+      }
+      progress.resume();
+      return calendar;
+    }:calendar,interactive,progress,manualAuth);
+    try{
+      await syncExams(http,state,store,calendar,progress,Date.now(),http.before,true);
+      state.lastExamError=null;
+    }catch(error){
+      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
+      state.lastExamError=diagnosticCode(error);
+    }
+    // The last progress stage must identify failures after the exam step too.
+    state.lastStage='更新小组件数据';
+    const examError=state.lastExamError;
+    publishWidgetCache(state);
+    // WidgetKit prefers the lightweight Storage mirror and may also use the
+    // original App Group snapshot if its path is exposed in this context. Reload requests
+    // are best effort and must never turn a successful sync into a failure.
+    try{
+      const widgets=hostAPI('Widget');
+      const reload=typeof widgets?.reloadUserWidgets==='function'?widgets.reloadUserWidgets:widgets?.reloadAll;
+      if(typeof reload==='function')Promise.resolve(reload.call(widgets)).catch(()=>{});
+    }catch(_){}
+    state.lastStage='保存同步结果';
+    state.runStatus=state.termErrors?.length||examError?'partial':'success';
+    state.runCompletedAt=new Date().toISOString();
+    if(state.runStatus==='success')state.resultNoticeError=null;
+    store.write(state);
+    progress(state.runStatus==='success'?'完成本次同步':'本次同步部分完成');
+    if(progress){try{await progress.finish(state.runStatus);}
+      catch(_){console.error('[CourseSync] completion progress cleanup failed');}}
+    state.lastStage='显示同步结果';
+    if(state.termErrors?.length){
+      if(interactive){
+        const details=state.termErrors.map(({sid,code})=>{
+          const name=state.availableSemesters.find(term=>String(term.id)===sid)?.name||sid;
+          return name+'\n'+reasonFor(code);
+        });
+        await notice('部分学期未同步',details.join('\n\n'));
+      }
+    }
+    if(examError&&interactive)await notice('考试日程未完成','课表已更新。考试日程可能尚未更新完成。\n错误代码：'+examError+'\n'+reasonFor(examError));
+    if(!interactive&&state.runStatus==='partial')await reportRefreshFailure('PARTIAL_SYNC',state,store);
+    if(config.runsWithSiri)Script.setShortcutOutput(state.runStatus==='partial'?'部分完成：'+partialSyncDetails(state):'刷新成功：CourseSync已更新并核验。');
+  }catch(e){
+    const code=diagnosticCode(e);
+    if(code==='SYNC_SUPERSEDED'){
+      // The newer invocation will acquire the lock only after release().
+      // In-progress transactions are already journaled for safe recovery.
+      if(config.runsWithSiri)Script.setShortcutOutput('本次同步已按请求停止，后续任务可以继续。');
+      return;
+    }
+    if(code==='CANCELLED'){
+      if(state&&locked){
+        state.runStatus='cancelled';
+        state.runCompletedAt=new Date().toISOString();
+        if(calendarCancelled){
+          state.calendarBindingPending=true;
+          state.lastError=null;
+          state.authPaused=false;
+          state.authExpiryNotifiedAt=null;
+        }
+        store.write(state);
+      }
+      return interactive&&calendarCancelled;
+    }
+    if(state&&locked){
+      const at=new Date().toISOString();state.runStatus='failed';state.runCompletedAt=at;
+      if(!['BUSY','LOCK_LOST'].includes(code)){
+        state.failures=(state.failures||0)+1;
+        if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','AUTO_LOGIN_REJECTED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE','ACCOUNT_CHANGED','WEBVIEW_TIMEOUT','LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED'].includes(code))state.authPaused=true;
+      }
+      state.lastError=code;state.lastAttempt=at;state.lastFailure={at,code,stage:state.lastStage||'尚无阶段记录'};
+      state.audit=[...(state.audit||[]),{at,status:'failed',code}].slice(-50);
+      try{store.write(state);}catch(_){}
+    }
+    if(!interactive){
+      try{await reportBackgroundFailure(code,state,store);}
+      catch(_){console.error('[CourseSync] background failure notification failed');}
+    }
+    if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[CourseSync] '+code+' · '+(state&&state.lastStage||'未知阶段'));
+    if(interactive){
+      if(progress){try{await progress.finish();}
+        catch(_){console.error('[CourseSync] failure progress cleanup failed');}}
+      try{await showFailureRecovery(e,state,store);}
+      catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
+    }
+    else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
+  }finally{
+    // Each release is independent: failures after a successful calendar write
+    // must never prevent the required IntentValue exit.
+    try{if(manualAuth?.password)manualAuth.password='';}
+    catch(_){console.error('[CourseSync] credential cleanup failed');}
+    try{if(progress)await progress.finish();}
+    catch(_){console.error('[CourseSync] progress cleanup failed');}
+    try{if(locked)store.release();}
+    catch(_){console.error('[CourseSync] sync lock release failed');}
+  }
+}
+// Node tests import the identical implementation; Scripting uses the async entry.
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+else await run();
+
+// SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
+
+  }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
+}
+export function launchCourseSync() {
+  const launch = __NUFE_START();
+  globalThis.__COURSESYNC_LAUNCH__ = launch;
+  return launch;
+}
+
+const __bootScript = Scripting.Script ?? globalThis.Script;
+if (!globalThis.__COURSESYNC_TEST__ && __bootScript?.env !== 'intent') {
+  launchCourseSync();
+}
+,'i').test(code);
+}
 
 function compareFreeRooms(a,b){
   const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
