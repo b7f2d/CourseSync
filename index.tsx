@@ -3093,7 +3093,7 @@ function offlineAgenda(state,now=Date.now()) {
     (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程和考试，请刷新后查看。')+'\n\n显示最近20节课程和考试。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
-const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3,'德经楼':4,'德济楼':5,'德正楼':6,'德业楼':7});
+const BUILDING_PRIORITY=Object.freeze({'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5,'博观楼':6,'博文楼':7});
 const ROOM_CODE_PREFIX=Object.freeze({'博远楼':'JC','博观楼':'JB','博文楼':'JA','德经楼':'Z1-','德济楼':'Z2-','德正楼':'Z3-','德业楼':'Z4-'});
 const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
 function isEligibleFreeRoom(room){
