@@ -598,7 +598,7 @@ test('unattended identical sync is idempotent',async()=>{const e=await env();e.a
 test('write interruption after save resumes without duplicate',async()=>{const e=await env();const adapter=new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),t=tx([],[lesson()]);let calls=0;await a.rejects(()=>e.m.applyTransaction(t,adapter,()=>{if(++calls===2)throw Error('interrupted')}));a.equal(e.db.length,1);await e.m.applyTransaction(t,adapter);a.equal(e.db.length,1);});
 test('exact managed duplicates are automatically reduced to one',async()=>{const e=await env();e.add(lesson());e.add(lesson());await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,1);});
 test('cancellation deletes only authorized logical ID',async()=>{const e=await env();e.add(lesson());e.add(lesson(),{cal:e.other});await e.m.applyTransaction(tx([lesson()],[]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,1);a.equal(e.db[0].calendar.identifier,e.other.identifier);});
-test('room change updates one event rather than appending',async()=>{const e=await env();e.add(lesson());await e.m.applyTransaction(tx([lesson()],[lesson({location:'教B'})]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,1);a.equal(e.db[0].location,e.m.calendarLocationText({location:'教B'}));});
+test('room change updates one event rather than appending',async()=>{const e=await env();e.add(lesson());await e.m.applyTransaction(tx([lesson()],[lesson({location:'教B'})]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,1);a.equal(e.db[0].location,'教B');});
 test('silent save no-op fails post-write verification',async()=>{const e=await env();e.setDropSave(true);await a.rejects(()=>e.m.applyTransaction(tx([],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store)),code('CALENDAR_VERIFY'));});
 test('silent deletion no-op fails post-write verification',async()=>{const e=await env();e.add(lesson());e.setNoRemove(true);await a.rejects(()=>e.m.applyTransaction(tx([lesson()],[]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store)),code('CALENDAR_VERIFY'));});
 test('calendar write error retains transaction for recovery',async()=>{const e=await env();e.state.tx=tx([],[lesson()]);e.setSaveFailure(true);await a.rejects(()=>e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{}));a.ok(e.state.tx);a.ok(e.files.has(e.store.path(e.state.tx.backupName)));});
@@ -904,7 +904,7 @@ test('daily refresh updates managed courses, deduplicates matching imports and p
  const invitation=e.add(old,{notes:'invitation'});invitation.attendees=[{name:'guest'}];
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
  const managed=()=>e.db.filter(x=>x.calendar.identifier===e.calendar.identifier&&x.notes.startsWith('同步：'));
- const own=managed();a.equal(own.length,2);a.ok(own.every(x=>x.location===e.m.calendarLocationText({location:'教B202'})));
+ const own=managed();a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));
  for(const event of [personal,unrelated,invitation,conflictingRoom])a.ok(e.db.some(x=>x.identifier===event.identifier));
  a.equal(e.db.some(x=>x.identifier==='old-ics'),false);
  a.equal(e.notices.length,0);a.equal(e.store.read().runStatus,'success');a.equal(e.store.read().tx,null);
@@ -1082,7 +1082,7 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  const initialIds=ids();
  a.equal(upcoming.calendar.identifier,e.calendar.identifier);
  a.equal(finished.calendar.identifier,e.calendar.identifier);
- a.equal(upcoming.location,e.m.calendarLocationText({location:'教学楼 101'}));
+ a.equal(upcoming.location,'教学楼 101');
  a.equal(upcoming.startDate.toISOString(),day+'T00:00:00.000Z');
  a.equal(finished.startDate.toISOString(),'2020-01-01T00:00:00.000Z');
  a.match(finished.notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
@@ -1957,7 +1957,7 @@ test('automatic refresh removes a legacy teacher suffix from an indexed course i
  a.equal(e.db[0].identifier,ev.identifier);
  a.equal(e.db[0].title,'中国税制（双语）');
  a.match(e.db[0].notes,/^同步：[^\n]+$/);
- a.equal(e.m.calendarRoomLabel(e.db[0].location),rec.location);
+ a.equal(e.db[0].location,ev.location);
  a.equal(+e.db[0].startDate,+ev.startDate);
  a.equal(e.store.read().semesters['161'].events[0].teachers[0],'高玉胭');
 });
@@ -1997,7 +1997,6 @@ test('credential status surfaces dual-key migration instead of hiding it',async(
 
 test('v3 notes refresh after another successful unchanged-term sync',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec);
- e.m.setCalendarLocation(ev,rec); // fixture represents an already migrated, unchanged event
  e.baseline([rec]);const term=e.state.semesters['161'];
  term.index={[rec.id]:ev.identifier};
  term.notesFormat=3;
@@ -2630,61 +2629,38 @@ test('concurrent HTTP requests recheck shared request spacing after waking',()=>
  a.match(http,/while\(wait>0\)[\s\S]*wait=1050-\(Date\.now\(\)-this\.last\);\s*\}\s*this\.last=Date\.now\(\)/);
 });
 
-test('NUFE calendar locations preserve the room label and use only verified building points',async()=>{
- const {m}=await env();
- const gate='南京财经大学仙林校区南门';
- const rec={location:'德业楼Z4-110'};
- const ev={location:rec.location+'\n'+gate,structuredLocation:{title:rec.location,geoLocation:{latitude:32.10659,longitude:118.92093}}};
- a.equal(m.calendarLocationMatches(ev,rec),false);
- m.setCalendarLocation(ev,rec);
- a.equal(ev.location,rec.location);
- a.equal(ev.structuredLocation.title,rec.location);
- a.equal(ev.structuredLocation.geoLocation.latitude,32.11099);
- a.equal(ev.structuredLocation.geoLocation.longitude,118.9211);
- a.equal(m.calendarLocationMatches(ev,rec),true);
- for(const [location,id,lat,lon] of [['德经楼Z1-116','Z1',32.10908,118.9214],['Z2-108','Z2',32.10977,118.92155],['德正楼','Z3',32.11043,118.92145]]){
-   a.equal(m.nufeBuildingFor({location}).id,id);
-   a.deepEqual(Array.from(m.nufeEventPoint({location})),[lat,lon]);
- }
- for(const location of ['博文楼JA101','博观楼JB407微','博远楼JC204','其他场地','']){
-   a.equal(m.nufeEventPoint({location}),null);
-   m.setCalendarLocation(ev,{location});
-   a.equal(ev.location,location);
-   a.equal(ev.structuredLocation,null);
- }
- a.equal(m.nufeEventPoint({location:'Z1-101',campus:'福建路'}),null);
-});
-test('MapKit teaching hall lookup rejects ambiguous, off-campus and school-only hits and caches accepted results',async()=>{
- const e=await env();
- const b=e.m.nufeBuildingFor({location:'博观楼JB407微'});
- const hit={name:'博观楼',formattedAddress:'南京财经大学仙林校区 文苑路3号',coordinate:{latitude:32.1082,longitude:118.9192}};
- a.equal(e.m.selectTeachingPoint(b,[{...hit,name:'南京财经大学'}]),null);
- a.equal(e.m.selectTeachingPoint(b,[{...hit,coordinate:{latitude:31,longitude:119}}]),null);
- a.equal(e.m.selectTeachingPoint(b,[hit,{...hit,coordinate:{latitude:32.109,longitude:118.919}}]),null);
- a.deepEqual(Array.from(e.m.selectTeachingPoint(b,[hit])),[32.1082,118.9192]);
- const calls=[];
- e.sandbox.__sdk.MapSearch={locate:async opts=>{calls.push(opts.query);return opts.query.endsWith('博观楼')?[hit]:[];}};
- await e.m.resolveNufeTeachingPoints(e.state,e.store,true);
- a.equal(calls.length,3);
- a.deepEqual(Array.from(e.m.nufeEventPoint({location:'JB407微'})),[32.1082,118.9192]);
- a.deepEqual(Array.from(e.state.nufeBuildingPoints.JB),[32.1082,118.9192]);
- a.equal(e.m.nufeEventPoint({location:'JA101'}),null);
- calls.length=0;
- await e.m.resolveNufeTeachingPoints(e.state,e.store,false);
- a.equal(calls.length,0);
-});
-test('existing managed course receives the verified building point without replacing the event',async()=>{
- const e=await env();
- const rec=lesson({location:'德业楼Z4-110',campus:'xianlin'});
- const old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
- old.structuredLocation={title:rec.location,geoLocation:{latitude:30,longitude:120}};
+test('rollback restores plain room text from a former two-line location without changing event ID',async()=>{
+ const e=await env(),rec=lesson({location:'德业楼 Z4-110'});
+ const old=e.add(rec);
+ old.location=rec.location+'\n南京财经大学仙林校区南门';
  const id=old.identifier;
- e.baseline([rec]);e.state.semesters['161'].index={[rec.id]:id};
- e.state.semesters['161'].notesFormat=3;
- await e.m.polishTermNotes(e.calendar,e.state,e.store,161,()=>{});
+ await e.m.applyTransaction(tx([rec],[rec]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,id);
- a.equal(e.db[0].location,e.m.calendarLocationText(rec));
- a.equal(e.db[0].structuredLocation.geoLocation.latitude,32.11099);
- a.equal(e.m.calendarLocationMatches(e.db[0],rec),true);
+ a.equal(e.db[0].location,rec.location);
+ a.equal(e.db[0].structuredLocation,undefined);
+});
+test('rollback clears a previously assigned pin on an otherwise unchanged course',async()=>{
+ const e=await env(),rec=lesson({location:'德业楼 Z4-110'});
+ const old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
+ old.structuredLocation={title:rec.location,radius:0,geoLocation:{latitude:32.1082,longitude:118.9192}};
+ e.baseline([rec]);
+ e.state.semesters['161'].index={[rec.id]:old.identifier};
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,161,()=>{});
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,old.identifier);
+ a.equal(e.db[0].location,rec.location);
+ a.equal(e.db[0].structuredLocation,null);
+});
+
+test('rollback removes structured exam locations while preserving classroom text and event identity',async()=>{
+ const e=await env(),now=Date.parse('2026-11-16T00:00:00Z');
+ const html='<table id="exams"><tr data-finished="false"><td><div class="time">2026-12-18 09:00~11:00</div><div><span>仙林校区</span><span>博观楼JB407</span></div></td><td><div>高等数学</div><div>期末</div></td><td>未结束</td></tr></table>';
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',text:html})};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ const old=e.db[0],id=old.identifier;
+ old.structuredLocation={title:old.location,radius:0,geoLocation:{latitude:32.1082,longitude:118.9192}};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},now);
+ a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
+ a.equal(e.db[0].location,'博观楼JB407');a.equal(e.db[0].structuredLocation,null);
 });
