@@ -2308,13 +2308,21 @@ test('offline agenda excludes ended lessons and deduplicates cached semesters',a
  a.equal(result.split('课程甲').length-1,1);a.ok(!result.includes('旧课'));a.match(result,/08:00–10:00/);
 });
 
-test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest floor',async()=>{
+test('NUFE free classroom query prioritizes original buildings and includes only first floors of De buildings',async()=>{
  const e=await env();
  const http={
    json:async(url,opt)=>{
      a.match(url,/ws\/room-borrow\/free-list/);
      return {
        roomList:[
+         {id:21,nameZh:'德经楼Z1-101',building:{nameZh:'德经楼'},floor:1},
+         {id:22,nameZh:'德经楼Z1-201',building:{nameZh:'德经楼'},floor:2},
+         {id:23,nameZh:'德济楼Z2-101',building:{nameZh:'德济楼'},floor:'1'},
+         {id:24,nameZh:'德济楼Z2-201',building:{nameZh:'德济楼'},floor:2},
+         {id:25,nameZh:'德正楼Z3-101',building:{nameZh:'德正楼'},floor:1},
+         {id:26,nameZh:'德正楼Z3-201',building:{nameZh:'德正楼'},floor:2},
+         {id:27,nameZh:'德业楼Z4-101',building:{nameZh:'德业楼'},floor:1},
+         {id:28,nameZh:'德业楼Z4-201',building:{nameZh:'德业楼'},floor:2},
          {id:1,nameZh:'德经楼Z1-205',building:{nameZh:'德经楼'},floor:2},
          {id:2,nameZh:'博文楼JA414',building:{nameZh:'博文楼'},floor:4},
          {id:3,nameZh:'博文楼JA105',building:{nameZh:'博文楼'},floor:1},
@@ -2333,7 +2341,11 @@ test('NUFE free classroom query prioritizes Boyuan > Boguan > Bowen and lowest f
    '博观楼JB101',
    '博观楼JB202',
    '博文楼JA105',
-   '博文楼JA414'
+   '博文楼JA414',
+   '德经楼Z1-101',
+   '德济楼Z2-101',
+   '德正楼Z3-101',
+   '德业楼Z4-101'
  ]);
 });
 
