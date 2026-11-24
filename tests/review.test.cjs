@@ -2630,24 +2630,26 @@ test('concurrent HTTP requests recheck shared request spacing after waking',()=>
  a.match(http,/while\(wait>0\)[\s\S]*wait=1050-\(Date\.now\(\)-this\.last\);\s*\}\s*this\.last=Date\.now\(\)/);
 });
 
-test('NUFE structured location keeps classroom labels, corrects stale pins, and respects campus',async()=>{
+test('all nonempty NUFE calendar locations use the same south gate and keep original labels',async()=>{
  const {m}=await env();
  const rec={location:'德业楼Z4-110',campus:'xianlin'};
- const ev={location:rec.location,structuredLocation:{title:rec.location,geoLocation:{latitude:30,longitude:120}}};
+ const ev={location:rec.location,structuredLocation:{title:rec.location,geoLocation:{latitude:32.11099,longitude:118.9211}}};
  a.equal(m.calendarLocationMatches(ev,rec),false);
  m.setCalendarLocation(ev,rec);
  a.equal(ev.location,rec.location);
  a.equal(ev.structuredLocation.title,rec.location);
- a.equal(ev.structuredLocation.geoLocation.latitude,32.11099);
- a.equal(ev.structuredLocation.geoLocation.longitude,118.9211);
+ a.equal(ev.structuredLocation.geoLocation.latitude,32.10659);
+ a.equal(ev.structuredLocation.geoLocation.longitude,118.92093);
  a.equal(m.calendarLocationMatches(ev,rec),true);
- a.deepEqual(Array.from(m.nufeEventPoint({location:'Z2-108'})),[32.10977,118.92155]);
- a.deepEqual(Array.from(m.nufeEventPoint({location:'博观楼JB407微'})),[32.10659,118.92093]);
- a.deepEqual(Array.from(m.nufeEventPoint({location:'A101',campus:'fujian'})),[32.0885,118.75659]);
- a.equal(m.nufeEventPoint({location:'其他场地'}),null);
- a.equal(m.nufeEventPoint({location:'德业楼Z4-110',campus:'qiaotou'}),null);
+ for(const record of [{location:'Z2-108'},{location:'博观楼JB407微'},{location:'A101',campus:'fujian'},{location:'其他场地'},{location:'德业楼Z4-110',campus:'qiaotou'}]){
+   a.deepEqual(Array.from(m.nufeEventPoint(record)),[32.10659,118.92093]);
+   m.setCalendarLocation(ev,record);
+   a.equal(ev.location,record.location);
+   a.equal(ev.structuredLocation.title,record.location);
+   a.equal(m.calendarLocationMatches(ev,record),true);
+ }
  a.equal(m.nufeEventPoint({location:'',campus:'xianlin'}),null);
- m.setCalendarLocation(ev,{location:'其他场地'});
+ m.setCalendarLocation(ev,{location:''});
  a.equal(ev.structuredLocation,null);
 });
 test('existing managed course receives corrected coordinates without replacing the event',async()=>{
