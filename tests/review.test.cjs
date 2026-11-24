@@ -2511,7 +2511,7 @@ test('classroom fallback finds the longest consecutive free lessons without rela
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
  for(const segment of ['1,2,3,4,5','6,7,8,9,10','11,12,13','6','7','8','9','10'])a.ok(called.includes(segment));
- a.equal(rows[2].period,'下午');a.match(rows[2].room,/无完整时段/);
+ a.equal(rows[2].period,'下午');a.equal(rows[2].room,'无空闲教室');
  a.match(rows[0].room,/上午：博远楼JC101（第1—5节）/);
  a.match(rows[0].room,/下午：博远楼JC101（第6—9节）/);
  a.match(rows[0].room,/晚上：博远楼JC101（第11—13节）/);
@@ -2528,7 +2528,7 @@ test('classroom fallback preserves daytime continuity and adds the available eve
  const rows=await m.queryDayRooms(http,'2026-11-23');
  a.equal(rows[0].room,'白天：博远楼JC101（第1—10节）\n晚上：博观楼JB201（第11—12节）');
  a.equal(rows[1].room,'博远楼JC101');a.equal(rows[2].room,'博远楼JC101');
- a.match(rows[3].room,/无完整时段/);
+ a.equal(rows[3].room,'无空闲教室');
 });
 
 test('classroom fallback preserves afternoon-evening continuity and adds morning lessons',async()=>{
@@ -2541,7 +2541,7 @@ test('classroom fallback preserves afternoon-evening continuity and adds morning
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
  a.equal(rows[0].room,'上午：博观楼JB201（第2—4节）\n下午至晚上：博远楼JC101（第6—13节）');
- a.match(rows[1].room,/无完整时段/);a.equal(rows[2].room,'博远楼JC101');a.equal(rows[3].room,'博远楼JC101');
+ a.equal(rows[1].room,'无空闲教室');a.equal(rows[2].room,'博远楼JC101');a.equal(rows[3].room,'博远楼JC101');
 });
 
 test('no free lessons is reported honestly and a failed individual query is not treated as empty',async()=>{
@@ -2554,7 +2554,12 @@ test('no free lessons is reported honestly and a failed individual query is not 
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
  for(const label of ['上午','下午','晚上'])a.match(rows[0].room,new RegExp(label+'：无可用教室'));
- mode='fail';await a.rejects(()=>m.queryDayRooms(http,'2026-11-23'),/network/);
+ mode='fail';const partial=await m.queryDayRooms(http,'2026-11-23');
+ a.match(partial[0].room,/分节建议未能获取/);
+ for(const row of partial.slice(1))a.equal(row.room,'无空闲教室');
+ await a.rejects(()=>m.queryDayRooms({json:async()=>{throw Error('network');}},'2026-11-23'),/network/);
+ const filtered=await m.queryDayRooms({json:async()=>({roomList:[{nameZh:'德业楼Z4S118',building:{nameZh:'德业楼'},floor:1}]})},'2026-11-23');
+ for(const row of filtered.slice(1))a.equal(row.room,'无空闲教室');
 });
 
 test('fallback prefers longest contiguous block then building priority and ignores gaps',async()=>{
