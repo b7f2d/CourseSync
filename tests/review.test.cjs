@@ -10,7 +10,7 @@ const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);')
  .replace('export function launchCourseSync()', 'function launchCourseSync()');
 async function env({mode="sync",hostEnv="intent"}={}){
- const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
+ const files=new Map(),keys=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/CourseSync/CourseSync-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
  const calendar={identifier:'calendar-dedicated',title:'课表',allowsContentModifications:true,isSubscribed:false},other={...calendar,identifier:'calendar-personal',title:'个人'};
  class Event{
@@ -25,7 +25,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const sandbox={module:{exports:{}},process:{versions:{node:'24'}},console:{log(){},error(){}},FileManager:{local:()=>fm},UUID:{string:()=>crypto.randomUUID()},Timer:{schedule:(ms,repeat,cb)=>{const t=setTimeout(cb,ms);return {invalidate:()=>clearTimeout(t)}}},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k),set:(k,v)=>keys.set(k,v),remove:k=>keys.delete(k)},CalendarEvent:Event,Notification,Calendar:{forEvents:async()=>[calendar,other]},config:{runsInApp:false,runsWithSiri:true},args:{shortcutParameter:'sync'},Script:{name:()=> 'CourseSync',complete(){},setShortcutOutput(s){sandbox.output=s;}},Alert:class{constructor(){throw Error('UNEXPECTED FRONTEND PROMPT')}},Request:class{constructor(){throw Error('NETWORK NOT MOCKED')}}};
  Event.getAll=Event.between;
  const nativeScript={name:'CourseSync',env:hostEnv,queryParameters:mode==='menu'?{mode:'menu'}:{},exit:r=>{sandbox.output=r;},createRunURLScheme:(name,q)=>'scripting://run/'+encodeURIComponent(name)+'?mode='+q.mode};
- const sdk={Storage:{set:(key,value)=>{widgetRecords.set(key,JSON.parse(JSON.stringify(value)));return true;},get:key=>widgetRecords.get(key)||null},Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>[calendar,other],presentChooser:async()=>[calendar]},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
+ const sdk={Script:nativeScript,Intent:{text:x=>x},FileManager:{appGroupDocumentsDirectory:'/local',existsSync:fm.fileExists,createDirectorySync:fm.createDirectory,readDirectorySync:fm.listContents,readAsStringSync:fm.readString,writeAsStringSync:fm.writeString,removeSync:fm.remove,renameSync:fm.move},Keychain:{contains:k=>keys.has(k),get:k=>keys.get(k)??null,set:(k,v)=>{keys.set(k,v);return true;},remove:k=>{keys.delete(k);return true;}},UUID:sandbox.UUID,CalendarEvent:Event,Calendar:{forEvents:async()=>[calendar,other],presentChooser:async()=>[calendar]},Notification:{schedule:async o=>{notices.push(o);return 'notice-'+notices.length;},getAllPendingsOfCurrentScript:async()=>[],removePendings:async()=>{}},Dialog:{actionSheet:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;for(const x of opts.actions)alert.addAction(x.label);if(opts.cancelButton)alert.addCancelAction('取消');return alert.presentSheet();},alert:async opts=>{const alert=new sandbox.Alert();alert.title=opts.title;alert.message=opts.message;alert.addAction('好');return alert.presentAlert();},confirm:async()=>{throw Error('UNEXPECTED CONFIRM');},prompt:async()=>{throw Error('UNEXPECTED PROMPT');}},fetch:async(...args)=>{if(sandbox.fetchImpl)return sandbox.fetchImpl(...args);throw Error('NETWORK NOT MOCKED');}};
  sandbox.__sdk=sdk;sandbox.__COURSESYNC_TEST__=true;sandbox.setTimeout=setTimeout;sandbox.clearTimeout=clearTimeout;sandbox.setInterval=setInterval;sandbox.clearInterval=clearInterval;sandbox.crypto=crypto.webcrypto;
  await vm.runInNewContext('(async()=>{'+source+'\nawait launchCourseSync(); globalThis.__testLaunch=launchCourseSync;})()',sandbox);
  sandbox.config=sandbox.module.exports.ScriptingAdapter.config;sandbox.args=sandbox.module.exports.ScriptingAdapter.args;
@@ -33,7 +33,7 @@ async function env({mode="sync",hostEnv="intent"}={}){
  const state={version:1,owner:'installation-owner',calendarId:calendar.identifier,anchors:{'161':'2026-09-07'},semesters:{},minutes:0,failures:0};
  function add(rec,{owner=state.owner,cal=calendar,id,notes,offset=0,allDay=false}={}){const e=new Event();e.identifier=id||'event-'+(++serial);e.calendar=cal;e.title=rec.title;e.location=rec.location;e.notes=notes===undefined?m.notes(rec,owner,'2026-11-01T00:00:00Z'):notes;e.startDate=new Date(Date.parse(rec.start)+offset);e.endDate=new Date(Date.parse(rec.end)+offset);e.isAllDay=allDay;db.push(e);return e;}
  function baseline(events){state.semesters['161']={events,index:{},anchor:'2026-09-07',name:'2026-2027-1',lastSuccess:'2026-11-01T00:00:00Z'};return state;}
- return {m,sandbox,store,state,db,files,keys,widgetRecords,notices,requests,calendar,other,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
+ return {m,sandbox,store,state,db,files,keys,notices,requests,calendar,other,add,baseline,Event,setSaveFailure:v=>failSave=v,setDropSave:v=>dropSave=v,setRemoveFailure:v=>failRemove=v,setNoRemove:v=>noRemove=v,setSeries:v=>seriesMode=v};
 }
 const lesson=(extra={})=>({id:'lesson-1',sid:'161',title:'高等数学',week:1,su:1,eu:2,start:'2026-09-07T00:00:00.000Z',end:'2026-09-07T01:40:00.000Z',location:'仙林 教A101',teachers:['张老师'],...extra});
 const raw=(activities)=>({studentTableVms:[{code:'sample-local',activities}]});
@@ -148,70 +148,6 @@ test('progress has no HTML and no artificial percentages',()=>{
  const body=source.slice(start,end);
  a.doesNotMatch(body,/createNativeProgressView|Navigation\.present/);
  a.doesNotMatch(body,/WebView|loadHTML|evaluateJavaScript|window\.updateStage|percentage/);
-});
-test('widget mirror publishes only non-sensitive verified course fields',async()=>{
- const e=await env();
- const now=Date.parse('2026-11-03T06:10:00.000Z');
- e.baseline([lesson({start:'2026-11-03T05:30:00.000Z',end:'2026-11-03T06:55:00.000Z'})]);
- e.state.lastCheck='2026-11-03T06:00:00.000Z';
- e.state.personId='SENSITIVE_ID';e.state.password='SENSITIVE_PASSWORD';
- a.equal(e.m.publishWidgetCache(e.state,now),true);
- const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
- a.equal(saved.version,1);a.equal(saved.events.length,1);
- a.deepEqual(Object.keys(saved.events[0]).sort(),['end','id','location','start','teacher','title']);
- a.equal(saved.events[0].teacher,'张老师');
- a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
-});
-test('widget cache contains only current-window real lessons, never historical preview',async()=>{
-  const e=await env();
-  const now=Date.parse('2026-11-02T08:00:00Z');
-  e.baseline([lesson({id:'real',start:'2026-11-03T02:00:00Z',end:'2026-11-03T03:30:00Z'})]);
-  e.state.semesters.historical={
-    name:'2024-2025-2',lastSuccess:'2025-06-15T08:00:00Z',
-    events:[
-      lesson({id:'old1',start:'2025-04-08T05:30:00Z',end:'2025-04-08T06:55:00Z'}),
-      lesson({id:'old2',start:'2025-04-08T07:10:00Z',end:'2025-04-08T08:35:00Z'})
-    ]
-  };
-  e.state.lastCheck='2026-11-02T07:00:00Z';
-  const previous=JSON.stringify(e.state);
-  a.equal(e.m.publishWidgetCache(e.state,now),true);
-  const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
-  a.equal(saved.events.length,1);
-  a.equal(saved.events[0].id,'real');
-  a.deepEqual(Object.keys(saved).sort(),['events','lastCheck','version']);
-  a.equal(JSON.stringify(e.state),previous);
-  a.doesNotMatch(JSON.stringify(saved),/old1|old2|password|cookie|calendarId/);
-});
-test('widget mirror blocks unverified transactions, filters old semesters, and keeps calendar sync independent',async()=>{
- const e=await env();
- const now=Date.parse('2026-11-03T06:10:00.000Z');
- e.baseline([lesson({start:'2026-11-03T05:30:00Z',end:'2026-11-03T06:55:00Z'}),
-   lesson({id:'old',start:'2025-03-03T05:30:00Z',end:'2025-03-03T06:55:00Z'})]);
- e.state.lastCheck='2026-11-03T06:00:00.000Z';
- a.equal(e.m.publishWidgetCache(e.state,now),true);
- a.equal(e.widgetRecords.get('CourseSync.Widget.Courses.v1').events.length,1);
- e.state.tx=tx([],[]);
- a.equal(e.m.publishWidgetCache(e.state,now),false);
- a.equal(e.widgetRecords.get('CourseSync.Widget.Courses.v1').events.length,1);
-});
-test('a busy timetable keeps complete weeks in the widget cache',async()=>{
- const e=await env(),now=Date.parse('2026-11-03T00:00:00Z');
- const week1=Array.from({length:220},(_,i)=>lesson({id:'near-'+i,start:'2026-11-03T05:30:00Z',end:'2026-11-03T06:55:00Z'}));
- const week2=Array.from({length:190},(_,i)=>lesson({id:'later-'+i,start:'2026-11-11T05:30:00Z',end:'2026-11-11T06:55:00Z'}));
- e.baseline([...week2,...week1]);e.state.lastCheck=new Date(now).toISOString();
- a.equal(e.m.publishWidgetCache(e.state,now),true);
- const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
- a.equal(saved.coverageEnd,'2026-11-08T16:00:00.000Z');
- a.equal(saved.events.length,220);
- a.ok(saved.events.every(event=>event.id.startsWith('near-')));
-});
-test('widget mirroring fails safely if native Storage is absent or rejects writes',async()=>{
- const e=await env();
- e.baseline([lesson()]);e.state.lastCheck='2026-11-02T00:00:00Z';
- e.sandbox.__sdk.Storage.set=()=>{throw Error('private system detail');};
- a.equal(e.m.publishWidgetCache(e.state),false);
- a.equal(e.widgetRecords.size,0);
 });
 test('single file loads all APIs without Scriptable or network',async()=>{const e=await env();a.equal(typeof e.m.run,'function');});
 test('school URL whitelist blocks credentials and other hosts',async()=>{const {m}=await env();for(const u of ['http://jwxt.nufe.edu.cn/','https://evil.test/','https://jwxt.nufe.edu.cn@evil.test/','https://jwxt.nufe.edu.cn:443/'])a.throws(()=>m.safeURL(u),code('DOMAIN_BLOCKED'));});
@@ -869,21 +805,6 @@ test('an unresponsive school request and notification still release the lock and
  e.store.release();
 });
 
-test('a rejected widget reload does not interrupt a successful background sync',async()=>{
- const e=await env();
- let receiver;
- const widget={async reloadUserWidgets(){
-   receiver=this;
-   throw Error('WidgetKit unavailable');
- }};
- e.sandbox.__sdk.Widget=widget;
- loggedIn(e,raw([activity({weekIndexes:[1]})]));
- await executeDaily(e);
- a.equal(receiver,widget);
- a.equal(e.store.read().runStatus,'success');
- a.match(e.sandbox.output,/刷新成功/);
- a.equal(e.notices.length,0);
-});
 
 test('failure notification errors preserve the original network failure',async()=>{
  const e=await env();e.m.HTTP.prototype.get=async()=>{const error=Error('offline');error.code='NETWORK';throw error;};
@@ -1428,12 +1349,6 @@ test('intent startup errors use notification and text output without a dialog',a
 });
 test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
-test('widget has a single dedicated Scripting entry with no legacy ListWidget renderer',()=>{
- const native=fs.readFileSync(__dirname+'/../index.tsx','utf8');
- const widget=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.doesNotMatch(native,/ListWidget|runsInWidget|widgetParameter|async function widget\(/);
- a.match(widget,/Widget\.present\(/);
-});
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
 test('exam location omits campus while preserving room or building',async()=>{
@@ -2568,19 +2483,6 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.equal(e.db.length,dbCountBefore);
 });
 
-test('widgetCacheProjection includes synced exams alongside courses',async()=>{
- const e=await env();
- const now=Date.UTC(2026,10,20,0,0);
- const courseStart='2026-11-21T00:00:00.000Z',courseEnd='2026-11-21T01:40:00.000Z';
- const examStart='2026-11-25T01:00:00.000Z',examEnd='2026-11-25T03:00:00.000Z';
- e.state.lastCheck='2026-11-20T00:00:00.000Z';
- e.state.semesters['161']={events:[lesson({start:courseStart,end:courseEnd})]};
- e.state.exams=[{id:'exam-1',title:'📝 线性代数',start:examStart,end:examEnd,location:'博远楼 202'}];
- const payload=e.m.widgetCacheProjection(e.state,now);
- a.ok(payload);
- a.equal(payload.events.length,2);
- a.ok(payload.events.some(ev=>ev.title==='（考试）线性代数'&&ev.location==='博远楼 202'));
-});
 
 test('glass dialog preserves selected action, cancellation and input without invoking system dialog',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}), calls=[];
