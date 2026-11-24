@@ -3093,7 +3093,8 @@ function offlineAgenda(state,now=Date.now()) {
     (lines.length?lines.join('\n\n'):'本地暂无尚未结束的课程和考试，请刷新后查看。')+'\n\n显示最近20节课程和考试。';
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
-const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3});
+const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3,'德经楼':4,'德济楼':5,'德正楼':6,'德业楼':7});
+const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
 
 function compareFreeRooms(a,b){
   const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
@@ -3113,7 +3114,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
   assert(Array.isArray(data?.roomList),'SCHEMA');
   return data.roomList.filter(r=>{
     const bName=r.building?.nameZh||r.buildingName;
-    return Boolean(BUILDING_PRIORITY[bName])&&!String(r.nameZh||r.name||'').includes('微');
+    return Boolean(BUILDING_PRIORITY[bName])&&(!FIRST_FLOOR_BUILDINGS.has(bName)||Number(r.floor)===1)&&!String(r.nameZh||r.name||'').includes('微');
   }).sort(compareFreeRooms);
 }
 
