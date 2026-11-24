@@ -464,7 +464,7 @@ test('weekly columns fit complete titles, start/end times, full locations and ov
      const sample=fit(result,day);
      a.equal(sample.hidden+sample.courses.length,count);
      a.ok(sample.height<=result.contentHeight);
-     if(count===1)a.equal(sample.courses.length,1);
+     a.ok(sample.courses.length>=1,'at least the focused course must fit for typical long titles');
      if(sample.courses.length)a.equal(sample.courses[0].id,0);
      for(const card of sample.cards){
        a.equal(card.title.replace(/\n/g,''),course.title);
@@ -479,6 +479,8 @@ test('weekly columns fit complete titles, start/end times, full locations and ov
  const small=measure(course,132,6,12,10,false);
  a.equal(small.location.replace(/\n/g,''),course.location);
  a.equal(small.time,'08:20–11:25');
+ const smallExam=measure({...course,title:'（考试）管理类综合能力'},132,6,12,10,false,false);
+ a.equal(smallExam.title.replace(/\n/g,''),'（考试）管理类综合能力');
 });
 test('active and finished card text is legible in both appearances',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
