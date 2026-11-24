@@ -2323,7 +2323,9 @@ test('NUFE free classroom query prioritizes original buildings and includes only
          {id:26,nameZh:'德正楼Z3-201',building:{nameZh:'德正楼'},floor:2},
          {id:27,nameZh:'德业楼Z4-101',building:{nameZh:'德业楼'},floor:1},
          {id:28,nameZh:'德业楼Z4-201',building:{nameZh:'德业楼'},floor:2},
-         {id:1,nameZh:'德经楼Z1-205',building:{nameZh:'德经楼'},floor:2},
+         {id:1,nameZh:'德经楼Z1-205',building:{nameZh:'德经楼'},floor:1},
+         {id:90,nameZh:'德业楼Z4S318',building:{nameZh:'德业楼'},floor:1},
+         {id:91,nameZh:'德业楼Z4S118',building:{nameZh:'德业楼'},floor:3},
          {id:2,nameZh:'博文楼JA414',building:{nameZh:'博文楼'},floor:4},
          {id:3,nameZh:'博文楼JA105',building:{nameZh:'博文楼'},floor:1},
          {id:4,nameZh:'博观楼JB202',building:{nameZh:'博观楼'},floor:2},
@@ -2345,7 +2347,8 @@ test('NUFE free classroom query prioritizes original buildings and includes only
    '德经楼Z1-101',
    '德济楼Z2-101',
    '德正楼Z3-101',
-   '德业楼Z4-101'
+   '德业楼Z4-101',
+   '德业楼Z4S118'
  ]);
 });
 
