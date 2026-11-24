@@ -34,9 +34,9 @@ function wrapLocation(value,width,fontSize=8){
 }
 
 // Measure all fields instead of assigning each an arbitrary one-line limit.
-function measureCourseCard(course,width,padding,titleFont,detailFont,stackTimes){
+function measureCourseCard(course,width,padding,titleFont,detailFont,stackTimes,shortExam=true){
   const availableWidth=Math.max(1,width-2*padding-1);
-  const title=wrapLocation(course.title.replace(/^（考试）/,'考 '),availableWidth,titleFont);
+  const title=wrapLocation(shortExam?course.title.replace(/^（考试）/,'考 '):course.title,availableWidth,titleFont);
   const location=wrapLocation(course.location,availableWidth,detailFont);
   const time=stackTimes?course.startLabel+'\n'+course.endLabel:course.startLabel+'–'+course.endLabel;
   const lines=value=>value?value.split('\n').length:0;
@@ -82,14 +82,14 @@ function fitWeekDay(layout,day){
 }
 
 function DayColumn({day,layout}){
-  const {columnWidth,gap}=layout;
+  const {columnWidth,gap,headingHeight}=layout;
   const {courses,cards,hidden}=fitWeekDay(layout,day);
-  const headingStyle=modifiers().frame({width:columnWidth,height:28})
+  const headingStyle=modifiers().frame({width:columnWidth,height:headingHeight})
     .background({style:day.today?COLORS.nextBg:COLORS.canvas,shape:{type:'rect',cornerRadius:6}});
   return <VStack alignment="center" spacing={gap} frame={{width:columnWidth,alignment:'top'}}>
     <VStack spacing={1} modifiers={headingStyle}>
-      <Text font={11} fontWeight="bold" foregroundStyle={day.today?COLORS.blue:COLORS.dark}>{day.label}</Text>
-      <Text font={9} foregroundStyle={COLORS.faint}>{day.dateLabel}</Text>
+      <Text font={10} fontWeight="bold" foregroundStyle={day.today?COLORS.blue:COLORS.dark}>{day.label}</Text>
+      <Text font={8} foregroundStyle={COLORS.faint}>{day.dateLabel}</Text>
     </VStack>
     {courses.map((course,index)=><CourseCard key={course.id} course={course} layout={layout} card={cards[index]}/>)}
     {hidden>0?<Text font={9} foregroundStyle={COLORS.faint} frame={{height:12}}>+{hidden}</Text>:null}
@@ -103,8 +103,9 @@ function weeklyLayout(width,height,compact){
   const cardPadding=compact?1:2;
   const columnWidth=Math.max(1,Math.floor((width-2*inset-6*gap)/7));
   const stackTimes=columnWidth-2*cardPadding<76;
-  const contentHeight=Math.max(0,height-2*inset-28-gap);
-  return {inset,gap,cardPadding,columnWidth,contentHeight,stackTimes,compact};
+  const headingHeight=24;
+  const contentHeight=Math.max(0,height-2*inset-headingHeight-gap);
+  return {inset,gap,cardPadding,columnWidth,contentHeight,stackTimes,compact,headingHeight};
 }
 
 function WeeklyPanel({model,family}){
@@ -142,7 +143,7 @@ function SmallPanel({model}){
       const dayWidth=Math.max(1,Math.floor((cardWidth-6*gap)/7));
       const cardBudget=Math.max(0,height-2*inset-30-(remaining>0?16:0));
       const card=chosen?[13,12,11,10].map(font=>measureCourseCard(
-        chosen,cardWidth,6,font,Math.min(10,font-1),false
+        chosen,cardWidth,6,font,Math.min(10,font-1),false,false
       )).find(item=>item.height<=cardBudget):null;
       const cardStyle=modifiers().padding(6)
         .frame({width:cardWidth,alignment:'topLeading'})
