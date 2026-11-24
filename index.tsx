@@ -478,30 +478,27 @@ function detailMonday(detail) {
     d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7); return d.toISOString().slice(0,10);
   } return null;
 }
-// All NUFE calendar locations use the same Xianlin south gate (WGS84).
-// OpenStreetMap way 368882841, https://www.openstreetmap.org/copyright
-// Keep the actual classroom label and never use device GPS or per-event geocoding.
-const NUFE_SOUTH_GATE=Object.freeze([32.10659,118.92093]);
-function nufeEventPoint(record){
-  return activeSchoolId==='nufe'&&String(record?.location||'').trim()?NUFE_SOUTH_GATE:null;
+// Keep the room name on the first line and the map search address on the
+// second line. Let Apple Calendar resolve the named place; never write a
+// hard-coded geocoordinate or request the device's location.
+const NUFE_MAP_ADDRESS='南京财经大学仙林校区南门';
+function calendarRoomLabel(value){
+  const text=String(value||'').replace(/\r\n/g,'\n');
+  const suffix='\n'+NUFE_MAP_ADDRESS;
+  return text.endsWith(suffix)?text.slice(0,-suffix.length):text;
+}
+function calendarLocationText(record){
+  const room=calendarRoomLabel(record?.location);
+  return activeSchoolId==='nufe'&&room.trim()?room+'\n'+NUFE_MAP_ADDRESS:room;
 }
 function calendarLocationMatches(event,record){
-  if((event.location||'')!==(record.location||''))return false;
-  const point=nufeEventPoint(record);
-  if(!point)return true;
-  const structured=event.structuredLocation,geo=structured?.geoLocation;
-  return structured?.title===record.location&&
-    Number.isFinite(geo?.latitude)&&Number.isFinite(geo?.longitude)&&
-    Math.abs(geo.latitude-point[0])<0.00001&&Math.abs(geo.longitude-point[1])<0.00001;
+  return String(event.location||'').replace(/\r\n/g,'\n')===calendarLocationText(record);
 }
 function setCalendarLocation(event,record){
-  const previous=event.location||'';
-  const location=record.location||'';
+  const location=calendarLocationText(record);
+  // Remove the old manually supplied coordinate before writing the named address.
+  if(event.structuredLocation)event.structuredLocation=null;
   event.location=location;
-  const point=nufeEventPoint(record);
-  if(point)event.structuredLocation={title:location,
-    geoLocation:{latitude:point[0],longitude:point[1],timestamp:Date.now()},radius:0};
-  else if(previous!==location&&event.structuredLocation)event.structuredLocation=null;
 }
 
 function expand(raw, sid, anchor, teachingDates=null) {
@@ -1852,7 +1849,7 @@ function eventRecord(ev,owner,byNative=null) {
   const expected=legacyCalendarTitle({title:canonical,teachers});
   // Treat an unexpected manual title edit as a changed course, not a match.
   const title=actual===canonical||actual===expected?canonical:actual;
-  const rec={...meta,title,teachers,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
+  const rec={...meta,title,teachers,location:calendarRoomLabel(ev.location),start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
 }
 function hasSyncTimestamp(event){
@@ -1978,7 +1975,7 @@ function legacyEventKey(e){
   return legacyText(e.title)+'\u0000'+a+'\u0000'+b;
 }
 function legacyLocationCompatible(a,b){
-  const first=legacyText(a),second=legacyText(b);
+  const first=legacyText(calendarRoomLabel(a)),second=legacyText(calendarRoomLabel(b));
   return !first||!second||first===second;
 }
 function selectLegacyDuplicates(rows,owner,state){
@@ -2649,7 +2646,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{progress=()=>{},
 function matchesOldCourse(ev,rec,state,prior){
   if(!ev||isExamEvent(ev,state)||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
-  const location=legacyText(ev.location);
+  const location=legacyText(calendarRoomLabel(ev.location));
   // An unchanged slot can still have a verified former room from the journal.
   if(location!==legacyText(rec.location)&&
      !(prior?.start===rec.start&&prior.end===rec.end&&location===legacyText(prior.location)))return false;
@@ -3457,7 +3454,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={nufeEventPoint,calendarLocationMatches,setCalendarLocation,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={calendarRoomLabel,calendarLocationText,calendarLocationMatches,setCalendarLocation,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
