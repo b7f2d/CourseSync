@@ -478,42 +478,12 @@ function detailMonday(detail) {
     d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7); return d.toISOString().slice(0,10);
   } return null;
 }
-// NUFE campus/room coordinates are fixed public geographic data, not device GPS.
-// Building aliases: https://gzc.nufe.edu.cn/info/1066/1797.htm
-// WGS84 OpenStreetMap contributors: https://www.openstreetmap.org/copyright
-// Z1–Z4: ways 278003315–278003318; Xianlin campus fallback: south main
-// gate (way 368882841), Fujian Road campus: way 1416435260.
-// A/B/C locations without verified building coordinates use the campus gate,
-// not a made-up room coordinate. No per-event map search or geocoding.
-const NUFE_CAMPUS_POINTS=Object.freeze({
-  xianlin:[32.10659,118.92093],
-  fujian:[32.0885,118.75659]
-});
-const NUFE_BUILDING_POINTS=Object.freeze([
-  {pattern:/德经楼|专一|经济学科楼|(?:^|[\s（(])Z1(?:-|\s|S?\d|$)/i,point:[32.10908,118.9214]},
-  {pattern:/德济楼|专二|管理科学楼|(?:^|[\s（(])Z2(?:-|\s|S?\d|$)/i,point:[32.10977,118.92155]},
-  {pattern:/德[正政]楼|专三|法政学科楼|(?:^|[\s（(])Z3(?:-|\s|S?\d|$)/i,point:[32.11043,118.92145]},
-  {pattern:/德业楼|专四|理工学科楼|(?:^|[\s（(])Z4(?:-|\s|S?\d|$)/i,point:[32.11099,118.9211]}
-]);
-function nufeCampusHint(value){
-  const v=typeof value==='string'?value.trim():'';
-  if(!v)return '';
-  if(/^(?:南京财经大学)?仙林(?:校区)?$/.test(v))return 'xianlin';
-  if(/^(?:南京财经大学)?福建路(?:校区)?$/.test(v))return 'fujian';
-  if(/^(?:南京财经大学)?桥头(?:校区)?$/.test(v))return 'qiaotou';
-  return 'other';
-}
+// All NUFE calendar locations use the same Xianlin south gate (WGS84).
+// OpenStreetMap way 368882841, https://www.openstreetmap.org/copyright
+// Keep the actual classroom label and never use device GPS or per-event geocoding.
+const NUFE_SOUTH_GATE=Object.freeze([32.10659,118.92093]);
 function nufeEventPoint(record){
-  if(activeSchoolId!=='nufe')return null;
-  const room=String(record?.location||'').trim();
-  if(!room)return null;
-  const campus=record.campus||'';
-  if(campus&&campus!=='xianlin')return NUFE_CAMPUS_POINTS[campus]||null;
-  const building=NUFE_BUILDING_POINTS.find(row=>row.pattern.test(room));
-  if(building)return building.point;
-  if(campus==='xianlin'||/博[文观远园]楼|教[ABCＡＢＣ](?:\s|[-\d]|$)|(?:^|[\s（(])J[ABC](?:-|\s|S?\d|$)/i.test(room))
-    return NUFE_CAMPUS_POINTS.xianlin;
-  return null;
+  return activeSchoolId==='nufe'&&String(record?.location||'').trim()?NUFE_SOUTH_GATE:null;
 }
 function calendarLocationMatches(event,record){
   if((event.location||'')!==(record.location||''))return false;
@@ -555,7 +525,7 @@ function expand(raw, sid, anchor, teachingDates=null) {
       const date=teachingDates?teachingDates.get(week*10+wd):
         new Date(Date.parse(anchor+'T00:00:00Z')+((week-1)*7+wd-1)*DAY).toISOString().slice(0,10);
       assert(date,'ANCHOR');
-      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.room||a.building].filter(Boolean).join(' '),...(nufeCampusHint(a.campus)?{campus:nufeCampusHint(a.campus)}:{}),teachers});
+      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.room||a.building].filter(Boolean).join(' '),teachers});
     }
   }
   events.sort((a,b)=>a.start.localeCompare(b.start)||a.title.localeCompare(b.title)||a.location.localeCompare(b.location));
@@ -907,9 +877,8 @@ function examRows(html) {
     const title=/<div\b[^>]*>([\s\S]*?)<\/div\s*>/i.exec(cells[1]);
     assert(time&&title&&text(title[1]),'EXAM_SCHEMA');
     const place=text(cells[0].replace(time[0],''));
-    const campus=nufeCampusHint(/^(?:(?:仙林|福建路|桥头)(?:校区)?|\S+校区)(?=\s|$)/.exec(place)?.[0]);
     rows.push({title:text(title[1]),time:text(time[2]),kind:text(cells[1].replace(title[0],'')),
-      location:examLocation(place),...(campus?{campus}:{})});
+      location:examLocation(place)});
   }
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
@@ -1094,7 +1063,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
       localDateTime(new Date(stop).toISOString())===day+' '+to&&stop>start&&stop<=end,'EXAM_SCHEMA');
     const key=prefix+JSON.stringify([row.title,row.kind,start]);
     assert(!target.has(key),'EXAM_SCHEMA');
-    target.set(key,{title:examTitle(row.title),start,stop,location:row.location,campus:row.campus});
+    target.set(key,{title:examTitle(row.title),start,stop,location:row.location});
   }
   progress('更新考试日程');
   assert(calendar.identifier===state.calendarId&&liveCalendar(calendar),'CALENDAR_READONLY');
@@ -3488,7 +3457,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={nufeEventPoint,calendarLocationMatches,setCalendarLocation,nufeCampusHint,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={nufeEventPoint,calendarLocationMatches,setCalendarLocation,offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,resolveDayRooms,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.
