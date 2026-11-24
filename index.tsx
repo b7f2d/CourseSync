@@ -3094,12 +3094,21 @@ function offlineAgenda(state,now=Date.now()) {
 }
 const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/free-list';
 const BUILDING_PRIORITY=Object.freeze({'博远楼':1,'博观楼':2,'博文楼':3,'德经楼':4,'德济楼':5,'德正楼':6,'德业楼':7});
+const ROOM_CODE_PREFIX=Object.freeze({'博远楼':'JC','博观楼':'JB','博文楼':'JA','德经楼':'Z1-','德济楼':'Z2-','德正楼':'Z3-','德业楼':'Z4-'});
 const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
-function isFirstFloorDeRoom(room){
+function isEligibleFreeRoom(room){
   const building=room.building?.nameZh||room.buildingName;
-  const code=String(room.nameZh||room.name||'').normalize('NFKC').replace(/（[^）]*）|\([^)]*\)/g,'').replace(/\s+/g,'').replace(building,'');
-  const prefix=BUILDING_PRIORITY[building]-3;
-  return new RegExp('^Z'+prefix+'-1\\d{2}
+  const prefix=ROOM_CODE_PREFIX[building];
+  if(typeof prefix!=='string')return false;
+  const firstOnly=FIRST_FLOOR_BUILDINGS.has(building);
+  if(firstOnly&&Number(room.floor)!==1)return false;
+  const name=String(room.nameZh||room.name||'').normalize('NFKC').trim();
+  if(name.includes('微'))return false;
+  const code=(name.startsWith(building)?name.slice(building.length):name).trim();
+  if(!code.startsWith(prefix))return false;
+  const number=code.slice(prefix.length);
+  return (firstOnly?/^1\d{2}$/:/^[1-9]\d{2}$/).test(number);
+}
 
 function compareFreeRooms(a,b){
   const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
@@ -3117,10 +3126,7 @@ async function queryFreeRoomsForPeriod(http,date,units){
   };
   const data=await http.json(NUFE_FREE_ROOM_ENDPOINT,{body:JSON.stringify(payload),json:true});
   assert(Array.isArray(data?.roomList),'SCHEMA');
-  return data.roomList.filter(r=>{
-    const bName=r.building?.nameZh||r.buildingName;
-    return Boolean(BUILDING_PRIORITY[bName])&&(!FIRST_FLOOR_BUILDINGS.has(bName)||isFirstFloorDeRoom(r))&&!String(r.nameZh||r.name||'').includes('微');
-  }).sort(compareFreeRooms);
+  return data.roomList.filter(isEligibleFreeRoom).sort(compareFreeRooms);
 }
 
 const MORNING_UNITS=['1','2','3','4','5'];
