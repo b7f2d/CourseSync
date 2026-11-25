@@ -84,7 +84,7 @@ test('foreground sync has no transition view and classrooms present a results li
  assert.match(dashboard,/await presentRoomQuery\(loadFreeRooms\)/);
  const results=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
  assert.match(results,/<List navigationTitle="空闲教室"/);
- assert.match(results,/<Section key=\{period\}/);
+ assert.match(results,/<VStack key=\{period\} alignment="leading" spacing=\{5\}/);
  assert.match(results,/title=\{result\?'返回':'取消'\}/);
  assert.match(results,/<ProgressView/);
  assert.match(results,/title="重试"/);
@@ -160,7 +160,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
    .replace('let result: FreeRoomResult','let result');
- const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'第一节',room:'博远楼 101'}]}];
+ const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101']}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
    createNativeProgressView:()=>{throw Error('transition must not open');}};
  const show=vm.runInNewContext(helpers+dashboard+'\npresentNativeDashboard',sandbox);
@@ -171,7 +171,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
  assert.equal(calls[2].title,'空闲教室');
- assert.match(calls[2].message,/第一节\n博远楼 101/);
+ assert.match(calls[2].message,/上午 · 第1—5节\n博远楼JC101/);
 
  const presented=[];
  sandbox.useEffect=()=>{};
@@ -182,10 +182,10 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    presented.push({element,result:await element.loadRooms(element.isOpen,()=>{})});
  };
  selections.push(1,0);
- rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',room:'博远楼JC101'}]});
+ rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101']}]});
  assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()}),0);
  assert.equal(presented.length,1);
- assert.equal(presented[0].result.rooms[0].room,'博远楼JC101');
+ assert.deepEqual(presented[0].result.rooms[0].roomNames,['博远楼JC101']);
  assert.equal(presented[0].element.isOpen(),false);
 });
 
@@ -253,32 +253,25 @@ test('classroom result formatting separates recommendation and lesson periods wi
    .replace("rooms: ReadyRooms['rooms']", 'rooms');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
-  {period:'建议教室',room:'白天：博远楼101、博观楼202'},
-  {period:'上午',room:'博远楼101、博观楼202'},
-  {period:'下午',room:'无完整时段空闲教室（见建议）'},
-  {period:'晚上',room:'博文楼303'}]);
- assert.match(message,/2026-11-23 · 仙林校区/);
- assert.match(message,/查询范围为博远楼、博观楼、博文楼/);
- assert.match(message,/建议教室\n白天：\n博远楼101\n博观楼202\n\n整段空闲教室\n上午 · 第1—5节/);
- assert.match(message,/下午 · 第6—10节\n无完整时段空闲教室（见建议）/);
- assert.match(message,/博观楼202\n下午 · 第6—10节/);
- assert.match(message,/无完整时段空闲教室（见建议）\n晚上 · 第11—13节/);
- assert.match(message,/晚上 · 第11—13节\n博文楼303/);
- const partial=format('2026-11-23',[{period:'建议教室',room:'白天：博远楼101、博观楼202（第1—10节）'}]);
- assert.match(partial,/白天：\n博远楼101（第1—10节）\n博观楼202（第1—10节）/);
+  {period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101','博观楼JB202']},
+  {period:'下午',lessons:'第6—10节',roomNames:[]},
+  {period:'晚上',lessons:'第11—13节',roomNames:['博文楼JA303']}]);
+ assert.equal(message,[
+  '2026-11-23 · 仙林校区','',
+  '上午 · 第1—5节','博远楼JC101、博观楼JB202',
+  '下午 · 第6—10节','无整段空闲教室',
+  '晚上 · 第11—13节','博文楼JA303','',
+  '普通教室范围：博远楼、博观楼、博文楼','仅一楼：德经楼、德济楼、德正楼、德业楼'
+ ].join('\n'));
 });
 
-test('native room results group the three periods together and do not count empty placeholders',()=>{
- const vm=require('node:vm');
- const code=native.slice(native.indexOf('const ROOM_CAMPUS'),native.indexOf('async function readRoomResults('))
-   .replace("rooms: ReadyRooms['rooms']", 'rooms');
- const sections=vm.runInNewContext(code+'\nroomResultSections')([
-   {period:'上午',room:'博远楼JC101、博观楼JB201'},
-   {period:'下午',room:'无空闲教室'},
-   {period:'晚上',room:'无完整时段空闲教室（见建议）'}]);
- assert.deepEqual(Array.from(sections,row=>row.count),[2,0,0]);
- assert.match(native,/<Section\s+header=\{<Text>整段空闲教室<\/Text>\}/);
- assert.match(native,/font="subheadline" fontWeight="semibold" foregroundStyle="secondary"/);
+test('native classroom results use one section with left-aligned, wrapping period rows',()=>{
+ const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
+ assert.equal([...view.matchAll(/<Section\b/g)].length,1);
+ assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\} footer=\{<Text>\{ROOM_SCOPE\}<\/Text>\}/);
+ assert.match(view,/result.rooms.map\(\(\{period,lessons,roomNames\}\)/);
+ assert.match(view,/\{roomNames.join\('、'\)\|\|NO_FULL_PERIOD_ROOMS\}/);
+ assert.doesNotMatch(view,/lineLimit|建议教室/);
 });
 
 test('room transition is centered, retains native navigation and cancels before dismissal',()=>{

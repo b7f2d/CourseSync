@@ -114,7 +114,7 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false,
 }
 
 type FreeRoomResult =
-  | {kind: 'ready'; date: string; rooms: {period: string; room: string}[]}
+  | {kind: 'ready'; date: string; rooms: {period: string; lessons: string; roomNames: string[]}[]}
   | {kind: 'error'; message: string};
 type ReadyRooms = Extract<FreeRoomResult, {kind:'ready'}>;
 export type DashboardOptions = {
@@ -168,31 +168,13 @@ async function chooseNativeAction(options) {
 }
 
 const ROOM_CAMPUS='仙林校区';
-const ROOM_SCOPE='查询范围为博远楼、博观楼、博文楼的普通教室，以及德经楼、德济楼、德正楼和德业楼一楼的普通教室。';
+const ROOM_SCOPE='普通教室范围：博远楼、博观楼、博文楼\n仅一楼：德经楼、德济楼、德正楼、德业楼';
+const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
 
-function roomResultSections(rooms: ReadyRooms['rooms']) {
-  const periods={'上午':'上午 · 第1—5节','下午':'下午 · 第6—10节','晚上':'晚上 · 第11—13节'};
-  return rooms.map(({period,room})=>{
-    const heading=periods[period] || period;
-    const content=String(room || '').split('\n').map(line=>{
-      const match=line.match(/^(.*?：)(.+、.+?)(（第[^）]+节）)$/);
-      if(match)return match[1]+'\n'+match[2].split('、').map(value=>value+match[3]).join('\n');
-      if(period==='建议教室'&&line.includes('、'))return line.replace('：','：\n').replace(/、/g,'\n');
-      if(line==='无空闲教室')return '无整段空闲教室';
-      return line.replace(/、/g,'\n');
-    }).flatMap(line=>line.split('\n'));
-    const count=periods[period]?content.filter(line=>line.trim()&&!/^无(?:空闲教室|整段空闲教室|完整时段空闲教室)/.test(line)).length:0;
-    return {period,heading,content,count};
-  });
-}
-
-function formatRoomResults(date, rooms) {
-  const results=roomResultSections(rooms);
-  const sections=results.map(({period,heading,content})=>
-    (period==='上午'?'整段空闲教室\n':'')+heading+'\n'+content.join('\n'));
-  const firstPeriod=results.findIndex(({period})=>period==='上午');
-  const grouped=firstPeriod<0?sections:[...sections.slice(0,firstPeriod),sections.slice(firstPeriod).join('\n')];
-  return [date+' · '+ROOM_CAMPUS,...grouped,ROOM_SCOPE].join('\n\n');
+function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
+  const periods=rooms.map(({period,lessons,roomNames})=>
+    period+' · '+lessons+'\n'+(roomNames.join('、')||NO_FULL_PERIOD_ROOMS));
+  return [date+' · '+ROOM_CAMPUS,periods.join('\n'),ROOM_SCOPE].join('\n\n');
 }
 
 async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{}) {
@@ -213,8 +195,6 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     }).then(next=>{if(isActive())setResult(next);});
     return ()=>{active=false;};
   },[attempt]);
-  const ready=result?.kind==='ready'?result:null;
-  const sections=ready?roomResultSections(ready.rooms):[];
   const close=()=>{onClose();dismiss();};
   const toolbar={cancellationAction:<Button title={result?'返回':'取消'} action={close}/>};
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
@@ -236,26 +216,15 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       }}/>
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={toolbar}>
-      {ready?<Section>
-        <Text font="subheadline" foregroundStyle="secondary">{ready.date} · {ROOM_CAMPUS}</Text>
-      </Section>:null}
-      {sections.filter(({period})=>period==='建议教室').map(({period,heading,content})=>
-        <Section key={period} header={<Text>{heading}</Text>}>
-          {content.map((line,index)=><Text key={index}
-            font={line.endsWith('：')?'subheadline':'body'}
-            fontWeight={line.endsWith('：')?'semibold':undefined}
-            foregroundStyle={line.endsWith('：')?'secondary':undefined}>{line}</Text>)}
-        </Section>)}
-      {sections.some(({period})=>period!=='建议教室')?<Section
-        header={<Text>整段空闲教室</Text>} footer={<Text>{ROOM_SCOPE}</Text>}>
-        {sections.filter(({period})=>period!=='建议教室').flatMap(({period,heading,content,count})=>[
-          <Text key={period} font="subheadline" fontWeight="semibold" foregroundStyle="secondary">
-            {heading}{count?' · '+count+' 间':''}
-          </Text>,
-          ...content.map((line,index)=><Text key={period+'-'+index}
-            foregroundStyle={/^无(?:整段|完整时段)空闲教室/.test(line)?'secondary':undefined}>{line}</Text>)
-        ])}
-      </Section>:null}
+      <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>} footer={<Text>{ROOM_SCOPE}</Text>}>
+        {result.rooms.map(({period,lessons,roomNames})=>
+          <VStack key={period} alignment="leading" spacing={5}>
+            <Text font="subheadline" fontWeight="semibold">{period} · {lessons}</Text>
+            <Text font="body" foregroundStyle={roomNames.length?undefined:'secondary'}>
+              {roomNames.join('、')||NO_FULL_PERIOD_ROOMS}
+            </Text>
+          </VStack>)}
+      </Section>
     </List>}
   </NavigationStack>;
 }
