@@ -191,7 +191,8 @@ const ROOM_LESSON_TIMES = {
 
 function roomPeriodTitle(period: string, units: string[]) {
   const first=units[0],last=units[units.length-1];
-  return `${period} · 第${first}—${last}节 · ${ROOM_LESSON_TIMES[first][0]}–${ROOM_LESSON_TIMES[last][1]}`;
+  const time=`${ROOM_LESSON_TIMES[first][0]}–${ROOM_LESSON_TIMES[last][1]}`;
+  return units.length===1?`${period} · ${time}`:`${period} · 第${first}—${last}节 · ${time}`;
 }
 
 function roomLessonLabel(unit: string) {
@@ -204,7 +205,8 @@ function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
     const lines=buildings.flatMap(({name,floors})=>[
       name,...floors.map(({floor,roomCodes})=>floor+'楼  '+roomCodes.join('  '))
     ]);
-    return [roomPeriodTitle(period,units),...units.map(roomLessonLabel),...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
+    const lessonLabels=units.length>1?units.map(roomLessonLabel):[];
+    return [roomPeriodTitle(period,units),...lessonLabels,...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
   });
   return [date+' · '+ROOM_CAMPUS,periods.join('\n')].join('\n\n');
 }
@@ -251,11 +253,11 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
         {result.rooms.map(({period,units,buildings})=>
           <VStack key={period} alignment="leading" spacing={8}>
-            <DisclosureGroup title={roomPeriodTitle(period,units)}>
+            {units.length>1?<DisclosureGroup title={roomPeriodTitle(period,units)}>
               <VStack alignment="leading" spacing={4}>
                 {units.map(unit=><Text key={unit} font="subheadline">{roomLessonLabel(unit)}</Text>)}
               </VStack>
-            </DisclosureGroup>
+            </DisclosureGroup>:<Text font="headline">{roomPeriodTitle(period,units)}</Text>}
             {buildings.length?buildings.map(({name,floors})=>
               <HStack key={name} alignment="top" spacing={12}>
                 <Text font="subheadline" fontWeight="semibold" fixedSize>{name}</Text>

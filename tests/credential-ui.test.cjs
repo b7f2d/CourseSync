@@ -261,7 +261,8 @@ test('classroom dialog shows all lesson times and groups rooms by building and f
     {name:'德业楼',floors:[{floor:1,roomCodes:['Z4-101']}]},
     {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC103']},{floor:2,roomCodes:['JC202']}]}
   ]},
-  {period:'下午',units:['6','7','8','9','10'],buildings:[]},
+  {period:'下午',units:['6','7','8','9'],buildings:[]},
+  {period:'第10节',units:['10'],buildings:[{name:'博观楼',floors:[{floor:2,roomCodes:['JB202']}]}]},
   {period:'晚上',units:['11','12','13'],buildings:[{name:'博文楼',floors:[{floor:3,roomCodes:['JA303']}]}]}
  ]);
  assert.equal(message,[
@@ -269,9 +270,10 @@ test('classroom dialog shows all lesson times and groups rooms by building and f
   '上午 · 第1—5节 · 08:20–12:15',
   '第1节  08:20–09:00','第2节  09:05–09:45','第3节  10:00–10:40','第4节  10:45–11:25','第5节  11:35–12:15',
   '德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202',
-  '下午 · 第6—10节 · 13:30–17:25',
-  '第6节  13:30–14:10','第7节  14:15–14:55','第8节  15:10–15:50','第9节  15:55–16:35','第10节  16:45–17:25',
+  '下午 · 第6—9节 · 13:30–16:35',
+  '第6节  13:30–14:10','第7节  14:15–14:55','第8节  15:10–15:50','第9节  15:55–16:35',
   '无整段空闲教室',
+  '第10节 · 16:45–17:25','博观楼','2楼  JB202',
   '晚上 · 第11—13节 · 18:30–20:50',
   '第11节  18:30–19:10','第12节  19:20–20:00','第13节  20:10–20:50',
   '博文楼','3楼  JA303'

@@ -3101,7 +3101,8 @@ async function queryFreeRoomsForPeriod(http,date,units){
 
 const FREE_ROOM_PERIODS=[
   {period:'上午',units:['1','2','3','4','5']},
-  {period:'下午',units:['6','7','8','9','10']},
+  {period:'下午',units:['6','7','8','9']},
+  {period:'第10节',units:['10']},
   {period:'晚上',units:['11','12','13']}
 ];
 

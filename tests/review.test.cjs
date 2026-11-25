@@ -2369,7 +2369,7 @@ test('NUFE free classrooms group by building and numbered floor with De building
  ]);
 });
 
-test('NUFE free classroom query requests three periods for today in China time without modifying calendar',async()=>{
+test('NUFE free classroom query queries lesson 10 separately for today in China time without modifying calendar',async()=>{
  const e=await env();
  const dbCountBefore=e.db.length;
  const requestedSegments=[];
@@ -2380,6 +2380,7 @@ test('NUFE free classroom query requests three periods for today in China time w
      requestedSegments.push(p.dateTimeSegmentCmd);
      const units=p.dateTimeSegmentCmd.units;
        if(units.includes('1'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
+       if(units.length===1&&units[0]==='10')return {roomList:[{id:202,nameZh:'博观楼JB202',buildingName:'博观楼',floor:2}]};
        if(units.includes('6'))return {roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]};
        return {roomList:[{id:403,nameZh:'博远楼JC403',building:{nameZh:'博远楼'},floor:4}]};
    }
@@ -2390,10 +2391,11 @@ test('NUFE free classroom query requests three periods for today in China time w
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
    {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',units:['6','7','8','9','10'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',units:['6','7','8','9'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'第10节',units:['10'],buildings:[{name:'博观楼',floors:[{floor:2,roomCodes:['JB202']}]}]},
    {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:4,roomCodes:['JC403']}]}]}
  ]);
- a.equal(requestedSegments.length,3);
+ a.deepEqual(requestedSegments.map(segment=>segment.units.join(',')),['1,2,3,4,5','6,7,8,9','10','11,12,13']);
  for(const segment of requestedSegments){
    a.equal(segment.startDateTime,'2026-11-16');
    a.equal(segment.endDateTime,'2026-11-16');
@@ -2418,7 +2420,7 @@ test('classroom query uses the new Beijing date when login crosses midnight',asy
  };
  const result=await e.m.queryFreeRoomsToday(http);
  a.equal(result.date,'2026-11-24');
- a.deepEqual(dates,['2026-11-24','2026-11-24','2026-11-24']);
+ a.deepEqual(dates,Array(4).fill('2026-11-24'));
 });
 
 test('NUFE dashboard loads classroom rows and retryable failures without extra dialogs or calendar sync',async()=>{
@@ -2460,13 +2462,14 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.deepEqual(progress,[0.25,1]);
  a.deepEqual(JSON.parse(JSON.stringify(results.rooms)),[
    {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',units:['6','7','8','9','10'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',units:['6','7','8','9'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'第10节',units:['10'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
    {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}
  ]);
  a.equal(failure.kind,'error');
  a.match(failure.message,/查询失败/);
  a.match(cancelled.message,/已取消/);
- a.equal(roomRequests,6);
+ a.equal(roomRequests,8);
  a.deepEqual(shownDialogs,[]);
  a.equal(e.db.length,dbCountBefore);
 });
@@ -2518,10 +2521,11 @@ test('an empty or filtered classroom period needs no additional requests',async(
    return {roomList:units[0]==='1'?[room]:units[0]==='6'?[computerRoom]:[]};
  }};
  const rows=await m.queryDayRooms(http,'2026-11-23');
- a.deepEqual(requested,['1,2,3,4,5','6,7,8,9,10','11,12,13']);
+ a.deepEqual(requested,['1,2,3,4,5','6,7,8,9','10','11,12,13']);
  a.deepEqual(JSON.parse(JSON.stringify(rows)),[
    {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',units:['6','7','8','9','10'],buildings:[]},
+   {period:'下午',units:['6','7','8','9'],buildings:[]},
+   {period:'第10节',units:['10'],buildings:[]},
    {period:'晚上',units:['11','12','13'],buildings:[]}
  ]);
 });
