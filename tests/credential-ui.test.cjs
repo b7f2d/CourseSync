@@ -176,17 +176,20 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.match(calls[2].message,/上午 · 第1—5节 · 08:20–12:15[\s\S]*第5节  11:35–12:15\n博远楼\n1楼  JC101/);
 
  const presented=[];
+ const seenPeriods=[];
  sandbox.useEffect=()=>{};
  sandbox.ProgressView=true;
  sandbox.Navigation.present=async ({element,modalPresentationStyle})=>{
    assert.equal(modalPresentationStyle,'pageSheet');
    assert.equal(element.isOpen(),true);
-   presented.push({element,result:await element.loadRooms(element.isOpen,()=>{})});
+   const custom=[{period:'自选时段',units:['3','4']}];
+   presented.push({element,result:await element.loadRooms(element.isOpen,()=>{},custom)});
  };
  selections.push(1,0);
- rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
- assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()}),0);
+ rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'自选时段',units:['3','4'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
+ assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods)=>{seenPeriods.push(periods);return rooms.shift();}}),0);
  assert.equal(presented.length,1);
+ assert.deepEqual(seenPeriods,[[{period:'自选时段',units:['3','4']}]]);
  assert.deepEqual(presented[0].result.rooms[0].buildings,[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]);
  assert.equal(presented[0].element.isOpen(),false);
 });

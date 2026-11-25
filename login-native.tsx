@@ -386,9 +386,11 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
 async function presentRoomQuery(loadRooms:RoomLoader) {
   if(typeof Navigation?.present==='function'&&typeof useEffect==='function'&&ProgressView){
     let open=true,started=false;
-    const trackedLoad:RoomLoader=(isActive,updateProgress)=>{
+    const trackedLoad:RoomLoader=(isActive,updateProgress,periods)=>{
       started=true;
-      return loadRooms(isActive,updateProgress);
+      return Array.isArray(periods)
+        ? loadRooms(isActive,updateProgress,periods)
+        : loadRooms(isActive,updateProgress);
     };
     try{
       await Navigation.present({element:<RoomResultsView loadRooms={trackedLoad} isOpen={()=>open} onClose={()=>{open=false;}}/>,
