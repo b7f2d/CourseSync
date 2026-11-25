@@ -264,15 +264,14 @@ test('classroom dialog groups room codes by building and floor in each period',(
   '2026-11-23 · 仙林校区','',
   '上午 · 第1—5节','德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202',
   '下午 · 第6—10节','无整段空闲教室',
-  '晚上 · 第11—13节','博文楼','3楼  JA303','',
-  '普通教室范围：博远楼、博观楼、博文楼','仅一楼：德经楼、德济楼、德正楼、德业楼'
+  '晚上 · 第11—13节','博文楼','3楼  JA303'
  ].join('\n'));
 });
 
 test('native classroom results arrange each building and its floors within one period row',()=>{
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
  assert.equal([...view.matchAll(/<Section\b/g)].length,1);
- assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\} footer=\{<Text>\{ROOM_SCOPE\}<\/Text>\}/);
+ assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\}/);
  assert.match(view,/result.rooms.map\(\(\{period,lessons,buildings\}\)/);
  assert.match(view,/buildings.map\(\(\{name,floors\}\)=>\s*<HStack key=\{name\}/);
  assert.match(view,/floors.map\(\(\{floor,roomCodes\}\)=>\s*<HStack key=\{floor\}/);

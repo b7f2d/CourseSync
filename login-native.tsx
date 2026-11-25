@@ -169,7 +169,6 @@ async function chooseNativeAction(options) {
 }
 
 const ROOM_CAMPUS='仙林校区';
-const ROOM_SCOPE='普通教室范围：博远楼、博观楼、博文楼\n仅一楼：德经楼、德济楼、德正楼、德业楼';
 const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
 
 function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
@@ -179,7 +178,7 @@ function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
     ]);
     return [period+' · '+lessons,...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
   });
-  return [date+' · '+ROOM_CAMPUS,periods.join('\n'),ROOM_SCOPE].join('\n\n');
+  return [date+' · '+ROOM_CAMPUS,periods.join('\n')].join('\n\n');
 }
 
 async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{}) {
@@ -221,7 +220,7 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       }}/>
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={toolbar}>
-      <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>} footer={<Text>{ROOM_SCOPE}</Text>}>
+      <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
         {result.rooms.map(({period,lessons,buildings})=>
           <VStack key={period} alignment="leading" spacing={8}>
             <Text font="headline">{period} · {lessons}</Text>
