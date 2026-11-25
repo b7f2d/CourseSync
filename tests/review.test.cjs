@@ -2319,7 +2319,7 @@ test('offline agenda excludes ended lessons and deduplicates cached semesters',a
  a.equal(result.split('课程甲').length-1,1);a.ok(!result.includes('旧课'));a.match(result,/08:00–10:00/);
 });
 
-test('NUFE free classroom query prioritizes first-floor De buildings before Bo buildings',async()=>{
+test('NUFE free classrooms group by building and numbered floor with De buildings first',async()=>{
  const e=await env();
  const http={
    json:async(url,opt)=>{
@@ -2350,23 +2350,22 @@ test('NUFE free classroom query prioritizes first-floor De buildings before Bo b
          {id:4,nameZh:'博观楼JB202',building:{nameZh:'博观楼'},floor:2},
          {id:5,nameZh:'博观楼JB101',building:{nameZh:'博观楼'},floor:1},
          {id:6,nameZh:'博远楼JC203',building:{nameZh:'博远楼'},floor:2},
-         {id:7,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}
+         {id:7,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1},
+         {id:8,name:'JC104',buildingName:'博远楼',floor:4},
+         {id:9,nameZh:'博远楼 JC102',building:{nameZh:'博远楼'}}
        ]
      };
    }
  };
  const rooms=await e.m.queryFreeRoomsForPeriod(http,'2026-11-16',['1','2','3','4']);
- a.deepEqual(rooms.map(r=>r.nameZh),[
-   '德经楼Z1-101',
-   '德济楼Z2-101',
-   '德正楼Z3-101',
-   '德业楼Z4-101',
-   '博远楼JC101',
-   '博远楼JC203',
-   '博观楼JB101',
-   '博观楼JB202',
-   '博文楼JA105',
-   '博文楼JA414'
+ a.deepEqual(JSON.parse(JSON.stringify(rooms)),[
+   {name:'德经楼',floors:[{floor:1,roomCodes:['Z1-101']}]},
+   {name:'德济楼',floors:[{floor:1,roomCodes:['Z2-101']}]},
+   {name:'德正楼',floors:[{floor:1,roomCodes:['Z3-101']}]},
+   {name:'德业楼',floors:[{floor:1,roomCodes:['Z4-101']}]},
+   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC102','JC104']},{floor:2,roomCodes:['JC203']}]},
+   {name:'博观楼',floors:[{floor:1,roomCodes:['JB101']},{floor:2,roomCodes:['JB202']}]},
+   {name:'博文楼',floors:[{floor:1,roomCodes:['JA105']},{floor:4,roomCodes:['JA414']}]}
  ]);
 });
 
@@ -2390,9 +2389,9 @@ test('NUFE free classroom query requests three periods for today in China time w
  a.deepEqual(progress,[0.25,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
-   {period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101']},
-   {period:'下午',lessons:'第6—10节',roomNames:['博远楼JC101']},
-   {period:'晚上',lessons:'第11—13节',roomNames:['博远楼JC403']}
+   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',lessons:'第6—10节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'晚上',lessons:'第11—13节',buildings:[{name:'博远楼',floors:[{floor:4,roomCodes:['JC403']}]}]}
  ]);
  a.equal(requestedSegments.length,3);
  for(const segment of requestedSegments){
@@ -2460,9 +2459,9 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.equal(results.kind,'ready');
  a.deepEqual(progress,[0.25,1]);
  a.deepEqual(JSON.parse(JSON.stringify(results.rooms)),[
-   {period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101']},
-   {period:'下午',lessons:'第6—10节',roomNames:['博远楼JC101']},
-   {period:'晚上',lessons:'第11—13节',roomNames:['博远楼JC101']}
+   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',lessons:'第6—10节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'晚上',lessons:'第11—13节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}
  ]);
  a.equal(failure.kind,'error');
  a.match(failure.message,/查询失败/);
@@ -2521,9 +2520,9 @@ test('an empty or filtered classroom period needs no additional requests',async(
  const rows=await m.queryDayRooms(http,'2026-11-23');
  a.deepEqual(requested,['1,2,3,4,5','6,7,8,9,10','11,12,13']);
  a.deepEqual(JSON.parse(JSON.stringify(rows)),[
-   {period:'上午',lessons:'第1—5节',roomNames:['博远楼JC101']},
-   {period:'下午',lessons:'第6—10节',roomNames:[]},
-   {period:'晚上',lessons:'第11—13节',roomNames:[]}
+   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',lessons:'第6—10节',buildings:[]},
+   {period:'晚上',lessons:'第11—13节',buildings:[]}
  ]);
 });
 
@@ -2545,7 +2544,10 @@ test('classroom lists deduplicate by ID with a name fallback for missing IDs',as
  const sameNameWithoutId={...x,id:undefined};
  const other={id:12,nameZh:'博观楼JB201',buildingName:'博观楼',floor:2};
  const rows=await m.queryDayRooms({json:async()=>({roomList:[x,x,sameId,sameNameWithoutId,other]})},'2026-11-23');
- for(const row of rows)a.deepEqual(Array.from(row.roomNames),['博远楼JC101','博观楼JB201']);
+ for(const row of rows)a.deepEqual(JSON.parse(JSON.stringify(row.buildings)),[
+   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]},
+   {name:'博观楼',floors:[{floor:2,roomCodes:['JB201']}]}
+ ]);
 });
 test('concurrent HTTP requests recheck shared request spacing after waking',()=>{
  const http=source.slice(source.indexOf('class HTTP {'),source.indexOf('function schoolSession('));

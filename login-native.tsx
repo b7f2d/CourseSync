@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Dialog, Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, ProgressView, VStack, useState, useEffect,
+  TextField, SecureField, Button, Image, ProgressView, VStack, HStack, useState, useEffect,
 } from 'scripting';
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
@@ -113,8 +113,9 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false,
   return credentials?{kind:'credentials',schoolId,...credentials}:null;
 }
 
+type RoomBuilding = {name: string; floors: {floor: number; roomCodes: string[]}[]};
 type FreeRoomResult =
-  | {kind: 'ready'; date: string; rooms: {period: string; lessons: string; roomNames: string[]}[]}
+  | {kind: 'ready'; date: string; rooms: {period: string; lessons: string; buildings: RoomBuilding[]}[]}
   | {kind: 'error'; message: string};
 type ReadyRooms = Extract<FreeRoomResult, {kind:'ready'}>;
 export type DashboardOptions = {
@@ -172,8 +173,12 @@ const ROOM_SCOPE='普通教室范围：博远楼、博观楼、博文楼\n仅一
 const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
 
 function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
-  const periods=rooms.map(({period,lessons,roomNames})=>
-    period+' · '+lessons+'\n'+(roomNames.join('、')||NO_FULL_PERIOD_ROOMS));
+  const periods=rooms.map(({period,lessons,buildings})=>{
+    const lines=buildings.flatMap(({name,floors})=>[
+      name,...floors.map(({floor,roomCodes})=>floor+'楼  '+roomCodes.join('  '))
+    ]);
+    return [period+' · '+lessons,...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
+  });
   return [date+' · '+ROOM_CAMPUS,periods.join('\n'),ROOM_SCOPE].join('\n\n');
 }
 
@@ -217,12 +222,22 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={toolbar}>
       <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>} footer={<Text>{ROOM_SCOPE}</Text>}>
-        {result.rooms.map(({period,lessons,roomNames})=>
-          <VStack key={period} alignment="leading" spacing={5}>
-            <Text font="subheadline" fontWeight="semibold">{period} · {lessons}</Text>
-            <Text font="body" foregroundStyle={roomNames.length?undefined:'secondary'}>
-              {roomNames.join('、')||NO_FULL_PERIOD_ROOMS}
-            </Text>
+        {result.rooms.map(({period,lessons,buildings})=>
+          <VStack key={period} alignment="leading" spacing={8}>
+            <Text font="headline">{period} · {lessons}</Text>
+            {buildings.length?buildings.map(({name,floors})=>
+              <HStack key={name} alignment="top" spacing={12}>
+                <Text font="subheadline" fontWeight="semibold" fixedSize>{name}</Text>
+                <VStack alignment="leading" spacing={4}>
+                  {floors.map(({floor,roomCodes})=>
+                    <HStack key={floor} alignment="firstTextBaseline" spacing={8}>
+                      <Text font="subheadline" foregroundStyle="secondary" fixedSize>{floor}楼</Text>
+                      <Text font="subheadline" multilineTextAlignment="leading"
+                        fixedSize={{horizontal:false,vertical:true}}>{roomCodes.join('  ')}</Text>
+                    </HStack>)}
+                </VStack>
+              </HStack>):
+              <Text font="subheadline" foregroundStyle="secondary">{NO_FULL_PERIOD_ROOMS}</Text>}
           </VStack>)}
       </Section>
     </List>}

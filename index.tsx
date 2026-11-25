@@ -3041,28 +3041,51 @@ const NUFE_FREE_ROOM_ENDPOINT='https://jwxt.nufe.edu.cn/student/ws/room-borrow/f
 const BUILDING_PRIORITY=Object.freeze({'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5,'博观楼':6,'博文楼':7});
 const ROOM_CODE_PREFIX=Object.freeze({'博远楼':'JC','博观楼':'JB','博文楼':'JA','德经楼':'Z1-','德济楼':'Z2-','德正楼':'Z3-','德业楼':'Z4-'});
 const FIRST_FLOOR_BUILDINGS=new Set(['德经楼','德济楼','德正楼','德业楼']);
-function isEligibleFreeRoom(room){
-  if(!room||typeof room!=='object')return false;
+function parseFreeRoom(room){
+  if(!room||typeof room!=='object')return null;
   const building=room.building?.nameZh||room.buildingName;
   const prefix=ROOM_CODE_PREFIX[building];
-  if(typeof prefix!=='string')return false;
+  if(typeof prefix!=='string')return null;
   const firstOnly=FIRST_FLOOR_BUILDINGS.has(building);
-  if(firstOnly&&Number(room.floor)!==1)return false;
+  if(firstOnly&&Number(room.floor)!==1)return null;
   const name=String(room.nameZh||room.name||'').trim();
-  if(name.includes('微'))return false;
+  if(name.includes('微'))return null;
   const code=(name.startsWith(building)?name.slice(building.length):name).trim();
-  if(!code.startsWith(prefix))return false;
+  if(!code.startsWith(prefix))return null;
   const number=code.slice(prefix.length);
-  return (firstOnly?/^1\d{2}$/:/^[1-9]\d{2}$/).test(number);
+  if(!(firstOnly?/^1\d{2}$/:/^[1-9]\d{2}$/).test(number))return null;
+  return {building,floor:Number(number[0]),code,id:room.id==null?null:String(room.id)};
 }
 
 function compareFreeRooms(a,b){
-  const bpA=BUILDING_PRIORITY[a.building?.nameZh||a.buildingName]||99;
-  const bpB=BUILDING_PRIORITY[b.building?.nameZh||b.buildingName]||99;
-  if(bpA!==bpB)return bpA-bpB;
-  const flA=Number(a.floor)||99,flB=Number(b.floor)||99;
-  if(flA!==flB)return flA-flB;
-  return String(a.nameZh||a.name||'').localeCompare(String(b.nameZh||b.name||''));
+  return BUILDING_PRIORITY[a.building]-BUILDING_PRIORITY[b.building]
+    ||a.floor-b.floor||a.code.localeCompare(b.code);
+}
+
+function groupFreeRooms(rooms){
+  const ids=new Set(),codes=new Set(),codesWithoutId=new Set();
+  const buildings=[];
+  for(const {building,floor,code,id} of rooms){
+    // Room codes already include their building prefix.
+    const duplicate=id===null?codes.has(code):ids.has(id)||codesWithoutId.has(code);
+    codes.add(code);
+    if(id===null)codesWithoutId.add(code);
+    else ids.add(id);
+    if(duplicate)continue;
+
+    let buildingGroup=buildings.at(-1);
+    if(buildingGroup?.name!==building){
+      buildingGroup={name:building,floors:[]};
+      buildings.push(buildingGroup);
+    }
+    let floorGroup=buildingGroup.floors.at(-1);
+    if(floorGroup?.floor!==floor){
+      floorGroup={floor,roomCodes:[]};
+      buildingGroup.floors.push(floorGroup);
+    }
+    floorGroup.roomCodes.push(code);
+  }
+  return buildings;
 }
 
 async function queryFreeRoomsForPeriod(http,date,units){
@@ -3072,7 +3095,8 @@ async function queryFreeRoomsForPeriod(http,date,units){
   };
   const data=await http.json(NUFE_FREE_ROOM_ENDPOINT,{body:JSON.stringify(payload),json:true});
   assert(Array.isArray(data?.roomList),'SCHEMA');
-  return data.roomList.filter(isEligibleFreeRoom).sort(compareFreeRooms);
+  const rooms=data.roomList.map(parseFreeRoom).filter(Boolean).sort(compareFreeRooms);
+  return groupFreeRooms(rooms);
 }
 
 const FREE_ROOM_PERIODS=[
@@ -3081,26 +3105,10 @@ const FREE_ROOM_PERIODS=[
   {period:'晚上',units:['11','12','13']}
 ];
 
-function uniqueFreeRoomNames(rooms){
-  const ids=new Set(),names=new Set(),namesWithoutId=new Set();
-  const result=[];
-  for(const room of rooms){
-    const name=String(room.nameZh||room.name||'').replace(/（[^）]*）|\([^)]*\)/g,'').trim();
-    const id=room.id==null?null:String(room.id);
-    // Prefer IDs and fall back to names when either entry has no ID.
-    const duplicate=id===null?names.has(name):ids.has(id)||namesWithoutId.has(name);
-    names.add(name);
-    if(id===null)namesWithoutId.add(name);
-    else ids.add(id);
-    if(name&&!duplicate)result.push(name);
-  }
-  return result;
-}
-
 async function queryDayRooms(http,date,onProgress=()=>{}){
   const results=await Promise.allSettled(FREE_ROOM_PERIODS.map(async ({period,units})=>{
-    const rooms=await queryFreeRoomsForPeriod(http,date,units);
-    return {period,lessons:'第'+units[0]+'—'+units.at(-1)+'节',roomNames:uniqueFreeRoomNames(rooms)};
+    const buildings=await queryFreeRoomsForPeriod(http,date,units);
+    return {period,lessons:'第'+units[0]+'—'+units.at(-1)+'节',buildings};
   }));
   const failure=results.find(result=>result.status==='rejected');
   if(failure)throw failure.reason;
