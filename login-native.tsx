@@ -200,12 +200,11 @@ function parseClockMinutes(clock) {
 function defaultRoomUnits(baseMs = Date.now()) {
   const d = new Date(baseMs);
   const nowMin = d.getHours() * 60 + d.getMinutes();
-  let startUnit = 1;
-  if (nowMin >= 8 * 60 && nowMin < 20 * 60 + 50) {
-    const found = ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin);
-    if (found) startUnit = Number(found);
-  }
-  return { startUnit, endUnit: Math.min(13, startUnit + 1) };
+  const found = nowMin < 20 * 60 + 50
+    ? ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin)
+    : null;
+  const startUnit = found ? Number(found) : 1;
+  return { startUnit, endUnit: Math.min(13, startUnit + 3) };
 }
 function roomSelectionForUnits(startUnit, endUnit) {
   const from = Number(startUnit), to = Number(endUnit);

@@ -316,7 +316,14 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
    .replace(' as const','');
- const {select,label}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel})',{});
+ const {select,label,defaults}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits})',{});
+ const localMs=(h,m)=>new Date(2026,10,25,h,m,0,0).getTime();
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(9,2)))),{startUnit:2,endUnit:5});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(12,30)))),{startUnit:6,endUnit:9});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(19,0)))),{startUnit:11,endUnit:13});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(21,0)))),{startUnit:1,endUnit:4});
  const r1=JSON.parse(JSON.stringify(select(2,4)));
  assert.equal(r1.valid,true);
  assert.equal(r1.rangeText,'第2—4节 · 09:05–11:25');
