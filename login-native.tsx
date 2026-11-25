@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Dialog, Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, ProgressView, VStack, HStack, useState, useEffect,
+  TextField, SecureField, Button, Image, ProgressView, VStack, HStack, DisclosureGroup, useState, useEffect,
 } from 'scripting';
 
 function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle:string;allowReuse:boolean}) {
@@ -115,7 +115,7 @@ export async function presentNativeRefreshForm(schoolId:string,allowReuse=false,
 
 type RoomBuilding = {name: string; floors: {floor: number; roomCodes: string[]}[]};
 type FreeRoomResult =
-  | {kind: 'ready'; date: string; rooms: {period: string; lessons: string; buildings: RoomBuilding[]}[]}
+  | {kind: 'ready'; date: string; rooms: {period: string; units: string[]; buildings: RoomBuilding[]}[]}
   | {kind: 'error'; message: string};
 type ReadyRooms = Extract<FreeRoomResult, {kind:'ready'}>;
 export type DashboardOptions = {
@@ -171,12 +171,40 @@ async function chooseNativeAction(options) {
 const ROOM_CAMPUS='仙林校区';
 const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
 
+// NUFE Academic Affairs timetable effective 2025-09-01.
+// https://jwc.nufe.edu.cn/info/1085/7873.htm
+const ROOM_LESSON_TIMES = {
+  '1': ['08:20','09:00'],
+  '2': ['09:05','09:45'],
+  '3': ['10:00','10:40'],
+  '4': ['10:45','11:25'],
+  '5': ['11:35','12:15'],
+  '6': ['13:30','14:10'],
+  '7': ['14:15','14:55'],
+  '8': ['15:10','15:50'],
+  '9': ['15:55','16:35'],
+  '10': ['16:45','17:25'],
+  '11': ['18:30','19:10'],
+  '12': ['19:20','20:00'],
+  '13': ['20:10','20:50'],
+};
+
+function roomPeriodTitle(period: string, units: string[]) {
+  const first=units[0],last=units[units.length-1];
+  return `${period} · 第${first}—${last}节 · ${ROOM_LESSON_TIMES[first][0]}–${ROOM_LESSON_TIMES[last][1]}`;
+}
+
+function roomLessonLabel(unit: string) {
+  const [start,end]=ROOM_LESSON_TIMES[unit];
+  return `第${unit}节  ${start}–${end}`;
+}
+
 function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
-  const periods=rooms.map(({period,lessons,buildings})=>{
+  const periods=rooms.map(({period,units,buildings})=>{
     const lines=buildings.flatMap(({name,floors})=>[
       name,...floors.map(({floor,roomCodes})=>floor+'楼  '+roomCodes.join('  '))
     ]);
-    return [period+' · '+lessons,...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
+    return [roomPeriodTitle(period,units),...units.map(roomLessonLabel),...(lines.length?lines:[NO_FULL_PERIOD_ROOMS])].join('\n');
   });
   return [date+' · '+ROOM_CAMPUS,periods.join('\n')].join('\n\n');
 }
@@ -221,9 +249,13 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={toolbar}>
       <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
-        {result.rooms.map(({period,lessons,buildings})=>
+        {result.rooms.map(({period,units,buildings})=>
           <VStack key={period} alignment="leading" spacing={8}>
-            <Text font="headline">{period} · {lessons}</Text>
+            <DisclosureGroup title={roomPeriodTitle(period,units)}>
+              <VStack alignment="leading" spacing={4}>
+                {units.map(unit=><Text key={unit} font="subheadline">{roomLessonLabel(unit)}</Text>)}
+              </VStack>
+            </DisclosureGroup>
             {buildings.length?buildings.map(({name,floors})=>
               <HStack key={name} alignment="top" spacing={12}>
                 <Text font="subheadline" fontWeight="semibold" fixedSize>{name}</Text>

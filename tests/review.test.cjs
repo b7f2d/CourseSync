@@ -2389,9 +2389,9 @@ test('NUFE free classroom query requests three periods for today in China time w
  a.deepEqual(progress,[0.25,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
-   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',lessons:'第6—10节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'晚上',lessons:'第11—13节',buildings:[{name:'博远楼',floors:[{floor:4,roomCodes:['JC403']}]}]}
+   {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',units:['6','7','8','9','10'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:4,roomCodes:['JC403']}]}]}
  ]);
  a.equal(requestedSegments.length,3);
  for(const segment of requestedSegments){
@@ -2459,9 +2459,9 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.equal(results.kind,'ready');
  a.deepEqual(progress,[0.25,1]);
  a.deepEqual(JSON.parse(JSON.stringify(results.rooms)),[
-   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',lessons:'第6—10节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'晚上',lessons:'第11—13节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}
+   {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',units:['6','7','8','9','10'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}
  ]);
  a.equal(failure.kind,'error');
  a.match(failure.message,/查询失败/);
@@ -2520,9 +2520,9 @@ test('an empty or filtered classroom period needs no additional requests',async(
  const rows=await m.queryDayRooms(http,'2026-11-23');
  a.deepEqual(requested,['1,2,3,4,5','6,7,8,9,10','11,12,13']);
  a.deepEqual(JSON.parse(JSON.stringify(rows)),[
-   {period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'下午',lessons:'第6—10节',buildings:[]},
-   {period:'晚上',lessons:'第11—13节',buildings:[]}
+   {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
+   {period:'下午',units:['6','7','8','9','10'],buildings:[]},
+   {period:'晚上',units:['11','12','13'],buildings:[]}
  ]);
 });
 

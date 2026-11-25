@@ -3108,7 +3108,7 @@ const FREE_ROOM_PERIODS=[
 async function queryDayRooms(http,date,onProgress=()=>{}){
   const results=await Promise.allSettled(FREE_ROOM_PERIODS.map(async ({period,units})=>{
     const buildings=await queryFreeRoomsForPeriod(http,date,units);
-    return {period,lessons:'第'+units[0]+'—'+units.at(-1)+'节',buildings};
+    return {period,units,buildings};
   }));
   const failure=results.find(result=>result.status==='rejected');
   if(failure)throw failure.reason;

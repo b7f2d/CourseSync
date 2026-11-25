@@ -149,6 +149,8 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
    .replace("rooms: ReadyRooms['rooms']", 'rooms')
+   .replace('period: string, units: string[]','period, units')
+   .replace('unit: string','unit')
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
    .replace(' as const','');
@@ -160,7 +162,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
    .replace('let result: FreeRoomResult','let result');
- const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]}];
+ const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
    createNativeProgressView:()=>{throw Error('transition must not open');}};
  const show=vm.runInNewContext(helpers+dashboard+'\npresentNativeDashboard',sandbox);
@@ -171,7 +173,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
  assert.equal(calls[2].title,'空闲教室');
- assert.match(calls[2].message,/上午 · 第1—5节\n博远楼\n1楼  JC101/);
+ assert.match(calls[2].message,/上午 · 第1—5节 · 08:20–12:15[\s\S]*第5节  11:35–12:15\n博远楼\n1楼  JC101/);
 
  const presented=[];
  sandbox.useEffect=()=>{};
@@ -182,7 +184,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    presented.push({element,result:await element.loadRooms(element.isOpen,()=>{})});
  };
  selections.push(1,0);
- rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',lessons:'第1—5节',buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
+ rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
  assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()}),0);
  assert.equal(presented.length,1);
  assert.deepEqual(presented[0].result.rooms[0].buildings,[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]);
@@ -247,24 +249,32 @@ test('page-backed credential and verification forms use plain native controls wi
 });
 
 
-test('classroom dialog groups room codes by building and floor in each period',()=>{
+test('classroom dialog shows all lesson times and groups rooms by building and floor',()=>{
  const vm=require('node:vm');
  const code=native.slice(native.indexOf('const ROOM_CAMPUS'),native.indexOf('async function readRoomResults('))
-   .replace("rooms: ReadyRooms['rooms']", 'rooms');
+   .replace("rooms: ReadyRooms['rooms']", 'rooms')
+   .replace('period: string, units: string[]','period, units')
+   .replace('unit: string','unit');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
-  {period:'上午',lessons:'第1—5节',buildings:[
+  {period:'上午',units:['1','2','3','4','5'],buildings:[
     {name:'德业楼',floors:[{floor:1,roomCodes:['Z4-101']}]},
     {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC103']},{floor:2,roomCodes:['JC202']}]}
   ]},
-  {period:'下午',lessons:'第6—10节',buildings:[]},
-  {period:'晚上',lessons:'第11—13节',buildings:[{name:'博文楼',floors:[{floor:3,roomCodes:['JA303']}]}]}
+  {period:'下午',units:['6','7','8','9','10'],buildings:[]},
+  {period:'晚上',units:['11','12','13'],buildings:[{name:'博文楼',floors:[{floor:3,roomCodes:['JA303']}]}]}
  ]);
  assert.equal(message,[
   '2026-11-23 · 仙林校区','',
-  '上午 · 第1—5节','德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202',
-  '下午 · 第6—10节','无整段空闲教室',
-  '晚上 · 第11—13节','博文楼','3楼  JA303'
+  '上午 · 第1—5节 · 08:20–12:15',
+  '第1节  08:20–09:00','第2节  09:05–09:45','第3节  10:00–10:40','第4节  10:45–11:25','第5节  11:35–12:15',
+  '德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202',
+  '下午 · 第6—10节 · 13:30–17:25',
+  '第6节  13:30–14:10','第7节  14:15–14:55','第8节  15:10–15:50','第9节  15:55–16:35','第10节  16:45–17:25',
+  '无整段空闲教室',
+  '晚上 · 第11—13节 · 18:30–20:50',
+  '第11节  18:30–19:10','第12节  19:20–20:00','第13节  20:10–20:50',
+  '博文楼','3楼  JA303'
  ].join('\n'));
 });
 
@@ -272,7 +282,8 @@ test('native classroom results arrange each building and its floors within one p
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
  assert.equal([...view.matchAll(/<Section\b/g)].length,1);
  assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\}/);
- assert.match(view,/result.rooms.map\(\(\{period,lessons,buildings\}\)/);
+ assert.match(view,/result.rooms.map\(\(\{period,units,buildings\}\)/);
+ assert.match(view,/<DisclosureGroup title=\{roomPeriodTitle\(period,units\)\}>[\s\S]*roomLessonLabel\(unit\)[\s\S]*<\/DisclosureGroup>/);
  assert.match(view,/buildings.map\(\(\{name,floors\}\)=>\s*<HStack key=\{name\}/);
  assert.match(view,/floors.map\(\(\{floor,roomCodes\}\)=>\s*<HStack key=\{floor\}/);
  assert.match(view,/fixedSize=\{\{horizontal:false,vertical:true\}\}>\{roomCodes.join\('  '\)\}/);
