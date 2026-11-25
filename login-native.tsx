@@ -2,7 +2,7 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Dialog, Navigation, NavigationStack, List, Section, Text, DatePicker,
+  Dialog, Navigation, NavigationStack, List, Section, Text, Picker,
   TextField, SecureField, Button, Image, ProgressView, VStack, HStack, DisclosureGroup, useState, useEffect,
 } from 'scripting';
 
@@ -197,59 +197,40 @@ function parseClockMinutes(clock) {
   const [h, m] = String(clock).split(':').map(Number);
   return h * 60 + m;
 }
-function formatClockMinutes(total) {
-  const h = String(Math.floor(total / 60)).padStart(2, '0');
-  const m = String(total % 60).padStart(2, '0');
-  return `${h}:${m}`;
-}
-function timeMinutesFromMs(ms) {
-  const d = new Date(ms);
-  return d.getHours() * 60 + d.getMinutes();
-}
-function todayTimeMs(minutes, baseMs = Date.now()) {
+function defaultRoomUnits(baseMs = Date.now()) {
   const d = new Date(baseMs);
-  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-  return d.getTime();
+  const nowMin = d.getHours() * 60 + d.getMinutes();
+  let startUnit = 1;
+  if (nowMin >= 8 * 60 && nowMin < 20 * 60 + 50) {
+    const found = ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin);
+    if (found) startUnit = Number(found);
+  }
+  return { startUnit, endUnit: Math.min(13, startUnit + 1) };
 }
-function defaultRoomTimes(baseMs = Date.now()) {
-  const nowMin = timeMinutesFromMs(baseMs);
-  let startMin = 8 * 60 + 20;
-  let endMin = 9 * 60 + 45;
-  if (nowMin >= 8 * 60 && nowMin <= 20 * 60 + 20) {
-    startMin = Math.max(8 * 60 + 20, nowMin);
-    endMin = Math.min(20 * 60 + 50, startMin + 90);
-    if (endMin <= startMin) {
-      startMin = 20 * 60 + 10;
-      endMin = 20 * 60 + 50;
-    }
+function roomSelectionForUnits(startUnit, endUnit) {
+  const from = Number(startUnit), to = Number(endUnit);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 13) {
+    return { valid: false, rangeText: '', summary: '请选择有效的课程节次', periods: null };
   }
-  return {
-    startMs: todayTimeMs(startMin, baseMs),
-    endMs: todayTimeMs(endMin, baseMs),
-  };
-}
-function roomSelectionForTimes(startMs, endMs) {
-  const startMin = timeMinutesFromMs(startMs);
-  const endMin = timeMinutesFromMs(endMs);
-  const rangeText = `${formatClockMinutes(startMin)}–${formatClockMinutes(endMin)}`;
-  if (endMin <= startMin) {
-    return { valid: false, rangeText, summary: '结束时间需晚于开始时间', periods: null };
+  const fromTime = ROOM_LESSON_TIMES[String(from)][0];
+  const toTime = ROOM_LESSON_TIMES[String(to)][1];
+  if (to < from) {
+    return {
+      valid: false,
+      rangeText: `第${from}节（${fromTime}）— 第${to}节（${toTime}）`,
+      summary: '结束节次需不早于开始节次',
+      periods: null,
+    };
   }
-  const units = ROOM_LESSON_UNITS.filter(unit => {
-    const [s, e] = ROOM_LESSON_TIMES[unit];
-    return parseClockMinutes(e) > startMin && parseClockMinutes(s) < endMin;
-  });
-  if (!units.length) {
-    return { valid: false, rangeText, summary: '该时段未覆盖任何上课节次（08:20–20:50）', periods: null };
-  }
-  const first = units[0], last = units[units.length - 1];
-  const lessonTime = `${ROOM_LESSON_TIMES[first][0]}–${ROOM_LESSON_TIMES[last][1]}`;
-  const period = units.length === 1 ? `第${first}节` : '自选时段';
-  const lessonLabel = units.length === 1 ? `第${first}节（${lessonTime}）` : `第${first}—${last}节（${lessonTime}）`;
+  const units = [];
+  for (let u = from; u <= to; u++) units.push(String(u));
+  const lessonTime = `${fromTime}–${toTime}`;
+  const period = from === to ? `第${from}节` : '自选时段';
+  const rangeText = from === to ? `第${from}节 · ${lessonTime}` : `第${from}—${to}节 · ${lessonTime}`;
   return {
     valid: true,
     rangeText,
-    summary: `对应节次：${lessonLabel}`,
+    summary: `共 ${units.length} 节课 · ${lessonTime}`,
     periods: [{ period, units }],
   };
 }
@@ -287,9 +268,9 @@ async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProg
 
 function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpen:()=>boolean;onClose:()=>void}) {
   const dismiss=Navigation.useDismiss();
-  const [initialTimes]=useState(()=>defaultRoomTimes());
-  const [startMs,setStartMs]=useState(initialTimes.startMs);
-  const [endMs,setEndMs]=useState(initialTimes.endMs);
+  const [initialUnits]=useState(()=>defaultRoomUnits());
+  const [startUnit,setStartUnit]=useState(initialUnits.startUnit);
+  const [endUnit,setEndUnit]=useState(initialUnits.endUnit);
   const [selectedPeriods,setSelectedPeriods]=useState<RoomPeriodSpec[]|null>(null);
   const [result,setResult]=useState<FreeRoomResult|null>(null);
   const [attempt,setAttempt]=useState(0);
@@ -305,7 +286,17 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
   },[attempt,selectedPeriods]);
   const close=()=>{onClose();dismiss();};
   const toolbar={cancellationAction:<Button title={result?'返回':'取消'} action={close}/>};
-  const selection=roomSelectionForTimes(startMs,endMs);
+  const selection=roomSelectionForUnits(startUnit,endUnit);
+  const onStartChanged=(next:number)=>{
+    const n=Number(next);
+    setStartUnit(n);
+    if(n>endUnit)setEndUnit(n);
+  };
+  const onEndChanged=(next:number)=>{
+    const n=Number(next);
+    setEndUnit(n);
+    if(n<startUnit)setStartUnit(n);
+  };
   const startQuery=(periods:RoomPeriodSpec[])=>{
     setResult(null);setConnected(false);setSelectedPeriods(periods);setAttempt(attempt+1);
   };
@@ -315,25 +306,27 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       toolbar={toolbar}>
       <VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
         <HStack spacing={8}>
-          <Text font="subheadline" fontWeight="semibold">开始时间</Text>
+          <Text font="subheadline" fontWeight="semibold">开始节次</Text>
           <Text font="subheadline" foregroundStyle="accentColor" monospacedDigit={true}>
-            {formatClockMinutes(timeMinutesFromMs(startMs))}
+            {roomLessonLabel(String(startUnit))}
           </Text>
         </HStack>
-        <DatePicker title="开始时间" value={startMs} onChanged={setStartMs}
-          displayedComponents={['hourAndMinute']} datePickerStyle="wheel"
-          frame={{maxWidth:'infinity',height:150}}/>
+        <Picker title="开始节次" pickerStyle="wheel" value={startUnit} onChanged={onStartChanged}
+          frame={{maxWidth:'infinity',height:145}}>
+          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
+        </Picker>
       </VStack>
       <VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
         <HStack spacing={8}>
-          <Text font="subheadline" fontWeight="semibold">结束时间</Text>
+          <Text font="subheadline" fontWeight="semibold">结束节次</Text>
           <Text font="subheadline" foregroundStyle="accentColor" monospacedDigit={true}>
-            {formatClockMinutes(timeMinutesFromMs(endMs))}
+            {roomLessonLabel(String(endUnit))}
           </Text>
         </HStack>
-        <DatePicker title="结束时间" value={endMs} onChanged={setEndMs}
-          displayedComponents={['hourAndMinute']} datePickerStyle="wheel"
-          frame={{maxWidth:'infinity',height:150}}/>
+        <Picker title="结束节次" pickerStyle="wheel" value={endUnit} onChanged={onEndChanged}
+          frame={{maxWidth:'infinity',height:145}}>
+          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
+        </Picker>
       </VStack>
       <VStack alignment="leading" spacing={8} padding={{top:4,bottom:4}}>
         <Text font="headline" monospacedDigit={true}>{selection.rangeText}</Text>

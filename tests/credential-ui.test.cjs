@@ -303,7 +303,7 @@ test('room transition is centered, retains native navigation and cancels before 
  assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });
 
-test('room query uses iOS wheel DatePickers for start/end times without quick presets',()=>{
+test('room query uses iOS wheel Pickers for start/end lessons with exact times and no quick presets',()=>{
  const vm=require('node:vm');
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
@@ -313,25 +313,27 @@ test('room query uses iOS wheel DatePickers for start/end times without quick pr
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
    .replace(' as const','');
- const {select,todayTimeMs}=vm.runInNewContext(helpers+'\n({select:roomSelectionForTimes,todayTimeMs})',{});
- const r1=JSON.parse(JSON.stringify(select(todayTimeMs(9*60),todayTimeMs(11*60+30))));
+ const {select,label}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel})',{});
+ const r1=JSON.parse(JSON.stringify(select(2,4)));
  assert.equal(r1.valid,true);
- assert.equal(r1.rangeText,'09:00–11:30');
- assert.equal(r1.summary,'对应节次：第2—4节（09:05–11:25）');
+ assert.equal(r1.rangeText,'第2—4节 · 09:05–11:25');
+ assert.equal(r1.summary,'共 3 节课 · 09:05–11:25');
  assert.deepEqual(r1.periods,[{period:'自选时段',units:['2','3','4']}]);
 
- const r2=JSON.parse(JSON.stringify(select(todayTimeMs(16*60+45),todayTimeMs(17*60+25))));
+ const r2=JSON.parse(JSON.stringify(select(10,10)));
  assert.equal(r2.valid,true);
+ assert.equal(r2.rangeText,'第10节 · 16:45–17:25');
  assert.deepEqual(r2.periods,[{period:'第10节',units:['10']}]);
 
- assert.equal(select(todayTimeMs(15*60),todayTimeMs(14*60)).valid,false);
- assert.equal(select(todayTimeMs(12*60+20),todayTimeMs(13*60+20)).valid,false);
+ assert.equal(select(5,3).valid,false);
+ assert.equal(label('1'),'第1节  08:20–09:00');
+ assert.equal(label('13'),'第13节  20:10–20:50');
 
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
- assert.match(view,/datePickerStyle="wheel"/);
- assert.match(view,/displayedComponents=\{\['hourAndMinute'\]\}/);
- assert.match(view,/title="开始时间"/);
- assert.match(view,/title="结束时间"/);
+ assert.match(view,/pickerStyle="wheel"/);
+ assert.match(view,/title="开始节次"/);
+ assert.match(view,/title="结束节次"/);
+ assert.match(view,/roomLessonLabel\(unit\)/);
  assert.doesNotMatch(native,/ROOM_QUICK_PRESETS|快捷选择/);
  assert.match(view,/切换查询时段/);
 });
