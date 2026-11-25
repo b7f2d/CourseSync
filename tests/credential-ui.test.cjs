@@ -303,7 +303,7 @@ test('room transition is centered, retains native navigation and cancels before 
  assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });
 
-test('room query exposes morning, afternoon, evening quick presets with times and custom section selection',()=>{
+test('room query uses iOS wheel DatePickers for start/end times without quick presets',()=>{
  const vm=require('node:vm');
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
@@ -313,26 +313,25 @@ test('room query exposes morning, afternoon, evening quick presets with times an
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
    .replace(' as const','');
- const {presets,custom}=vm.runInNewContext(helpers+'\n({presets:ROOM_QUICK_PRESETS,custom:customRoomSelection})',{})
- assert.deepEqual(JSON.parse(JSON.stringify(presets.slice(0,3).map(p=>[p.label,p.time]))),[
-   ['上午','08:20–12:15'],
-   ['下午','13:30–16:35'],
-   ['晚上','18:30–20:50'],
- ]);
- assert.equal(presets[3].label,'全天');
- assert.equal(presets[3].time,'08:20–20:50');
- assert.deepEqual(JSON.parse(JSON.stringify(custom(3,5))),{
-   label:'第3—5节 · 10:00–12:15',
-   time:'10:00–12:15',
-   periods:[{period:'自选时段',units:['3','4','5']}],
- });
- assert.deepEqual(JSON.parse(JSON.stringify(custom(10,10))),{
-   label:'第10节 · 16:45–17:25',
-   time:'16:45–17:25',
-   periods:[{period:'第10节',units:['10']}],
- });
+ const {select,todayTimeMs}=vm.runInNewContext(helpers+'\n({select:roomSelectionForTimes,todayTimeMs})',{});
+ const r1=JSON.parse(JSON.stringify(select(todayTimeMs(9*60),todayTimeMs(11*60+30))));
+ assert.equal(r1.valid,true);
+ assert.equal(r1.rangeText,'09:00–11:30');
+ assert.equal(r1.summary,'对应节次：第2—4节（09:05–11:25）');
+ assert.deepEqual(r1.periods,[{period:'自选时段',units:['2','3','4']}]);
+
+ const r2=JSON.parse(JSON.stringify(select(todayTimeMs(16*60+45),todayTimeMs(17*60+25))));
+ assert.equal(r2.valid,true);
+ assert.deepEqual(r2.periods,[{period:'第10节',units:['10']}]);
+
+ assert.equal(select(todayTimeMs(15*60),todayTimeMs(14*60)).valid,false);
+ assert.equal(select(todayTimeMs(12*60+20),todayTimeMs(13*60+20)).valid,false);
+
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
- assert.match(view,/ROOM_QUICK_PRESETS\.map/);
- assert.match(view,/ROOM_LESSON_UNITS\.map/);
+ assert.match(view,/datePickerStyle="wheel"/);
+ assert.match(view,/displayedComponents=\{\['hourAndMinute'\]\}/);
+ assert.match(view,/title="开始时间"/);
+ assert.match(view,/title="结束时间"/);
+ assert.doesNotMatch(native,/ROOM_QUICK_PRESETS|快捷选择/);
  assert.match(view,/切换查询时段/);
 });
