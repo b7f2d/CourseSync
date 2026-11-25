@@ -17,9 +17,9 @@ function LoginView({title, confirmTitle, allowReuse}: {title:string;confirmTitle
 
   return <NavigationStack presentationDetents={['medium','large']} presentationDragIndicator="visible">
     <List navigationTitle={title} navigationBarTitleDisplayMode="inline" listStyle="insetGroup">
-      <Section>
+      <Section footer={<Text>仅用于连接南京财经大学教务系统同步课表与考试，不会上传至第三方。</Text>}>
         <TextField title="学号" prompt="请输入学号" value={username} onChanged={setUsername}
-          textContentType="username" textInputAutocapitalization="never" />
+          textContentType="username" textInputAutocapitalization="never" autocorrectionDisabled={true} />
         <SecureField title="密码" prompt="请输入密码" value={password} onChanged={setPassword}
           textContentType="password" />
       </Section>
@@ -74,7 +74,9 @@ function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
   return <NavigationStack presentationDetents={['medium','large']} presentationDragIndicator="visible">
     <List navigationTitle={title} navigationBarTitleDisplayMode="inline" listStyle="insetGroup">
       <Section header={<Text>{label}</Text>}>
-        {image?<Image image={image} resizable={true} scaleToFit={true} frame={{maxWidth:280,height:155}} />:null}
+        {image?<HStack frame={{maxWidth:'infinity',alignment:'center'}}>
+          <Image image={image} resizable={true} scaleToFit={true} frame={{maxWidth:280,height:155}} />
+        </HStack>:null}
         {secret?
           <SecureField title={label} prompt="请输入" value={value} onChanged={setValue} />:
           <TextField title={label} prompt={otp?'请输入或填充验证码':'请输入'} value={value}
@@ -245,14 +247,14 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       <Image systemName="exclamationmark.circle" font="largeTitle" foregroundStyle="secondary"/>
       <Text font="headline">查询未完成</Text>
       <Text font="subheadline" foregroundStyle="secondary" multilineTextAlignment="center">{result.message}</Text>
-      <Button title="重试" action={()=>{
+      <Button title="重试" buttonStyle="borderedProminent" action={()=>{
         setResult(null);setConnected(false);setAttempt(attempt+1);
       }}/>
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
       toolbar={toolbar}>
       <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
         {result.rooms.map(({period,units,buildings})=>
-          <VStack key={period} alignment="leading" spacing={8}>
+          <VStack key={period} alignment="leading" spacing={8} padding={{top:2,bottom:2}}>
             {units.length>1?<DisclosureGroup title={roomPeriodTitle(period,units)}>
               <VStack alignment="leading" spacing={4}>
                 {units.map(unit=><Text key={unit} font="subheadline">{roomLessonLabel(unit)}</Text>)}
@@ -260,12 +262,12 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
             </DisclosureGroup>:<Text font="headline">{roomPeriodTitle(period,units)}</Text>}
             {buildings.length?buildings.map(({name,floors})=>
               <HStack key={name} alignment="top" spacing={12}>
-                <Text font="subheadline" fontWeight="semibold" fixedSize>{name}</Text>
+                <Text font="subheadline" fontWeight="semibold" foregroundStyle="accentColor" fixedSize>{name}</Text>
                 <VStack alignment="leading" spacing={4}>
                   {floors.map(({floor,roomCodes})=>
                     <HStack key={floor} alignment="firstTextBaseline" spacing={8}>
-                      <Text font="subheadline" foregroundStyle="secondary" fixedSize>{floor}楼</Text>
-                      <Text font="subheadline" multilineTextAlignment="leading"
+                      <Text font="subheadline" foregroundStyle="secondary" monospacedDigit={true} fixedSize>{floor}楼</Text>
+                      <Text font="subheadline" monospacedDigit={true} multilineTextAlignment="leading"
                         fixedSize={{horizontal:false,vertical:true}}>{roomCodes.join('  ')}</Text>
                     </HStack>)}
                 </VStack>
@@ -375,11 +377,11 @@ export async function presentNativeDialog(options: GlassDialogOptions): Promise<
   }
   if (options.cancel && options.actions.length === 1) {
     const ok = await systemDialog().confirm({title:options.title,message:options.message || '',
-      cancelLabel:options.cancelLabel || '取消',confirmLabel:options.actions[0].label});
+      cancelLabel:options.cancelLabel || '取消',confirmLabel:options.actions[0]?.label || '确认'});
     return ok ? {index:0,value:''} : null;
   }
   if (options.actions.length === 1 && !options.cancel) {
-    await systemDialog().alert({title:options.title,message:options.message || '',buttonLabel:options.actions[0].label});
+    await systemDialog().alert({title:options.title,message:options.message || '',buttonLabel:options.actions[0]?.label || '好'});
     return {index:0,value:''};
   }
   const index = await chooseNativeAction({title:options.title,message:options.message,
