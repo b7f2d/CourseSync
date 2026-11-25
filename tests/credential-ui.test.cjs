@@ -302,3 +302,37 @@ test('room transition is centered, retains native navigation and cancels before 
  const query=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('export async function presentNativeDashboard('));
  assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });
+
+test('room query exposes morning, afternoon, evening quick presets with times and custom section selection',()=>{
+ const vm=require('node:vm');
+ const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
+   .replace('(globalThis as any).Dialog','globalThis.Dialog')
+   .replace("rooms: ReadyRooms['rooms']",'rooms')
+   .replace('period: string, units: string[]','period, units')
+   .replace('unit: string','unit')
+   .replace('loadRooms:RoomLoader','loadRooms')
+   .replace('_value:number','_value')
+   .replace(' as const','');
+ const {presets,custom}=vm.runInNewContext(helpers+'\n({presets:ROOM_QUICK_PRESETS,custom:customRoomSelection})',{})
+ assert.deepEqual(JSON.parse(JSON.stringify(presets.slice(0,3).map(p=>[p.label,p.time]))),[
+   ['上午','08:20–12:15'],
+   ['下午','13:30–16:35'],
+   ['晚上','18:30–20:50'],
+ ]);
+ assert.equal(presets[3].label,'全天');
+ assert.equal(presets[3].time,'08:20–20:50');
+ assert.deepEqual(JSON.parse(JSON.stringify(custom(3,5))),{
+   label:'第3—5节 · 10:00–12:15',
+   time:'10:00–12:15',
+   periods:[{period:'自选时段',units:['3','4','5']}],
+ });
+ assert.deepEqual(JSON.parse(JSON.stringify(custom(10,10))),{
+   label:'第10节 · 16:45–17:25',
+   time:'16:45–17:25',
+   periods:[{period:'第10节',units:['10']}],
+ });
+ const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
+ assert.match(view,/ROOM_QUICK_PRESETS\.map/);
+ assert.match(view,/ROOM_LESSON_UNITS\.map/);
+ assert.match(view,/切换查询时段/);
+});

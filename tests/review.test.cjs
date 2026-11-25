@@ -2470,3 +2470,23 @@ test('CookieJar expires Epoch-dated Set-Cookie headers instead of keeping them a
  jar.ingest('https://jwxt.nufe.edu.cn/',{'set-cookie':'SID=0; Path=/; Max-Age=-1'});
  a.equal(jar.header('https://jwxt.nufe.edu.cn/'),'');
 });
+test('NUFE free classroom query supports custom selected periods and normalizes unit order',async()=>{
+ const e=await env();
+ const requested=[];
+ const http={
+  get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
+  json:async(_url,{body})=>{
+   const seg=JSON.parse(body).dateTimeSegmentCmd;
+   requested.push(seg.units);
+   return {roomList:[{id:301,nameZh:'博远楼JC301',buildingName:'博远楼',floor:3}]};
+  }
+ };
+ const result=await e.m.queryFreeRoomsToday(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
+  {period:'自选时段',units:['10','8','9','9']}
+ ]);
+ a.deepEqual(requested,[['8','9','10']]);
+ a.deepEqual(JSON.parse(JSON.stringify(result)),{
+  date:'2026-11-23',
+  rooms:[{period:'自选时段',units:['8','9','10'],buildings:[{name:'博远楼',floors:[{floor:3,roomCodes:['JC301']}]}]}]
+ });
+});

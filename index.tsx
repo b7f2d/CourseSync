@@ -2818,8 +2818,23 @@ const FREE_ROOM_PERIODS=[
   {period:'晚上',units:['11','12','13']}
 ];
 
-async function queryDayRooms(http,date,onProgress=()=>{}){
-  const results=await Promise.allSettled(FREE_ROOM_PERIODS.map(async ({period,units})=>{
+function normalizeRoomPeriods(periods){
+  if(!Array.isArray(periods)||!periods.length)return FREE_ROOM_PERIODS;
+  const normalized=periods.map(item=>{
+    const units=[...new Set((Array.isArray(item?.units)?item.units:[])
+      .map(String).filter(u=>/^(?:[1-9]|1[0-3])$/.test(u)))];
+    units.sort((a,b)=>Number(a)-Number(b));
+    if(!units.length)return null;
+    const period=String(item?.period||(units.length===1?'第'+units[0]+'节':'自选时段')).trim()||'自选时段';
+    return {period,units};
+  }).filter(Boolean);
+  assert(normalized.length,'SCHEMA');
+  return normalized;
+}
+
+async function queryDayRooms(http,date,onProgress=()=>{},periods=FREE_ROOM_PERIODS){
+  const target=normalizeRoomPeriods(periods);
+  const results=await Promise.allSettled(target.map(async ({period,units})=>{
     const buildings=await queryFreeRoomsForPeriod(http,date,units);
     return {period,units,buildings};
   }));
@@ -2829,20 +2844,20 @@ async function queryDayRooms(http,date,onProgress=()=>{}){
   return results.map(result=>result.value);
 }
 
-async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now,onAuthenticated=()=>{}){
+async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now,onAuthenticated=()=>{},periods=FREE_ROOM_PERIODS){
   await coursePage(http,true,onStage);
   onAuthenticated();
   onProgress(0.25);
   const date=localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
-  return {date,rooms:await queryDayRooms(http,date,onProgress)};
+  return {date,rooms:await queryDayRooms(http,date,onProgress,periods)};
 }
 
-async function loadFreeRoomPage(isActive,onProgress){
+async function loadFreeRoomPage(isActive,onProgress,periods){
   const checkActive=()=>{if(!isActive())fail('CANCELLED');};
   try{
     checkActive();
     const session=schoolSession(readCookieJar(),checkActive);
-    const results=await queryFreeRoomsToday(session.http,checkActive,onProgress,undefined,session.commitCookies);
+    const results=await queryFreeRoomsToday(session.http,checkActive,onProgress,undefined,session.commitCookies,periods);
     return {kind:'ready',...results};
   }catch(error){
     const code=diagnosticCode(error);
