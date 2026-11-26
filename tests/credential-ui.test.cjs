@@ -163,7 +163,6 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
    .replace('let date: string|undefined','let date')
-   .replace('let periods: RoomPeriodSpec[]|null=null','let periods=null')
    .replace('let result: FreeRoomResult','let result');
  const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
@@ -179,21 +178,20 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.equal(calls[2].message,'2026-11-23 · 仙林校区\n\n第1—5节 · 08:20–12:15\n博远楼\n1楼  JC101');
 
  sandbox.Date=class extends Date{static now(){return Date.parse('2027-01-01T01:02:00Z');}};
- selections.push(1,1,1,2,0,0);
- const promptValues=[null,'2030-02-29','2030-06-15'];
- const datePrompts=[];
- sandbox.Dialog.prompt=async opts=>{datePrompts.push(opts);return promptValues.shift();};
+ selections.push(1,1,-1,1,6,0,0);
  const fallbackDates=[];
- const fallbackPeriods=[];
  assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods,date)=>{
    fallbackDates.push(date);
-   fallbackPeriods.push(periods);
    return {kind:'ready',date:date??'2027-01-01',rooms:[]};
  }}),0);
- assert.deepEqual(fallbackDates,[undefined,'2030-06-15','2027-01-01']);
- assert.deepEqual(Array.from(fallbackPeriods.at(-1)[0].units),['2','3','4','5']);
- assert.equal(datePrompts[1].defaultValue,'2027-01-01');
- assert.match(datePrompts[2].message,/日期无效/);
+ assert.deepEqual(fallbackDates,[undefined,'2027-01-07']);
+ const dateMenus=calls.filter(menu=>menu.title==='选择日期');
+ assert.equal(dateMenus.length,2);
+ for(const menu of dateMenus){
+   assert.equal(menu.actions.length,7);
+   assert.equal(menu.actions[0].label,'今天 2027-01-01');
+   assert.equal(menu.actions[6].label,'2027-01-07');
+ }
 
  const presented=[];
  const seenPeriods=[];
@@ -304,7 +302,6 @@ test('classroom dialog displays the selected lessons and room groups without ext
 
 test('native classroom results arrange each building and its floors within one period row',()=>{
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
- assert.equal([...view.matchAll(/<Section\b/g)].length,1);
  assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\}/);
  assert.match(view,/result.rooms.map\(\(\{period,units,buildings\}\)/);
  assert.match(view,/floor.roomCodes.length[\s\S]*间整段空闲/);
@@ -326,7 +323,7 @@ test('room transition is centered, retains native navigation and cancels before 
  assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });
 
-test('room query uses exact school times and a Today shortcut with time-based default lessons',()=>{
+test('room query uses seven dates, three stepped controls, and all official lesson times',()=>{
  const vm=require('node:vm');
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
@@ -337,7 +334,7 @@ test('room query uses exact school times and a Today shortcut with time-based de
    .replace('_value:number','_value')
    .replace('date?:string','date')
    .replace(' as const','');
- const {select,label,defaults,defaultQuery,beijingDate,shiftDate,dateLabel,pickerDate}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,defaultQuery:defaultRoomQuery,beijingDate:beijingRoomDate,shiftDate:shiftRoomDate,dateLabel:roomDateLabel,pickerDate:pickerRoomDate})',{});
+ const {select,label,defaults,defaultQuery,dates,units}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,defaultQuery:defaultRoomQuery,dates:roomDates,units:ROOM_LESSON_UNITS})',{});
  const localMs=(h,m)=>Date.UTC(2026,10,25,h-8,m);
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
@@ -359,26 +356,19 @@ test('room query uses exact school times and a Today shortcut with time-based de
  assert.equal(select(5,3).periods,null);
  assert.equal(select(14,13).periods,null);
  assert.equal(select(1,0).periods,null);
- assert.equal(label('1'),'第1节  08:20–09:00');
- assert.equal(label('13'),'第13节  20:10–20:50');
+ const official=['08:20–09:00','09:05–09:45','10:00–10:40','10:45–11:25','11:35–12:15',
+   '13:30–14:10','14:15–14:55','15:10–15:50','15:55–16:35','16:45–17:25','18:30–19:10','19:20–20:00','20:10–20:50'];
+ assert.deepEqual(Array.from(units,label),official.map((time,i)=>'第'+(i+1)+'节  '+time));
 
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
- const today=beijingDate(Date.parse('2026-12-31T16:00:00Z'));
- assert.equal(dateLabel(today,today),'今天 2027-01-01');
- assert.equal(shiftDate(today,-7),'2026-12-25');
- assert.equal(shiftDate('2030-06-15',7),'2030-06-22');
- assert.equal(pickerDate(new Date(2025,0,3,12).getTime()),'2025-01-03');
+ assert.deepEqual(Array.from(dates('2026-12-29')),['2026-12-29','2026-12-30','2026-12-31','2027-01-01','2027-01-02','2027-01-03','2027-01-04']);
  assert.match(view,/\[dayOffset,setDayOffset\]=useState\(0\)/);
- const datePicker=view.match(/<DatePicker[\s\S]*?\/>/)?.[0];
- assert.match(datePicker,/datePickerStyle="compact"/);
- assert.doesNotMatch(datePicker,/startDate=|endDate=/);
- assert.match(view,/<Slider min=\{-ROOM_SLIDER_DAYS\} max=\{ROOM_SLIDER_DAYS\} step=\{1\}[\s\S]*<Picker title="开始节次"/);
- assert.match(view,/<Button title=\{'今天 '\+today\.slice\(5\)\}[^>]*action=\{resetToday\}/);
- assert.match(view,/const resetToday=\(\)=>\{[\s\S]*?defaultRoomQuery\(\)[\s\S]*?setDateAnchor\(current.date\);setDayOffset\(0\);[\s\S]*?setStartUnit\(current.startUnit\);setEndUnit\(current.endUnit\);/);
- assert.match(view,/pickerStyle="wheel"/);
- assert.match(view,/title="开始节次"/);
- assert.match(view,/title="结束节次"/);
- assert.match(view,/roomLessonLabel\(unit\)/);
+ assert.match(view,/title:'日期',value:dayOffset/);
+ assert.match(view,/title:'开始节次',value:startUnit/);
+ assert.match(view,/title:'结束节次',value:endUnit/);
+ assert.match(view,/<Slider min=\{first.value\} max=\{last.value\} step=\{1\}/);
+ assert.match(view,/<Section header=\{<Text>节次时间（北京时间）<\/Text>\}>\s*\{ROOM_LESSON_UNITS\.map[\s\S]*?roomLessonLabel\(unit\)/);
+ assert.doesNotMatch(view,/DatePicker|resetToday|pickerStyle="wheel"/);
  assert.doesNotMatch(native,/ROOM_QUICK_PRESETS|快捷选择/);
  assert.match(view,/更改时段/);
 });

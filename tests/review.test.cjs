@@ -2914,7 +2914,7 @@ test('NUFE free classroom query sends the chosen date and normalized lesson unit
    return {roomList:[{id:301,nameZh:'博远楼JC301',buildingName:'博远楼',floor:3}]};
   }
  };
- const dates=['2025-01-03','2030-06-15'];
+ const dates=['2026-11-23','2026-11-29'];
  for(const date of dates){
   const result=await e.m.queryFreeRooms(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
    {period:'自选时段',units:['10','8','9','9']}
@@ -2930,4 +2930,12 @@ test('classroom lookup rejects impossible selected dates before contacting the s
  const {m}=await env();
  const http={get:async()=>{throw new Error('unexpected auth request');}};
  await a.rejects(()=>m.queryFreeRooms(http,undefined,undefined,undefined,undefined,undefined,'2027-02-29'),code('ROOM_DATE'));
+});
+test('classroom lookup rejects dates outside the seven-day Beijing window before contacting the school',async()=>{
+ const {m}=await env();
+ const http={get:async()=>{throw new Error('unexpected auth request');}};
+ const now=Date.parse('2026-11-22T16:00:00Z');
+ for(const date of ['2026-11-22','2026-11-30']){
+  await a.rejects(()=>m.queryFreeRooms(http,undefined,undefined,now,undefined,undefined,date),code('ROOM_DATE_RANGE'));
+ }
 });

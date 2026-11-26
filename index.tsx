@@ -2929,6 +2929,9 @@ async function queryFreeRooms(http,onStage=()=>{},onProgress=()=>{},now,onAuthen
     assert(typeof requestedDate==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(requestedDate),'ROOM_DATE');
     const parsed=new Date(requestedDate+'T00:00:00Z');
     assert(Number.isFinite(+parsed)&&parsed.toISOString().slice(0,10)===requestedDate,'ROOM_DATE');
+    const today=localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
+    const offset=+parsed-Date.parse(today+'T00:00:00Z');
+    assert(offset>=0&&offset<7*DAY,'ROOM_DATE_RANGE');
   }
   await coursePage(http,true,onStage);
   const roomHTTP=onAuthenticated()??http;
@@ -2951,6 +2954,7 @@ async function loadFreeRoomPage(isActive,onProgress,periods,requestedDate){
     const code=diagnosticCode(error);
     if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
     if(code==='ROOM_DATE')return {kind:'error',message:'查询日期无效，请重新选择。'};
+    if(code==='ROOM_DATE_RANGE')return {kind:'error',message:'请选择北京时间今天起 7 天内的日期。'};
     if(code==='ACCOUNT_CHANGED')
       return {kind:'error',message:'教务账号与课表绑定账号不一致。请退出后用原账号登录。'};
     if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
