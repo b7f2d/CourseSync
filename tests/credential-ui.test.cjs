@@ -178,13 +178,18 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.equal(calls[2].message,'2026-11-23 · 仙林校区\n\n第1—5节 · 08:20–12:15\n博远楼\n1楼  JC101');
 
  sandbox.Date=class extends Date{static now(){return Date.parse('2026-12-31T16:30:00Z');}};
- selections.push(1,1,-1,1,2,0,0);
+ selections.push(1,1,1,0,0);
+ const promptValues=[null,'2030-02-29','2030-06-15'];
+ const datePrompts=[];
+ sandbox.Dialog.prompt=async opts=>{datePrompts.push(opts);return promptValues.shift();};
  const fallbackDates=[];
  assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,_periods,date)=>{
    fallbackDates.push(date);
    return {kind:'ready',date:date??'2027-01-01',rooms:[]};
  }}),0);
- assert.deepEqual(fallbackDates,[undefined,'2027-01-03']);
+ assert.deepEqual(fallbackDates,[undefined,'2030-06-15']);
+ assert.equal(datePrompts[1].defaultValue,'2027-01-01');
+ assert.match(datePrompts[2].message,/日期无效/);
 
  const presented=[];
  const seenPeriods=[];
@@ -328,7 +333,7 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
    .replace('_value:number','_value')
    .replace('date?:string','date')
    .replace(' as const','');
- const {select,label,defaults,dateAt,dateLabel}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,dateAt:roomDateAt,dateLabel:roomDateLabel})',{});
+ const {select,label,defaults,beijingDate,shiftDate,dateLabel,pickerDate}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,beijingDate:beijingRoomDate,shiftDate:shiftRoomDate,dateLabel:roomDateLabel,pickerDate:pickerRoomDate})',{});
  const localMs=(h,m)=>Date.UTC(2026,10,25,h-8,m);
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
@@ -351,10 +356,16 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.equal(label('13'),'第13节  20:10–20:50');
 
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
- assert.equal(dateLabel(Date.parse('2026-12-31T16:00:00Z'),0),'今天 2027-01-01');
- assert.equal(dateAt(Date.parse('2026-12-31T16:00:00Z'),14),'2027-01-15');
+ const today=beijingDate(Date.parse('2026-12-31T16:00:00Z'));
+ assert.equal(dateLabel(today,today),'今天 2027-01-01');
+ assert.equal(shiftDate(today,-7),'2026-12-25');
+ assert.equal(shiftDate('2030-06-15',7),'2030-06-22');
+ assert.equal(pickerDate(new Date(2025,0,3,12).getTime()),'2025-01-03');
  assert.match(view,/\[dayOffset,setDayOffset\]=useState\(0\)/);
- assert.match(view,/<Slider min=\{0\} max=\{ROOM_DATE_MAX_OFFSET\} step=\{1\}[\s\S]*<Picker title="开始节次"/);
+ const datePicker=view.match(/<DatePicker[\s\S]*?\/>/)?.[0];
+ assert.match(datePicker,/datePickerStyle="compact"/);
+ assert.doesNotMatch(datePicker,/startDate=|endDate=/);
+ assert.match(view,/<Slider min=\{-ROOM_SLIDER_DAYS\} max=\{ROOM_SLIDER_DAYS\} step=\{1\}[\s\S]*<Picker title="开始节次"/);
  assert.match(view,/pickerStyle="wheel"/);
  assert.match(view,/title="开始节次"/);
  assert.match(view,/title="结束节次"/);

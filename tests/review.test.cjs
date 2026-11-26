@@ -2914,14 +2914,17 @@ test('NUFE free classroom query sends the chosen date and normalized lesson unit
    return {roomList:[{id:301,nameZh:'博远楼JC301',buildingName:'博远楼',floor:3}]};
   }
  };
- const result=await e.m.queryFreeRooms(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
-  {period:'自选时段',units:['10','8','9','9']}
- ],'2026-12-01');
- a.deepEqual(requested,[{startDateTime:'2026-12-01',endDateTime:'2026-12-01',units:['8','9','10']}]);
- a.deepEqual(JSON.parse(JSON.stringify(result)),{
-  date:'2026-12-01',
-  rooms:[{period:'自选时段',units:['8','9','10'],buildings:[{name:'博远楼',floors:[{floor:3,roomCodes:['JC301']}]}]}]
- });
+ const dates=['2025-01-03','2030-06-15'];
+ for(const date of dates){
+  const result=await e.m.queryFreeRooms(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
+   {period:'自选时段',units:['10','8','9','9']}
+  ],date);
+  a.deepEqual(JSON.parse(JSON.stringify(result)),{
+   date,
+   rooms:[{period:'自选时段',units:['8','9','10'],buildings:[{name:'博远楼',floors:[{floor:3,roomCodes:['JC301']}]}]}]
+  });
+ }
+ a.deepEqual(requested,dates.map(date=>({startDateTime:date,endDateTime:date,units:['8','9','10']})));
 });
 test('classroom lookup rejects impossible selected dates before contacting the school',async()=>{
  const {m}=await env();

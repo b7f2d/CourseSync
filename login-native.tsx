@@ -2,7 +2,7 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Dialog, Navigation, NavigationStack, List, Section, Text, Picker, Slider,
+  Dialog, Navigation, NavigationStack, List, Section, Text, Picker, Slider, DatePicker,
   TextField, SecureField, Button, Image, ProgressView, VStack, HStack, DisclosureGroup, useState, useEffect,
 } from 'scripting';
 
@@ -172,15 +172,38 @@ async function chooseNativeAction(options) {
 
 const ROOM_CAMPUS='仙林校区';
 const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
-const ROOM_DATE_MAX_OFFSET=14;
+const ROOM_SLIDER_DAYS=7;
 const ROOM_BEIJING_OFFSET_MS=8*3600000;
+const ROOM_DAY_MS=86400000;
 
-function roomDateAt(baseMs,offset){
-  return new Date(baseMs+ROOM_BEIJING_OFFSET_MS+offset*86400000).toISOString().slice(0,10);
+function beijingRoomDate(baseMs=Date.now()){
+  return new Date(baseMs+ROOM_BEIJING_OFFSET_MS).toISOString().slice(0,10);
 }
-function roomDateLabel(baseMs,offset){
-  const date=roomDateAt(baseMs,offset);
-  return offset===0?'今天 '+date:offset===1?'明天 '+date:date;
+function shiftRoomDate(date,days){
+  return new Date(Date.parse(date+'T00:00:00Z')+days*ROOM_DAY_MS).toISOString().slice(0,10);
+}
+function roomDateLabel(date,today){
+  return date===today?'今天 '+date:date===shiftRoomDate(today,1)?'明天 '+date:date;
+}
+function pickerRoomDate(timestamp){
+  const date=new Date(timestamp);
+  return [String(date.getFullYear()).padStart(4,'0'),String(date.getMonth()+1).padStart(2,'0'),
+    String(date.getDate()).padStart(2,'0')].join('-');
+}
+async function promptRoomDate(date){
+  const dialog=systemDialog();
+  if(typeof dialog?.prompt!=='function')return null;
+  let value=date;
+  let message='请输入日期，格式为 YYYY-MM-DD。';
+  while(true){
+    const input=await dialog.prompt({title:'选择日期',message,defaultValue:value,
+      placeholder:'YYYY-MM-DD',cancelLabel:'取消',confirmLabel:'确定'});
+    if(input==null)return null;
+    value=input.trim();
+    const parsed=new Date(value+'T00:00:00Z');
+    if(/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(+parsed)&&parsed.toISOString().slice(0,10)===value)return value;
+    message='日期无效，请按 YYYY-MM-DD 格式重新输入。';
+  }
 }
 
 // NUFE Academic Affairs timetable effective 2025-09-01.
@@ -262,6 +285,8 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
   const dismiss=Navigation.useDismiss();
   const [openedAt]=useState(()=>Date.now());
   const initialUnits=defaultRoomUnits(openedAt);
+  const today=beijingRoomDate(openedAt);
+  const [dateAnchor,setDateAnchor]=useState(today);
   const [dayOffset,setDayOffset]=useState(0);
   const [startUnit,setStartUnit]=useState(initialUnits.startUnit);
   const [endUnit,setEndUnit]=useState(initialUnits.endUnit);
@@ -269,7 +294,7 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
   const [result,setResult]=useState<FreeRoomResult|null>(null);
   const [attempt,setAttempt]=useState(0);
   const [connected,setConnected]=useState(false);
-  const date=roomDateAt(openedAt,dayOffset);
+  const date=shiftRoomDate(dateAnchor,dayOffset);
   useEffect(()=>{
     if(!selectedPeriods)return;
     let active=true;
@@ -301,6 +326,12 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     resetPicker();
     setDayOffset(next);
   };
+  const selectDate=(next:string)=>{
+    if(next===date)return;
+    resetPicker();
+    setDayOffset(0);
+    setDateAnchor(next);
+  };
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
     {selectedPeriods&&!result?<VStack navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline"
       toolbar={toolbar} spacing={12} padding={24}
@@ -311,13 +342,17 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       </Text>
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup" toolbar={toolbar}>
       <VStack alignment="leading" spacing={6} padding={{top:4,bottom:4}}>
-        <Text font="subheadline" fontWeight="semibold">日期 · {roomDateLabel(openedAt,dayOffset)}</Text>
-        {Slider?<Slider min={0} max={ROOM_DATE_MAX_OFFSET} step={1} value={dayOffset} onChanged={onDateChanged}
-          label={<Text>查询日期</Text>} accessibilityValue={roomDateLabel(openedAt,dayOffset)}
-          minValueLabel={<Text>今天</Text>} maxValueLabel={<Text>{roomDateAt(openedAt,ROOM_DATE_MAX_OFFSET).slice(5)}</Text>}/>
-          :<Picker title="查询日期" pickerStyle="menu" value={dayOffset} onChanged={onDateChanged}>
-            {Array.from({length:ROOM_DATE_MAX_OFFSET+1},(_,offset)=><Text key={offset} tag={offset}>{roomDateLabel(openedAt,offset)}</Text>)}
-          </Picker>}
+        {DatePicker?<DatePicker title={date===today?'日期（今天）':'日期'} datePickerStyle="compact"
+          displayedComponents={['date']} value={new Date(date+'T12:00:00').getTime()}
+          onChanged={value=>selectDate(pickerRoomDate(value))}/>
+          :<Button title={roomDateLabel(date,today)} action={async()=>{
+            const next=await promptRoomDate(date);
+            if(next)selectDate(next);
+          }}/>}
+        {Slider&&<Slider min={-ROOM_SLIDER_DAYS} max={ROOM_SLIDER_DAYS} step={1} value={dayOffset} onChanged={onDateChanged}
+          label={<Text>查询日期</Text>} accessibilityValue={roomDateLabel(date,today)}
+          minValueLabel={<Text>{shiftRoomDate(dateAnchor,-ROOM_SLIDER_DAYS).slice(5)}</Text>}
+          maxValueLabel={<Text>{shiftRoomDate(dateAnchor,ROOM_SLIDER_DAYS).slice(5)}</Text>}/>}
       </VStack>
       {!selectedPeriods&&<VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
         <Text font="subheadline" fontWeight="semibold">开始节次</Text>
@@ -410,11 +445,9 @@ async function presentRoomQuery(loadRooms:RoomLoader) {
       message:result.kind==='ready'?formatRoomResults(result.date,result.rooms):result.message,
       actions:[{label:ready?'返回':'重试'},{label:'更改日期'}],cancelButton:!ready,cancelLabel:'返回'});
     if(selected===1){
-      const baseMs=Date.now();
-      const offset=await chooseNativeAction({title:'查询日期',
-        actions:Array.from({length:ROOM_DATE_MAX_OFFSET+1},(_,day)=>({label:roomDateLabel(baseMs,day)})),cancelButton:true});
-      if(offset==null||offset<0)continue;
-      date=roomDateAt(baseMs,offset);
+      const next=await promptRoomDate(result.kind==='ready'?result.date:date??beijingRoomDate());
+      if(!next)continue;
+      date=next;
     }else if(ready||selected!==0)return;
     result=await readRoomResults(loadRooms,undefined,undefined,null,date);
   }
