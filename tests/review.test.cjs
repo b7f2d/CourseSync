@@ -2661,7 +2661,7 @@ test('NUFE free classroom query queries lesson 10 separately for today in China 
    }
  };
  const progress=[];
- const result=await e.m.queryFreeRoomsToday(http,()=>{},value=>progress.push(value),Date.parse('2026-11-15T16:30:00Z'));
+ const result=await e.m.queryFreeRooms(http,()=>{},value=>progress.push(value),Date.parse('2026-11-15T16:30:00Z'));
  a.deepEqual(progress,[0.25,1]);
  a.equal(result.date,'2026-11-16');
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
@@ -2693,7 +2693,7 @@ test('classroom query uses the new Beijing date when login crosses midnight',asy
      return {roomList:[room]};
    }
  };
- const result=await e.m.queryFreeRoomsToday(http);
+ const result=await e.m.queryFreeRooms(http);
  a.equal(result.date,'2026-11-24');
  a.deepEqual(dates,Array(4).fill('2026-11-24'));
 });
@@ -2903,23 +2903,28 @@ test('CookieJar expires Epoch-dated Set-Cookie headers instead of keeping them a
  jar.ingest('https://jwxt.nufe.edu.cn/',{'set-cookie':'SID=0; Path=/; Max-Age=-1'});
  a.equal(jar.header('https://jwxt.nufe.edu.cn/'),'');
 });
-test('NUFE free classroom query supports custom selected periods and normalizes unit order',async()=>{
+test('NUFE free classroom query sends the chosen date and normalized lesson units',async()=>{
  const e=await env();
  const requested=[];
  const http={
   get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}),
   json:async(_url,{body})=>{
    const seg=JSON.parse(body).dateTimeSegmentCmd;
-   requested.push(seg.units);
+   requested.push(seg);
    return {roomList:[{id:301,nameZh:'博远楼JC301',buildingName:'博远楼',floor:3}]};
   }
  };
- const result=await e.m.queryFreeRoomsToday(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
+ const result=await e.m.queryFreeRooms(http,()=>{},()=>{},Date.parse('2026-11-23T04:00:00Z'),()=>{},[
   {period:'自选时段',units:['10','8','9','9']}
- ]);
- a.deepEqual(requested,[['8','9','10']]);
+ ],'2026-12-01');
+ a.deepEqual(requested,[{startDateTime:'2026-12-01',endDateTime:'2026-12-01',units:['8','9','10']}]);
  a.deepEqual(JSON.parse(JSON.stringify(result)),{
-  date:'2026-11-23',
+  date:'2026-12-01',
   rooms:[{period:'自选时段',units:['8','9','10'],buildings:[{name:'博远楼',floors:[{floor:3,roomCodes:['JC301']}]}]}]
  });
+});
+test('classroom lookup rejects impossible selected dates before contacting the school',async()=>{
+ const {m}=await env();
+ const http={get:async()=>{throw new Error('unexpected auth request');}};
+ await a.rejects(()=>m.queryFreeRooms(http,undefined,undefined,undefined,undefined,undefined,'2027-02-29'),code('ROOM_DATE'));
 });

@@ -2924,27 +2924,33 @@ async function queryDayRooms(http,date,onProgress=()=>{},periods=FREE_ROOM_PERIO
   return results.map(result=>result.value);
 }
 
-async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now,onAuthenticated=()=>{},periods=FREE_ROOM_PERIODS){
+async function queryFreeRooms(http,onStage=()=>{},onProgress=()=>{},now,onAuthenticated=()=>{},periods=FREE_ROOM_PERIODS,requestedDate){
+  if(requestedDate!==undefined){
+    assert(typeof requestedDate==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(requestedDate),'ROOM_DATE');
+    const parsed=new Date(requestedDate+'T00:00:00Z');
+    assert(Number.isFinite(+parsed)&&parsed.toISOString().slice(0,10)===requestedDate,'ROOM_DATE');
+  }
   await coursePage(http,true,onStage);
   const roomHTTP=onAuthenticated()??http;
   onProgress(0.25);
-  const date=localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
+  const date=requestedDate??localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
   return {date,rooms:await queryDayRooms(roomHTTP,date,onProgress,periods)};
 }
 
-async function loadFreeRoomPage(isActive,onProgress,periods){
+async function loadFreeRoomPage(isActive,onProgress,periods,requestedDate){
   const checkActive=()=>{if(!isActive())fail('CANCELLED');};
   try{
     checkActive();
     const session=schoolSession(readCookieJar(),checkActive);
-    const results=await queryFreeRoomsToday(session.http,checkActive,onProgress,undefined,()=>{
+    const results=await queryFreeRooms(session.http,checkActive,onProgress,undefined,()=>{
       session.commitCookies();
       return session.http.withPrivateCookies();
-    },periods);
+    },periods,requestedDate);
     return {kind:'ready',...results};
   }catch(error){
     const code=diagnosticCode(error);
     if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
+    if(code==='ROOM_DATE')return {kind:'error',message:'查询日期无效，请重新选择。'};
     if(code==='ACCOUNT_CHANGED')
       return {kind:'error',message:'教务账号与课表绑定账号不一致。请退出后用原账号登录。'};
     if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
@@ -3192,7 +3198,7 @@ async function runAttempt() {
   }
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRoomsToday,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,queryDayRooms};
+if(globalThis.__COURSESYNC_TEST__)module.exports={offlineAgenda,ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,snapshotSignature,createProgress,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,reportRefreshFailure,clearLegacyReminders,reportBackgroundFailure,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,syncExams,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,NUFE_SCHOOL,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run,queryFreeRoomsForPeriod,queryFreeRooms,BUILDING_PRIORITY,NUFE_FREE_ROOM_ENDPOINT,queryDayRooms};
 else await run();
 
 // SPDX-License-Identifier: GPL-3.0-only. Full license available in LICENSE file.

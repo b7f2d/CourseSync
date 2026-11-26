@@ -2,7 +2,7 @@
 // No HTML, embedded URLs, requests, clipboard reads, telemetry or password persistence.
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
-  Dialog, Navigation, NavigationStack, List, Section, Text, Picker,
+  Dialog, Navigation, NavigationStack, List, Section, Text, Picker, Slider,
   TextField, SecureField, Button, Image, ProgressView, VStack, HStack, DisclosureGroup, useState, useEffect,
 } from 'scripting';
 
@@ -125,7 +125,7 @@ export type DashboardOptions = {
   state: any;
   canSignOut: boolean;
   statusMessage: string;
-  loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void, periods?: RoomPeriodSpec[]) => Promise<FreeRoomResult>;
+  loadFreeRooms?: (isActive: () => boolean, updateProgress: (value: number) => void, periods?: RoomPeriodSpec[], date?: string) => Promise<FreeRoomResult>;
 };
 type RoomLoader = NonNullable<DashboardOptions['loadFreeRooms']>;
 
@@ -172,6 +172,16 @@ async function chooseNativeAction(options) {
 
 const ROOM_CAMPUS='仙林校区';
 const NO_FULL_PERIOD_ROOMS='无整段空闲教室';
+const ROOM_DATE_MAX_OFFSET=14;
+const ROOM_BEIJING_OFFSET_MS=8*3600000;
+
+function roomDateAt(baseMs,offset){
+  return new Date(baseMs+ROOM_BEIJING_OFFSET_MS+offset*86400000).toISOString().slice(0,10);
+}
+function roomDateLabel(baseMs,offset){
+  const date=roomDateAt(baseMs,offset);
+  return offset===0?'今天 '+date:offset===1?'明天 '+date:date;
+}
 
 // NUFE Academic Affairs timetable effective 2025-09-01.
 // https://jwc.nufe.edu.cn/info/1085/7873.htm
@@ -197,7 +207,7 @@ function parseClockMinutes(clock) {
   return h * 60 + m;
 }
 function defaultRoomUnits(baseMs = Date.now()) {
-  const d = new Date(baseMs + 8 * 3600000);
+  const d = new Date(baseMs + ROOM_BEIJING_OFFSET_MS);
   const nowMin = d.getUTCHours() * 60 + d.getUTCMinutes();
   const found = nowMin < 20 * 60 + 50
     ? ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin)
@@ -241,33 +251,34 @@ function formatRoomResults(date, rooms: ReadyRooms['rooms']) {
   return [date+' · '+ROOM_CAMPUS,...periods].join('\n\n');
 }
 
-async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{},selection=null) {
+async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProgress=(_value:number)=>{},selection=null,date?:string) {
   try{
-    return Array.isArray(selection)
-      ? await loadRooms(isActive,updateProgress,selection)
-      : await loadRooms(isActive,updateProgress);
+    return await loadRooms(isActive,updateProgress,Array.isArray(selection)?selection:undefined,date);
   }
   catch(_){return {kind:'error',message:'查询失败，请稍后重试。'} as const;}
 }
 
 function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpen:()=>boolean;onClose:()=>void}) {
   const dismiss=Navigation.useDismiss();
-  const [initialUnits]=useState(()=>defaultRoomUnits());
+  const [openedAt]=useState(()=>Date.now());
+  const initialUnits=defaultRoomUnits(openedAt);
+  const [dayOffset,setDayOffset]=useState(0);
   const [startUnit,setStartUnit]=useState(initialUnits.startUnit);
   const [endUnit,setEndUnit]=useState(initialUnits.endUnit);
   const [selectedPeriods,setSelectedPeriods]=useState<RoomPeriodSpec[]|null>(null);
   const [result,setResult]=useState<FreeRoomResult|null>(null);
   const [attempt,setAttempt]=useState(0);
   const [connected,setConnected]=useState(false);
+  const date=roomDateAt(openedAt,dayOffset);
   useEffect(()=>{
     if(!selectedPeriods)return;
     let active=true;
     const isActive=()=>active&&isOpen();
     void readRoomResults(loadRooms,isActive,value=>{
       if(isActive()&&value>=0.25)setConnected(true);
-    },selectedPeriods).then(next=>{if(isActive())setResult(next);});
+    },selectedPeriods,date).then(next=>{if(isActive())setResult(next);});
     return ()=>{active=false;};
-  },[attempt,selectedPeriods]);
+  },[attempt,selectedPeriods,date]);
   const close=()=>{onClose();dismiss();};
   const toolbar={cancellationAction:<Button title={result?'返回':'取消'} action={close}/>};
   const selection=roomSelectionForUnits(startUnit,endUnit);
@@ -282,52 +293,63 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     if(n<startUnit)setStartUnit(n);
   };
   const startQuery=(periods:RoomPeriodSpec[])=>{
-    setResult(null);setConnected(false);setSelectedPeriods(periods);setAttempt(attempt+1);
+    setResult(null);setConnected(false);setSelectedPeriods(periods);
   };
   const resetPicker=()=>{setSelectedPeriods(null);setResult(null);setConnected(false);};
+  const onDateChanged=(next:number)=>{
+    if(next===dayOffset)return;
+    resetPicker();
+    setDayOffset(next);
+  };
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
-    {!selectedPeriods?<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
-      toolbar={toolbar}>
-      <VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
-        <Text font="subheadline" fontWeight="semibold">开始节次</Text>
-        <Picker title="开始节次" pickerStyle="wheel" value={startUnit} onChanged={onStartChanged}
-          frame={{maxWidth:'infinity',height:145}}>
-          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
-        </Picker>
-      </VStack>
-      <VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
-        <Text font="subheadline" fontWeight="semibold">结束节次</Text>
-        <Picker title="结束节次" pickerStyle="wheel" value={endUnit} onChanged={onEndChanged}
-          frame={{maxWidth:'infinity',height:145}}>
-          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
-        </Picker>
-      </VStack>
-      <VStack alignment="leading" spacing={8} padding={{top:4,bottom:4}}>
-        <Text font="headline" monospacedDigit={true} foregroundStyle={selection.periods?'primary':'red'}>
-          {selection.label}
-        </Text>
-        <Button title="查询" buttonStyle="borderedProminent" disabled={!selection.periods}
-          action={()=>{if(selection.periods)startQuery(selection.periods);}}/>
-      </VStack>
-    </List>:!result?<VStack navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline"
+    {selectedPeriods&&!result?<VStack navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline"
       toolbar={toolbar} spacing={12} padding={24}
       frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
       <ProgressView progressViewStyle="circular" scaleEffect={1.4}/>
       <Text font="body" fontWeight="medium" multilineTextAlignment="center">
         {connected?'查询中…':'连接教务系统…'}
       </Text>
-    </VStack>:result.kind==='error'?<VStack navigationTitle="空闲教室"
-      navigationBarTitleDisplayMode="inline" toolbar={toolbar} spacing={14} padding={24}
-      frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-      <Image systemName="exclamationmark.circle" font="largeTitle" foregroundStyle="secondary"/>
-      <Text font="subheadline" foregroundStyle="secondary" multilineTextAlignment="center">{result.message}</Text>
-      <Button title="重试" buttonStyle="borderedProminent" action={()=>{
-        setResult(null);setConnected(false);setAttempt(attempt+1);
-      }}/>
-      <Button title="更改时段" action={resetPicker}/>
-    </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
-      toolbar={toolbar}>
-      <Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
+    </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup" toolbar={toolbar}>
+      <VStack alignment="leading" spacing={6} padding={{top:4,bottom:4}}>
+        <Text font="subheadline" fontWeight="semibold">日期 · {roomDateLabel(openedAt,dayOffset)}</Text>
+        {Slider?<Slider min={0} max={ROOM_DATE_MAX_OFFSET} step={1} value={dayOffset} onChanged={onDateChanged}
+          label={<Text>查询日期</Text>} accessibilityValue={roomDateLabel(openedAt,dayOffset)}
+          minValueLabel={<Text>今天</Text>} maxValueLabel={<Text>{roomDateAt(openedAt,ROOM_DATE_MAX_OFFSET).slice(5)}</Text>}/>
+          :<Picker title="查询日期" pickerStyle="menu" value={dayOffset} onChanged={onDateChanged}>
+            {Array.from({length:ROOM_DATE_MAX_OFFSET+1},(_,offset)=><Text key={offset} tag={offset}>{roomDateLabel(openedAt,offset)}</Text>)}
+          </Picker>}
+      </VStack>
+      {!selectedPeriods&&<VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
+        <Text font="subheadline" fontWeight="semibold">开始节次</Text>
+        <Picker title="开始节次" pickerStyle="wheel" value={startUnit} onChanged={onStartChanged}
+          frame={{maxWidth:'infinity',height:145}}>
+          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
+        </Picker>
+      </VStack>}
+      {!selectedPeriods&&<VStack alignment="leading" spacing={4} padding={{top:2,bottom:2}}>
+        <Text font="subheadline" fontWeight="semibold">结束节次</Text>
+        <Picker title="结束节次" pickerStyle="wheel" value={endUnit} onChanged={onEndChanged}
+          frame={{maxWidth:'infinity',height:145}}>
+          {ROOM_LESSON_UNITS.map(unit=><Text key={unit} tag={Number(unit)}>{roomLessonLabel(unit)}</Text>)}
+        </Picker>
+      </VStack>}
+      {!selectedPeriods&&<VStack alignment="leading" spacing={8} padding={{top:4,bottom:4}}>
+        <Text font="headline" monospacedDigit={true} foregroundStyle={selection.periods?'primary':'red'}>
+          {selection.label}
+        </Text>
+        <Button title="查询" buttonStyle="borderedProminent" disabled={!selection.periods}
+          action={()=>{if(selection.periods)startQuery(selection.periods);}}/>
+      </VStack>}
+      {selectedPeriods&&result?.kind==='error'&&<VStack spacing={14} padding={24}
+        frame={{maxWidth:'infinity',alignment:'center'}}>
+        <Image systemName="exclamationmark.circle" font="largeTitle" foregroundStyle="secondary"/>
+        <Text font="subheadline" foregroundStyle="secondary" multilineTextAlignment="center">{result.message}</Text>
+        <Button title="重试" buttonStyle="borderedProminent" action={()=>{
+          setResult(null);setConnected(false);setAttempt(attempt+1);
+        }}/>
+        <Button title="更改时段" action={resetPicker}/>
+      </VStack>}
+      {selectedPeriods&&result?.kind==='ready'&&<Section header={<Text>{result.date} · {ROOM_CAMPUS}</Text>}>
         {result.rooms.map(({period,units,buildings})=>
           <VStack key={period} alignment="leading" spacing={8} padding={{top:2,bottom:2}}>
             {units.length>1?<DisclosureGroup title={roomPeriodTitle(units)}>
@@ -352,8 +374,8 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
               </HStack>):
               <Text font="subheadline" foregroundStyle="secondary">{NO_FULL_PERIOD_ROOMS}</Text>}
           </VStack>)}
-      </Section>
-      <Button title="更改时段" action={resetPicker}/>
+      </Section>}
+      {selectedPeriods&&result?.kind==='ready'&&<Button title="更改时段" action={resetPicker}/>}
     </List>}
   </NavigationStack>;
 }
@@ -361,11 +383,9 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
 async function presentRoomQuery(loadRooms:RoomLoader) {
   if(typeof Navigation?.present==='function'&&typeof useEffect==='function'&&ProgressView){
     let open=true,started=false;
-    const trackedLoad:RoomLoader=(isActive,updateProgress,periods)=>{
+    const trackedLoad:RoomLoader=(isActive,updateProgress,periods,date)=>{
       started=true;
-      return Array.isArray(periods)
-        ? loadRooms(isActive,updateProgress,periods)
-        : loadRooms(isActive,updateProgress);
+      return loadRooms(isActive,updateProgress,periods,date);
     };
     try{
       await Navigation.present({element:<RoomResultsView loadRooms={trackedLoad} isOpen={()=>open} onClose={()=>{open=false;}}/>,
@@ -382,16 +402,21 @@ async function presentRoomQuery(loadRooms:RoomLoader) {
       }
     }finally{open=false;}
   }
+  let date: string|undefined;
+  let result=await readRoomResults(loadRooms);
   while(true){
-    const result=await readRoomResults(loadRooms);
-    if(result.kind==='ready'){
-      await chooseNativeAction({title:'空闲教室',message:formatRoomResults(result.date,result.rooms),
-        actions:[{label:'返回'}],cancelButton:false});
-      return;
-    }
-    const selected=await chooseNativeAction({title:'空闲教室',message:result.message,
-      actions:[{label:'重试'}],cancelButton:true,cancelLabel:'返回'});
-    if(selected!==0)return;
+    const ready=result.kind==='ready';
+    const selected=await chooseNativeAction({title:'空闲教室',
+      message:result.kind==='ready'?formatRoomResults(result.date,result.rooms):result.message,
+      actions:[{label:ready?'返回':'重试'},{label:'更改日期'}],cancelButton:!ready,cancelLabel:'返回'});
+    if(selected===1){
+      const baseMs=Date.now();
+      const offset=await chooseNativeAction({title:'查询日期',
+        actions:Array.from({length:ROOM_DATE_MAX_OFFSET+1},(_,day)=>({label:roomDateLabel(baseMs,day)})),cancelButton:true});
+      if(offset==null||offset<0)continue;
+      date=roomDateAt(baseMs,offset);
+    }else if(ready||selected!==0)return;
+    result=await readRoomResults(loadRooms,undefined,undefined,null,date);
   }
 }
 

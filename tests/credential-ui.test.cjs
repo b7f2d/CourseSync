@@ -127,10 +127,10 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
  assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
- assert.match(index,/queryFreeRoomsToday/);
+ assert.match(index,/queryFreeRooms/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
  assert.doesNotMatch(native,/navigationDestination=\{\{/);
- assert.match(native,/await loadRooms\(isActive,updateProgress\)/);
+ assert.match(native,/await loadRooms\(isActive,updateProgress,Array\.isArray\(selection\)\?selection:undefined,date\)/);
  assert.match(native,/formatRoomResults\(result.date,result.rooms\)/);
  assert.match(index,/canFreeRooms=activeSchoolId==='nufe'&&!state\.signedOut&&canSignOut/);
 });
@@ -153,6 +153,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('unit: string','unit')
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
+   .replace('date?:string','date')
    .replace(' as const','');
  const dashboard=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('\ntype CalendarManageOptions'))
    .replace('loadRooms:RoomLoader','loadRooms')
@@ -161,6 +162,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('export async function','async function')
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
+   .replace('let date: string|undefined','let date')
    .replace('let result: FreeRoomResult','let result');
  const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
@@ -175,21 +177,32 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.equal(calls[2].title,'空闲教室');
  assert.equal(calls[2].message,'2026-11-23 · 仙林校区\n\n第1—5节 · 08:20–12:15\n博远楼\n1楼  JC101');
 
+ sandbox.Date=class extends Date{static now(){return Date.parse('2026-12-31T16:30:00Z');}};
+ selections.push(1,1,-1,1,2,0,0);
+ const fallbackDates=[];
+ assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,_periods,date)=>{
+   fallbackDates.push(date);
+   return {kind:'ready',date:date??'2027-01-01',rooms:[]};
+ }}),0);
+ assert.deepEqual(fallbackDates,[undefined,'2027-01-03']);
+
  const presented=[];
  const seenPeriods=[];
+ const seenDates=[];
  sandbox.useEffect=()=>{};
  sandbox.ProgressView=true;
  sandbox.Navigation.present=async ({element,modalPresentationStyle})=>{
    assert.equal(modalPresentationStyle,'pageSheet');
    assert.equal(element.isOpen(),true);
    const custom=[{period:'3,4',units:['3','4']}];
-   presented.push({element,result:await element.loadRooms(element.isOpen,()=>{},custom)});
+   presented.push({element,result:await element.loadRooms(element.isOpen,()=>{},custom,'2026-11-25')});
  };
  selections.push(1,0);
  rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'3,4',units:['3','4'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
- assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods)=>{seenPeriods.push(periods);return rooms.shift();}}),0);
+ assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods,date)=>{seenPeriods.push(periods);seenDates.push(date);return rooms.shift();}}),0);
  assert.equal(presented.length,1);
  assert.deepEqual(seenPeriods,[[{period:'3,4',units:['3','4']}]]);
+ assert.deepEqual(seenDates,['2026-11-25']);
  assert.deepEqual(presented[0].result.rooms[0].buildings,[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]);
  assert.equal(presented[0].element.isOpen(),false);
 });
@@ -297,7 +310,7 @@ test('room transition is centered, retains native navigation and cancels before 
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
  assert.match(view,/<VStack navigationTitle="空闲教室"[\s\S]*?alignment:'center'[\s\S]*?<ProgressView/);
  assert.match(view,/const close=\(\)=>\{onClose\(\);dismiss\(\);\}/);
- assert.match(view,/result\.kind==='error'\?<VStack/);
+ assert.match(view,/result\?\.kind==='error'&&<VStack/);
  assert.match(view,/toolbar=\{toolbar\}/);
  assert.doesNotMatch(view,/<ProgressView[^>]*progress=\{/);
  const query=native.slice(native.indexOf('async function presentRoomQuery('),native.indexOf('export async function presentNativeDashboard('));
@@ -313,8 +326,9 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
    .replace('unit: string','unit')
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
+   .replace('date?:string','date')
    .replace(' as const','');
- const {select,label,defaults}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits})',{});
+ const {select,label,defaults,dateAt,dateLabel}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,dateAt:roomDateAt,dateLabel:roomDateLabel})',{});
  const localMs=(h,m)=>Date.UTC(2026,10,25,h-8,m);
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
@@ -337,6 +351,10 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.equal(label('13'),'第13节  20:10–20:50');
 
  const view=native.slice(native.indexOf('function RoomResultsView('),native.indexOf('async function presentRoomQuery('));
+ assert.equal(dateLabel(Date.parse('2026-12-31T16:00:00Z'),0),'今天 2027-01-01');
+ assert.equal(dateAt(Date.parse('2026-12-31T16:00:00Z'),14),'2027-01-15');
+ assert.match(view,/\[dayOffset,setDayOffset\]=useState\(0\)/);
+ assert.match(view,/<Slider min=\{0\} max=\{ROOM_DATE_MAX_OFFSET\} step=\{1\}[\s\S]*<Picker title="开始节次"/);
  assert.match(view,/pickerStyle="wheel"/);
  assert.match(view,/title="开始节次"/);
  assert.match(view,/title="结束节次"/);
