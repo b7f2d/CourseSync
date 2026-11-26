@@ -367,7 +367,8 @@ test('room query uses seven dates, three stepped controls, and all official less
  assert.match(view,/title:'开始节次',value:startUnit/);
  assert.match(view,/title:'结束节次',value:endUnit/);
  assert.match(view,/<Slider min=\{first.value\} max=\{last.value\} step=\{1\}/);
- assert.match(view,/<Section header=\{<Text>节次时间（北京时间）<\/Text>\}>\s*\{ROOM_LESSON_UNITS\.map[\s\S]*?roomLessonLabel\(unit\)/);
+ assert.match(view,/lessonOptions=ROOM_LESSON_UNITS\.map\(unit=>\(\{value:Number\(unit\),label:roomLessonLabel\(unit\)/);
+ assert.doesNotMatch(view,/节次时间（北京时间）/);
  assert.doesNotMatch(view,/DatePicker|resetToday|pickerStyle="wheel"/);
  assert.doesNotMatch(native,/ROOM_QUICK_PRESETS|快捷选择/);
  assert.match(view,/更改时段/);

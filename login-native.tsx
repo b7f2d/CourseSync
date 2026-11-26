@@ -381,9 +381,6 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
           </VStack>)}
       </Section>}
       {selectedPeriods&&result?.kind==='ready'&&<Button title="更改时段" action={resetPicker}/>}
-      <Section header={<Text>节次时间（北京时间）</Text>}>
-        {ROOM_LESSON_UNITS.map(unit=><Text key={unit} monospacedDigit={true}>{roomLessonLabel(unit)}</Text>)}
-      </Section>
     </List>}
   </NavigationStack>;
 }
