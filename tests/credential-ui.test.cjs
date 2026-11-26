@@ -32,7 +32,7 @@ test('first setup opens the native credential form directly',()=>{
  assert.match(native,/export async function presentNativeRefreshForm/);
  assert.match(native,/presentLoginView\(title,'开始刷新',allowReuse\)/);
  assert.doesNotMatch(native,/选择学校|选择其他学校|下一步：账号密码/);
- assert.match(native,/title="使用现有登录信息继续"/);
+ assert.match(native,/title="使用已保存的登录信息"/);
  assert.match(native,/textContentType="username"/);
  assert.match(native,/textContentType="password"/);
  assert.doesNotMatch(native,/教务接口|默认接口|统一认证根地址|SSO 登录入口|课表页面|学期详情|课表数据|WebView|fetch\(|Clipboard|console\.log/);
@@ -149,7 +149,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
    .replace("rooms: ReadyRooms['rooms']", 'rooms')
-   .replace('period: string, units: string[]','period, units')
+   .replace('units: string[]','units')
    .replace('unit: string','unit')
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
@@ -166,14 +166,14 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
    createNativeProgressView:()=>{throw Error('transition must not open');}};
  const show=vm.runInNewContext(helpers+dashboard+'\npresentNativeDashboard',sandbox);
- const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync'},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
+ const result=await show({state:{runStatus:'success',calendarId:'1',calendarTitle:'CourseSync',lastCheck:'2026-11-23T01:05:00Z'},canSignOut:true,statusMessage:'',loadFreeRooms:async()=>rooms.shift()});
  assert.equal(result,1);
  assert.equal(calls[0].title,'CourseSync');
- assert.match(calls[0].message,/南京财经大学[\s\S]*已同步[\s\S]*CourseSync/);
+ assert.equal(calls[0].message,'日历：CourseSync\n上次刷新：2026-11-23 09:05');
  assert.deepEqual(Array.from(calls[0].actions,action=>action.label),['立即刷新','查询空闲教室','退出当前登录']);
  assert.match(calls[1].message,/查询失败/);
  assert.equal(calls[2].title,'空闲教室');
- assert.match(calls[2].message,/上午 · 第1—5节 · 08:20–12:15[\s\S]*第5节  11:35–12:15\n博远楼\n1楼  JC101/);
+ assert.equal(calls[2].message,'2026-11-23 · 仙林校区\n\n第1—5节 · 08:20–12:15\n博远楼\n1楼  JC101');
 
  const presented=[];
  const seenPeriods=[];
@@ -182,14 +182,14 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  sandbox.Navigation.present=async ({element,modalPresentationStyle})=>{
    assert.equal(modalPresentationStyle,'pageSheet');
    assert.equal(element.isOpen(),true);
-   const custom=[{period:'自选时段',units:['3','4']}];
+   const custom=[{period:'3,4',units:['3','4']}];
    presented.push({element,result:await element.loadRooms(element.isOpen,()=>{},custom)});
  };
  selections.push(1,0);
- rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'自选时段',units:['3','4'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
- assert.equal(await show({state:{},schoolName:'南京财经大学',canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods)=>{seenPeriods.push(periods);return rooms.shift();}}),0);
+ rooms.push({kind:'ready',date:'2026-11-23',rooms:[{period:'3,4',units:['3','4'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]});
+ assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods)=>{seenPeriods.push(periods);return rooms.shift();}}),0);
  assert.equal(presented.length,1);
- assert.deepEqual(seenPeriods,[[{period:'自选时段',units:['3','4']}]]);
+ assert.deepEqual(seenPeriods,[[{period:'3,4',units:['3','4']}]]);
  assert.deepEqual(presented[0].result.rooms[0].buildings,[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]);
  assert.equal(presented[0].element.isOpen(),false);
 });
@@ -252,15 +252,15 @@ test('page-backed credential and verification forms use plain native controls wi
 });
 
 
-test('classroom dialog shows all lesson times and groups rooms by building and floor',()=>{
+test('classroom dialog displays the selected lessons and room groups without extra labels',()=>{
  const vm=require('node:vm');
  const code=native.slice(native.indexOf('const ROOM_CAMPUS'),native.indexOf('async function readRoomResults('))
    .replace("rooms: ReadyRooms['rooms']", 'rooms')
-   .replace('period: string, units: string[]','period, units')
+   .replace('units: string[]','units')
    .replace('unit: string','unit');
  const format=vm.runInNewContext(code+'\nformatRoomResults');
  const message=format('2026-11-23',[
-  {period:'上午',units:['1','2','3','4','5'],buildings:[
+  {period:'自选时段',units:['1','2','3','4','5'],buildings:[
     {name:'德业楼',floors:[{floor:1,roomCodes:['Z4-101']}]},
     {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC103']},{floor:2,roomCodes:['JC202']}]}
   ]},
@@ -270,15 +270,12 @@ test('classroom dialog shows all lesson times and groups rooms by building and f
  ]);
  assert.equal(message,[
   '2026-11-23 · 仙林校区','',
-  '上午 · 第1—5节 · 08:20–12:15',
-  '第1节  08:20–09:00','第2节  09:05–09:45','第3节  10:00–10:40','第4节  10:45–11:25','第5节  11:35–12:15',
-  '德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202',
-  '下午 · 第6—9节 · 13:30–16:35',
-  '第6节  13:30–14:10','第7节  14:15–14:55','第8节  15:10–15:50','第9节  15:55–16:35',
-  '无整段空闲教室',
-  '第10节 · 16:45–17:25','博观楼','2楼  JB202',
-  '晚上 · 第11—13节 · 18:30–20:50',
-  '第11节  18:30–19:10','第12节  19:20–20:00','第13节  20:10–20:50',
+  '第1—5节 · 08:20–12:15',
+  '德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202','',
+  '第6—9节 · 13:30–16:35',
+  '无整段空闲教室','',
+  '第10节 · 16:45–17:25','博观楼','2楼  JB202','',
+  '第11—13节 · 18:30–20:50',
   '博文楼','3楼  JA303'
  ].join('\n'));
 });
@@ -289,7 +286,7 @@ test('native classroom results arrange each building and its floors within one p
  assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\}/);
  assert.match(view,/result.rooms.map\(\(\{period,units,buildings\}\)/);
  assert.match(view,/floor.roomCodes.length[\s\S]*间整段空闲/);
- assert.match(view,/<DisclosureGroup title=\{roomPeriodTitle\(period,units\)\}>[\s\S]*roomLessonLabel\(unit\)[\s\S]*<\/DisclosureGroup>/);
+ assert.match(view,/<DisclosureGroup title=\{roomPeriodTitle\(units\)\}>[\s\S]*roomLessonLabel\(unit\)[\s\S]*<\/DisclosureGroup>/);
  assert.match(view,/buildings.map\(\(\{name,floors\}\)=>\s*<HStack key=\{name\}/);
  assert.match(view,/floors.map\(\(\{floor,roomCodes\}\)=>\s*<HStack key=\{floor\}/);
  assert.match(view,/fixedSize=\{\{horizontal:false,vertical:true\}\}>\{roomCodes.join\('  '\)\}/);
@@ -312,7 +309,7 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
    .replace("rooms: ReadyRooms['rooms']",'rooms')
-   .replace('period: string, units: string[]','period, units')
+   .replace('units: string[]','units')
    .replace('unit: string','unit')
    .replace('loadRooms:RoomLoader','loadRooms')
    .replace('_value:number','_value')
@@ -326,19 +323,16 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(19,0)))),{startUnit:11,endUnit:13});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(21,0)))),{startUnit:1,endUnit:4});
  const r1=JSON.parse(JSON.stringify(select(2,4)));
- assert.equal(r1.valid,true);
- assert.equal(r1.rangeText,'第2—4节 · 09:05–11:25');
- assert.equal(r1.summary,'共 3 节课 · 09:05–11:25');
- assert.deepEqual(r1.periods,[{period:'自选时段',units:['2','3','4']}]);
+ assert.equal(r1.label,'第2—4节 · 09:05–11:25');
+ assert.deepEqual(r1.periods,[{period:'2,3,4',units:['2','3','4']}]);
 
  const r2=JSON.parse(JSON.stringify(select(10,10)));
- assert.equal(r2.valid,true);
- assert.equal(r2.rangeText,'第10节 · 16:45–17:25');
- assert.deepEqual(r2.periods,[{period:'第10节',units:['10']}]);
+ assert.equal(r2.label,'第10节 · 16:45–17:25');
+ assert.deepEqual(r2.periods,[{period:'10',units:['10']}]);
 
- assert.equal(select(5,3).valid,false);
- assert.equal(select(14,13).valid,false);
- assert.equal(select(1,0).valid,false);
+ assert.equal(select(5,3).periods,null);
+ assert.equal(select(14,13).periods,null);
+ assert.equal(select(1,0).periods,null);
  assert.equal(label('1'),'第1节  08:20–09:00');
  assert.equal(label('13'),'第13节  20:10–20:50');
 
@@ -348,5 +342,5 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.match(view,/title="结束节次"/);
  assert.match(view,/roomLessonLabel\(unit\)/);
  assert.doesNotMatch(native,/ROOM_QUICK_PRESETS|快捷选择/);
- assert.match(view,/切换查询时段/);
+ assert.match(view,/更改时段/);
 });

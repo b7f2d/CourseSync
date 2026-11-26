@@ -2633,7 +2633,7 @@ async function loginPreflight(state,store,progress){
 async function signOut(state,store){
   // Saved credentials and the local authenticated session are separate.
   if(!await confirm('退出登录',
-    '将清除本机的教务会话，并移除 CourseSync 保存的登录凭据，包括 iCloud 钥匙串中的对应凭据。已同步的课程和考试仍可在 Apple 日历查看。'))return false;
+    '清除本机的教务会话和已保存的登录凭据（包括 iCloud 钥匙串）。日历事件会保留。'))return false;
 
   // Persist a fail-closed marker before touching the Keychain, so scheduled
   // refreshes cannot silently sign back in even if deletion partially fails.
@@ -2659,7 +2659,7 @@ async function signOut(state,store){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已清除本机会话与凭据。已同步的课程和考试及日历均已保留。');}catch(_){}
+  try{await notice('已退出登录','');}catch(_){}
   return true;
 }
 async function refreshFailure(code,state){
@@ -2837,7 +2837,7 @@ function normalizeRoomPeriods(periods){
       .map(String).filter(u=>/^(?:[1-9]|1[0-3])$/.test(u)))];
     units.sort((a,b)=>Number(a)-Number(b));
     if(!units.length)return null;
-    const period=String(item?.period||(units.length===1?'第'+units[0]+'节':'自选时段')).trim()||'自选时段';
+    const period=String(item?.period||'').trim()||units.join(',');
     return {period,units};
   }).filter(Boolean);
   assert(normalized.length,'SCHEMA');
@@ -2875,12 +2875,10 @@ async function loadFreeRoomPage(isActive,onProgress,periods){
     const code=diagnosticCode(error);
     if(code==='CANCELLED')return {kind:'error',message:'查询已取消'};
     if(code==='ACCOUNT_CHANGED')
-      return {kind:'error',message:'登录账号与已同步的课表不一致。请返回主菜单，退出当前登录，再用原账号登录。'};
+      return {kind:'error',message:'教务账号与课表绑定账号不一致。请退出后用原账号登录。'};
     if(['AUTH_REQUIRED','AUTH_INTERACTIVE_REQUIRED','LOGIN_FAILED','AUTO_LOGIN_REJECTED'].includes(code))
-      return {kind:'error',message:'教务登录未完成。请返回主菜单，点「立即刷新」完成验证后再查询。'};
-    if(/^NETWORK(?:_|$)/.test(code))
-      return {kind:'error',message:'查询失败，暂时连不上教务系统。请检查网络后重试。\n错误代码：'+code};
-    return {kind:'error',message:'查询失败\n错误代码：'+code+'\n原因：'+reasonFor(code)};
+      return {kind:'error',message:'请在首页点「立即刷新」，完成教务验证。'};
+    return {kind:'error',message:reasonFor(code)+'\n错误代码：'+code};
   }
 }
 
@@ -2915,29 +2913,24 @@ async function runAttempt() {
     if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
       const canSignOut=canOfferSignOut(state);
       const canFreeRooms=activeSchoolId==='nufe'&&!state.signedOut&&canSignOut;
-      const schoolName=schoolById(activeSchoolId)?.name||'高校';
       const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'
         ?'退出登录未完成，请重试。'
         :state.signedOut
           ?'点击「立即刷新」重新登录。'
-          :state.calendarBindingPending
-            ?'点击「立即刷新」绑定日历。'
           :state.tx
-            ?'有一笔日历写入待恢复。点击「立即刷新」继续。'
+            ?'日历写入待恢复，请点「立即刷新」。'
           :state.runStatus==='failed'&&state.lastError
             ?reasonFor(state.lastError)
           :state.runStatus==='partial'
-            ?partialSyncDetails(state)||'部分同步未完成。'
-          :state.lastCheck
-            ?'上次刷新：'+localDateTime(state.lastCheck)
-            :'点击「立即刷新」开始同步。';
+            ?partialSyncDetails(state)
+            :'';
 
       let selected=-1;
       const nav=hostAPI('Navigation');
       if(typeof nav?.present==='function'){
         state.lastStage='打开主菜单';
         selected=await presentNativeDashboard({
-          state,schoolName,canSignOut,statusMessage,
+          state,canSignOut,statusMessage,
           loadFreeRooms:canFreeRooms?loadFreeRoomPage:undefined
         });
         returnToDashboard=selected===0;
@@ -2945,7 +2938,8 @@ async function runAttempt() {
       if(selected==='dismiss')return;
       if(selected<0){
         const menu=new Alert();menu.title='CourseSync';
-        menu.message=state.calendarBindingPending?'未绑定日历\n'+statusMessage:statusMessage;
+        const lastTime=Number.isFinite(Date.parse(state.lastCheck))?'上次刷新：'+localDateTime(state.lastCheck):'';
+        menu.message=[state.calendarBindingPending?'未绑定日历':'',lastTime,statusMessage].filter(Boolean).join('\n');
         menu.addAction('立即刷新');
         if(canSignOut)menu.addDestructiveAction('退出登录');
         menu.addCancelAction('关闭');
@@ -3048,7 +3042,7 @@ async function runAttempt() {
       if(interactive)await notice('部分同步完成',partialSyncDetails(state));
       else await reportRefreshFailure('PARTIAL_SYNC',state,store);
     }
-    if(config.runsWithSiri)Script.setShortcutOutput(state.runStatus==='partial'?'部分完成：'+partialSyncDetails(state):'刷新成功：CourseSync已更新并核验。');
+    if(config.runsWithSiri)Script.setShortcutOutput(state.runStatus==='partial'?'部分完成：'+partialSyncDetails(state):'刷新成功');
     return returnToDashboard;
   }catch(e){
     const code=diagnosticCode(e);

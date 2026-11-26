@@ -1631,7 +1631,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    a.match(options.message,/本机的教务会话/);
    a.match(options.message,/iCloud 钥匙串/);
-   a.match(options.message,/已同步的课程和考试仍可在 Apple 日历查看/);
+   a.match(options.message,/日历事件会保留/);
    return true;
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
@@ -2481,7 +2481,7 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
    {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}
  ]);
  a.equal(failure.kind,'error');
- a.match(failure.message,/查询失败/);
+ a.match(failure.message,/设备没有可用的网络连接/);
  a.match(cancelled.message,/已取消/);
  a.equal(roomRequests,8);
  a.deepEqual(shownDialogs,[]);
