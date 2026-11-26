@@ -313,6 +313,24 @@ test('successful partial exam list replaces historical exam cache and calendar',
  a.equal(e.state.exams.length,1);
  a.equal(e.db.length,1);
 });
+test('an exam that becomes detached on save is not recorded as verified',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-16T00:00:00Z');
+ const url='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
+ const row='<tr data-finished="false"><td><div class="time">2026-12-18 09:00~11:00</div></td>'+
+   '<td><div>线性代数</div><div>期末</div></td><td>未结束</td></tr>';
+ const save=e.Event.prototype.save;
+ e.Event.prototype.save=async function(){
+   this.isDetached=true;
+   return save.call(this);
+ };
+ await a.rejects(()=>e.m.syncExams({get:async()=>({url,text:'<table id="exams">'+row+'</table>'})},
+   e.state,e.store,e.calendar,()=>{},now),code('MANAGED_SERIES'));
+ a.equal(e.state.exams,undefined);
+ a.equal(e.state.examIndex,undefined);
+ a.equal(e.db.length,1);
+ a.match(e.db[0].notes,/^\[COURSESYNC_EXAM /);
+});
 test('exam calendar migration verifies destination writes, retries without duplicates, and preserves unrelated events',async()=>{
  const e=await env();
  const {m,state,store,calendar,other}=e;
@@ -529,6 +547,28 @@ test('the dashboard explains an incomplete refresh or pending calendar recovery'
  await e.m.run();
  a.match(messages[1],/日历写入待恢复/);
 });
+test('cancelling a busy refresh or logout returns to the dashboard',async()=>{
+ for(const action of [0,1]){
+   const e=await env({hostEnv:'index'});
+   e.keys.set('CourseSync.Local.v1.cookies','[]');
+   e.store.write(e.state);
+   if(action===1)e.store.release();
+   e.sandbox.__sdk.Navigation={present:async()=>null};
+   e.sandbox.__sdk.Dialog.actionSheet=async()=>-1;
+   e.sandbox.__sdk.Dialog.confirm=async()=>false;
+   const selection=[action,'dismiss'];
+   let shown=0;
+   e.sandbox.__nativeDashboardMock=async()=>{
+     shown++;
+     return selection.shift()??'dismiss';
+   };
+   await e.m.run();
+   a.equal(shown,2);
+   a.equal(e.keys.get('CourseSync.Local.v1.cookies'),'[]');
+   a.equal(e.store.read().signedOut,undefined);
+   e.store.release();
+ }
+});
 test('background term rotation includes future terms and resumes from the previous cursor',async()=>{
  const {m}=await env();
  const info={current:3,semesters:[{id:1},{id:2},{id:3},{id:4},{id:5}]};
@@ -544,14 +584,12 @@ test('background term rotation includes future terms and resumes from the previo
 
 test('automatic refresh leaves blank notes untouched and clears edited notes in place',async t=>{
  const e=await env(),queried=[];
- let readingExams=false;
  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
  const exam='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
  e.state.anchors['159']='2026-03-02';
  e.state.anchors['160']='2025-09-01';
  e.m.HTTP.prototype.get=async url=>{
    if(url===exam){
-     readingExams=true;
      queried.push('exams');
      return {url,text:'<table id="exams"><tr data-finished="true"><td><div class="time">2026-07-02 08:00~10:00</div></td><td><div>统计学</div><div>期末</div></td><td>已结束</td></tr></table>'};
    }
@@ -559,7 +597,6 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
    return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="159">2025-2026-2</option><option value="160">2025-2026-1</option></select>'};
  };
  e.m.HTTP.prototype.json=async url=>{
-   readingExams=false;
    const sid=new URL(url).searchParams.get('semesterId');
    queried.push(sid);
    return raw([activity({weekIndexes:[1]})]);
@@ -571,7 +608,7 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
  const courseReads=[];
  const getEvents=e.Event.getAll;
  e.Event.getAll=(start,end,calendars)=>{
-   if(!readingExams)courseReads.push(+start);
+   if(end-start===180*86400000)courseReads.push(+start);
    return getEvents(start,end,calendars);
  };
  let stateWrites=0;
@@ -628,6 +665,31 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
  queried.length=0;
  await e.m.run();
  a.deepEqual(queried,['161','exams','160','159']);
+ a.equal(e.store.read().runStatus,'success');
+});
+test('shortcut starts the exam request while checking current course events',async()=>{
+ const e=await env();
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ const readPage=e.m.HTTP.prototype.get,getEvents=e.Event.getAll;
+ let examStarted=false,courseScannedWhilePending=false,resolveExam;
+ const examReady=new Promise(resolve=>{resolveExam=resolve;});
+ e.m.HTTP.prototype.get=async url=>{
+   if(url.endsWith('/exam-arrange')){
+     examStarted=true;
+     await examReady;
+   }
+   return readPage(url);
+ };
+ e.Event.getAll=(start,end,calendars)=>{
+   if(end-start===180*86400000){
+     courseScannedWhilePending=examStarted;
+     resolveExam();
+   }
+   return getEvents(start,end,calendars);
+ };
+ await e.m.run();
+ a.equal(courseScannedWhilePending,true);
  a.equal(e.store.read().runStatus,'success');
 });
 test('a late successful exam check leaves the history cursor and immediately returns success',async()=>{

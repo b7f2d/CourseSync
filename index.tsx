@@ -719,9 +719,10 @@ class HTTP {
   async get(url,opt={}) {
     let method=opt.body?'POST':'GET',body=opt.body||null;
     const started=Date.now(),chainLimit=75000;
+    const trace=opt.trace??this.trace;
     for(let hop=0;hop<12;hop++) {
       if(Date.now()-started>=chainLimit)fail('NETWORK_CHAIN_TIMEOUT');
-      safeURL(url);this.before();this.trace('发送 '+method+' '+requestLabel(url));
+      safeURL(url);this.before();trace('发送 '+method+' '+requestLabel(url));
       // Concurrent callers may wake together. Recheck the shared gate before
       // reserving the next start; do not serialize the network response itself.
       let wait=1050-(Date.now()-this.last);
@@ -747,9 +748,9 @@ class HTTP {
       try{value=await bounded(opt.binary?req.load():req.loadString(),Math.min(requestLimit,runRemaining),timeoutCode);}
       catch(e){fail(e?.code===timeoutCode?timeoutCode:networkErrorCode(e));}
       this.before();
-      const res=req.response;assert(res,'NETWORK');this.trace('收到 HTTP '+res.statusCode+' '+requestLabel(url));
+      const res=req.response;assert(res,'NETWORK');trace('收到 HTTP '+res.statusCode+' '+requestLabel(url));
       const cookieStatus=this.jar.ingest(url,res.headers||{},res.cookies||[]);
-      if(cookieStatus.rejected)this.trace('已安全忽略 '+cookieStatus.rejected+' 条不符合域名或格式规则的 Cookie（内容未记录）');
+      if(cookieStatus.rejected)trace('已安全忽略 '+cookieStatus.rejected+' 条不符合域名或格式规则的 Cookie（内容未记录）');
       if(cookieStatus.accepted){
         const cookies=JSON.stringify(this.jar.cookies);
         if(cookies!==this.savedCookies){
@@ -873,8 +874,8 @@ function examRows(html) {
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
 }
-async function fetchExamRows(http) {
-  const response=await http.get(JW+EXAM_PATH);
+async function fetchExamRows(http,options) {
+  const response=await http.get(JW+EXAM_PATH,options);
   const target=safeURL(response.url);
   if(target.host!==safeURL(JW).host||target.path==='/student/login')fail('AUTH_REQUIRED');
   assert(target.path===EXAM_PATH||/^\/student\/for-std\/exam-arrange\/info\/\d+$/.test(target.path),'EXAM_SCHEMA');
@@ -928,8 +929,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,c
     return [...found.values()];
   };
   const old=await readOwned(legacy);
-  assert(old.every(ev=>!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&
-    !ev.recurrenceRules?.length&&!ev.attendees?.length),'MANAGED_SERIES');
+  assert(old.every(ev=>isStandaloneEvent(ev)&&!ev.attendees?.length),'MANAGED_SERIES');
   if(old.length){
     const existing=new Map((await readOwned(calendar)).map(ev=>[keyOf(ev),ev]));
     for(const ev of old){
@@ -950,6 +950,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,c
         assert(destination,'CALENDAR_VERIFY');
         existing.set(key,destination);
       }
+      assert(isStandaloneEvent(destination)&&!destination.attendees?.length,'MANAGED_SERIES');
       index[destination.identifier]=key;
       state.examIndex=index;
       store.write(state);
@@ -976,8 +977,7 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows,check
         if(title===previous)continue;
         const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
         if(!key?.startsWith(prefix))continue;
-        assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&
-          !ev.recurrenceRules?.length&&!ev.attendees?.length,'MANAGED_SERIES');
+        assert(isStandaloneEvent(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
         checkpoint();
         const oldId=ev.identifier;
         ev.title=title;
@@ -996,13 +996,13 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows,check
   state.examTitleFormat='prefix';
   store.write(state);
 }
-async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check()) {
+async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check(),prefetchedRows) {
   progress('读取考试日程');
   const end=now+366*DAY;
   const prefix=EXAM_MARKER+state.owner+'] ';
   const target=new Map();
-  const source={rows:await fetchExamRows(http),unpublished:false};
-  for(const row of source.rows){
+  const rowsFromSchool=await (prefetchedRows??fetchExamRows(http));
+  for(const row of rowsFromSchool){
     const time=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})\s*[~～–-]\s*(\d{2}:\d{2})$/.exec(row.time);
     assert(time,'EXAM_SCHEMA');
     const [,day,from,to]=time;
@@ -1047,6 +1047,7 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
         if(typeof key==='string'&&key.startsWith(prefix)){
+          assert(isStandaloneEvent(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
           owned.set(occurrenceKey(ev),ev);
         }
       }
@@ -1065,8 +1066,6 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   }
   const current=new Map();
   for(const ev of rows){
-    assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
-      !ev.attendees?.length,'MANAGED_SERIES');
     const key=keyOf(ev);
     if(!current.has(key))current.set(key,ev);
   }
@@ -1094,8 +1093,6 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
     const key=keyOf(ev),exam=target.get(key);
     if(exam&&matches(ev,exam)&&!kept.has(key)){kept.add(key);continue;}
     checkpoint();
-    assert(!ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length&&
-      !ev.attendees?.length,'MANAGED_SERIES');
     await ev.remove();
     removed=true;
     delete index[ev.identifier];
@@ -1615,7 +1612,7 @@ function eventRecord(ev,owner,byNative=null) {
   const rec={...meta,title,teachers,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
 }
-function isStandaloneCourse(ev){
+function isStandaloneEvent(ev){
   return !ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length;
 }
 class CalendarAdapter {
@@ -1672,7 +1669,7 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
   const replacements=new Set();
   for(const [id,list] of byId){
     const dates=new Set(list.map(x=>x.rec.start+'\0'+x.rec.end));
-    if(dates.size>1||list.some(({ev})=>!isStandaloneCourse(ev))||!list.every(x=>sameCalendarCourse(x.rec,list[0].rec)))replacements.add(id);
+    if(dates.size>1||list.some(({ev})=>!isStandaloneEvent(ev))||!list.every(x=>sameCalendarCourse(x.rec,list[0].rec)))replacements.add(id);
   }
   for(const e of tx.target){budget();const primary=(byId.get(e.id)||[])[0];if(replacements.has(e.id)||!primary||!sameCalendarCourse(primary.rec,e))await adapter.save(e,replacements.has(e.id)?null:primary&&primary.ev);}
   const targetIds=new Set(tx.target.map(e=>e.id));
@@ -1694,7 +1691,7 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
   }
   for(const e of tx.target){
     const row=verified.get(e.id);
-    assert(row&&isStandaloneCourse(row.ev)&&!row.ev.attendees?.length&&sameCalendarCourse(row.rec,e),'CALENDAR_VERIFY');
+    assert(row&&isStandaloneEvent(row.ev)&&!row.ev.attendees?.length&&sameCalendarCourse(row.rec,e),'CALENDAR_VERIFY');
     index[e.id]=row.ev.identifier;
   }
   return index;
@@ -2350,7 +2347,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{checked=null}={}
     const ev=items[0].ev,title=rec.title;
     const retiredPin=hasRetiredCalendarPin(ev);
     if(!ev.notes&&ev.title===title&&!retiredPin)continue;
-    assert(isStandaloneCourse(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
+    assert(isStandaloneEvent(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     if(!modified)adapter.verifiedWindows.clear();
     ev.title=title;ev.notes='';
@@ -2485,7 +2482,7 @@ async function verifyUnchangedTerm(adapter,sid,anchor,events){
   for(const {ev,rec} of rows){
     const target=expected.get(rec.id);
     if(!target||!sameCalendarCourse(rec,target)||ev.title!==target.title||adapter.byNative.get(ev.identifier)?.id!==rec.id||
-       !isStandaloneCourse(ev)||ev.attendees?.length)
+       !isStandaloneEvent(ev)||ev.attendees?.length)
       return null;
     expected.delete(rec.id);
     index[rec.id]=ev.identifier;
@@ -2518,10 +2515,11 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   }
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   let examsChecked=false;
+  let prefetchedExamRows;
   const refreshExams=async()=>{
     examsChecked=true;
     try{
-      await syncExams(http,state,store,calendar,stage,Date.now(),budget);
+      await syncExams(http,state,store,calendar,stage,Date.now(),budget,prefetchedExamRows);
       state.lastExamError=null;
     }catch(error){
       if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
@@ -2571,6 +2569,12 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     if(!old){const recovered=(await adapter.scan(anchor,normalized.events)).filter(x=>x.rec.sid===String(sid)).map(x=>x.rec);const by=new Map();for(const e of recovered)by.set(e.id,e);old={events:[...by.values()]};}
     assert(normalized.events.length||!old.events.length,'EMPTY_SOURCE');
     const p=plan(old.events,normalized.events,uuid);
+    if(!interactive&&sid===info.current){
+      // Only the read overlaps EventKit. Apply exams after the current term has
+      // been verified. Leave its diagnostic stage intact during the overlap.
+      prefetchedExamRows=fetchExamRows(http,{trace:message=>console.log('[CourseSync] '+message)});
+      void prefetchedExamRows.catch(()=>{});
+    }
     // A missing, duplicate or edited event still goes through the repair transaction.
     if(!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
        old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
@@ -2956,10 +2960,10 @@ async function runAttempt() {
       // Never record a second task as a failed synchronization.
       // The original task remains responsible for the calendar and state.
       if(interactive&&slot==='still-running')
-        await notice('前次任务未退出','已经请求取消，但前次任务仍持有有效锁，尚不能安全接管。请稍后重试；不会强制删除日历或并发同步。');
+        await notice('前次任务未退出','前次任务仍占用同步锁，请稍后再试。');
       if(!interactive&&config.runsWithSiri)
         Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
-      return;
+      return returnToDashboard;
     }
     locked=true;state=store.read();
     state.lastStage='准备同步';
@@ -2975,7 +2979,7 @@ async function runAttempt() {
       if(state.credentialCloudStatus!==previousStatus)store.write(state);
     }
     await clearLegacyReminders(state,store);
-    if(signOutRequested){await signOut(state,store);return;}
+    if(signOutRequested)return !await signOut(state,store);
     if(interactive){
       if(reselectSchool&&!savedReselectSchool)Keychain.set(SCHOOL_RESELECT_KEY,reselectSchool);
       const hasCredentials=!state.signedOut&&(hasSavedCredentials()||Keychain.contains(schoolKey(KEY)));

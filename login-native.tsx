@@ -362,6 +362,9 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
                 {units.map(unit=><Text key={unit} font="subheadline">{roomLessonLabel(unit)}</Text>)}
               </VStack>
             </DisclosureGroup>:<Text font="headline">{roomPeriodTitle(period,units)}</Text>}
+            {buildings.length>0&&<Text font="footnote" foregroundStyle="secondary">
+              {buildings.reduce((count,building)=>count+building.floors.reduce((sum,floor)=>sum+floor.roomCodes.length,0),0)} 间整段空闲
+            </Text>}
             {buildings.length?buildings.map(({name,floors})=>
               <HStack key={name} alignment="top" spacing={12}>
                 <Text font="subheadline" fontWeight="semibold" foregroundStyle="accentColor" fixedSize>{name}</Text>

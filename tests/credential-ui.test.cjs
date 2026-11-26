@@ -41,7 +41,7 @@ test('first setup opens the native credential form directly',()=>{
  assert.match(index,/presentNativeRefreshForm\(NUFE_SCHOOL\.id,allowReuse,NUFE_SCHOOL\.name\+'登录'\)/);
  assert.match(index,/response\.schoolId===NUFE_SCHOOL\.id/);
  assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
- assert.match(index,/if\(signOutRequested\)\{await signOut\(state,store\);return;\}\s*if\(interactive\)/);
+ assert.match(index,/if\(signOutRequested\)[^\n]*signOut\(state,store\)[^\n]*\s+if\(interactive\)/);
  assert.match(index,/if\(!manualAuth\)return returnToDashboard;/);
 });
 
@@ -288,6 +288,7 @@ test('native classroom results arrange each building and its floors within one p
  assert.equal([...view.matchAll(/<Section\b/g)].length,1);
  assert.match(view,/<Section header=\{<Text>\{result.date\} · \{ROOM_CAMPUS\}<\/Text>\}/);
  assert.match(view,/result.rooms.map\(\(\{period,units,buildings\}\)/);
+ assert.match(view,/floor.roomCodes.length[\s\S]*间整段空闲/);
  assert.match(view,/<DisclosureGroup title=\{roomPeriodTitle\(period,units\)\}>[\s\S]*roomLessonLabel\(unit\)[\s\S]*<\/DisclosureGroup>/);
  assert.match(view,/buildings.map\(\(\{name,floors\}\)=>\s*<HStack key=\{name\}/);
  assert.match(view,/floors.map\(\(\{floor,roomCodes\}\)=>\s*<HStack key=\{floor\}/);
