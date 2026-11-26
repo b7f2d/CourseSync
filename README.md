@@ -5,14 +5,16 @@
 ## 安装和首次同步
 
 1. 在 iPhone 打开 Scripting，点「+」→「导入远程脚本」。
-2. 粘贴以下链接并导入。
+2. 粘贴以下 ZIP 直链并导入。
 
 ```text
-https://github.com/b7f2d/CourseSync/tree/main
+https://codeload.github.com/b7f2d/CourseSync/zip/refs/heads/main
 ```
 
 3. 打开 **CourseSync**，输入学校学号和密码，按学校提示完成验证。
 4. 允许 Scripting 完全访问日历，按提示新建专用 iCloud 日历。请将个人活动放在其他日历。
+
+如果当前版本的 Scripting 无法识别 ZIP 直链，可用 [GitHub 仓库地址](https://github.com/b7f2d/CourseSync/tree/main) 导入。
 
 同步后，在 Apple 日历里查看课程和带「（考试）」前缀的考试。在 CourseSync 内查看刷新时间。专属课表日历由 CourseSync 管理，请勿手动编辑其中的事件。同步会清空已核验课程和考试的备注。
 
@@ -20,7 +22,7 @@ https://github.com/b7f2d/CourseSync/tree/main
 
 - **立即刷新**　手动同步教务系统提供的各学期课程和考试。学校要求重新验证时，按提示登录。
 - **查询空闲教室**　日期滑块默认选中北京时间当天，可查询今天和之后 6 天。开始和结束滑块按第 1 至 13 节选择，并显示所选节次的起止时间。节次时间采用[南财教务处作息时间表](https://jwc.nufe.edu.cn/info/1085/7873.htm)。查询范围包括德经楼、德济楼、德正楼和德业楼一楼的普通教室，以及博远楼各楼层的普通教室。第 10 节可单独查询。
-- **更新脚本**　在 Scripting 的 CourseSync 卡片上点「···」→「远程资源」→「立即更新」。原有日历继续使用。
+- **更新脚本**　在 Scripting 的 CourseSync 卡片上点「···」→「远程资源」。已安装的脚本如果仍使用 GitHub 仓库地址，可把远程资源改成上面的 ZIP 直链，再点「立即更新」。原有日历继续使用。
 
 ### 快捷指令自动刷新
 

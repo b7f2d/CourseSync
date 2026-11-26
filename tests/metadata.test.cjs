@@ -45,9 +45,10 @@ test('README remains text-only without image markup or references',()=>{
   assert.match(readme,/已同步到 Apple 日历的课程和考试仍可查看/);
 });
 
-test('README points to the main branch for remote import',()=>{
-  const url='https://github.com/b7f2d/CourseSync/tree/main';
-  assert.ok(read('README.md').includes(url));
+test('README uses the main branch ZIP for remote import and retains the repository fallback',()=>{
+  const readme=read('README.md');
+  assert.match(readme,/```text\s+https:\/\/codeload\.github\.com\/b7f2d\/CourseSync\/zip\/refs\/heads\/main\s+```/);
+  assert.ok(readme.includes('https://github.com/b7f2d/CourseSync/tree/main'));
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
