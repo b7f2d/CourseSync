@@ -313,6 +313,19 @@ test('successful partial exam list replaces historical exam cache and calendar',
  a.equal(e.state.exams.length,1);
  a.equal(e.db.length,1);
 });
+test('exam reconciliation leaves a verified course untouched when an old exam index points to it',async()=>{
+ const e=await env(),record=lesson(),course=e.add(record,{notes:''});
+ e.baseline([record]);
+ e.state.semesters['161'].index={[record.id]:course.identifier};
+ const start=Date.parse(record.start);
+ e.state.examIndex={[course.identifier]:'[COURSESYNC_EXAM '+e.state.owner+'] '+JSON.stringify([record.title,'期末',start])};
+ const http={get:async()=>({url:'https://jwxt.nufe.edu.cn/student/for-std/exam-arrange',text:
+   '<table id="exams"><tr data-finished="false"><td><div class="time">2026-09-07 08:00~09:40</div></td><td><div>高等数学</div><div>期末</div></td><td>未结束</td></tr></table>'})};
+ await e.m.syncExams(http,e.state,e.store,e.calendar,()=>{},start-86400000);
+ a.equal(e.db.find(event=>event.identifier===course.identifier).title,record.title);
+ a.equal(e.requests.some(([,id])=>id===course.identifier),false);
+ a.deepEqual(e.db.map(event=>event.title).sort(),['（考试）高等数学',record.title].sort());
+});
 test('an exam that becomes detached on save is not recorded as verified',async()=>{
  const e=await env();
  const now=Date.parse('2026-11-16T00:00:00Z');
@@ -547,6 +560,35 @@ test('the dashboard explains an incomplete refresh or pending calendar recovery'
  await e.m.run();
  a.match(messages[1],/日历写入待恢复/);
 });
+test('account and classroom actions are available without a calendar binding',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.state.calendarId=null;
+ e.keys.set('CourseSync.Local.v1.cookies','[]');
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ let dashboard;
+ e.sandbox.__nativeDashboardMock=async options=>{dashboard=options;return 'dismiss';};
+ e.sandbox.__sdk.Calendar.forEvents=async()=>{throw new Error('no calendar access');};
+ await executeDaily(e);
+ a.equal(dashboard.state.calendarId,null);
+ a.equal(dashboard.canSignOut,true);
+ a.equal(typeof dashboard.loadFreeRooms,'function');
+ a.equal(e.requests.length,0);
+});
+test('a failed diagnostic checkpoint does not interrupt a foreground refresh',async()=>{
+ const e=await env({hostEnv:'index'});
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const write=e.store.write.bind(e.store);
+ const initialStage='尝试读取教务课表入口';
+ let failed=false;
+ e.store.write=state=>{
+   if(!failed&&state.lastStage===initialStage){failed=true;throw new Error('diagnostics unavailable');}
+   return write(state);
+ };
+ await e.m.synchronize(e.state,e.store,e.calendar,true);
+ a.equal(failed,true);
+ a.equal(e.store.read().tx,null);
+ a.equal(e.db.length,1);
+});
 test('cancelling a busy refresh or logout returns to the dashboard',async()=>{
  for(const action of [0,1]){
    const e=await env({hostEnv:'index'});
@@ -619,7 +661,7 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
  };
  queried.length=0;e.requests.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','exams','160','159']);
+ a.deepEqual(queried,['161','160','159','exams']);
  a.equal(e.requests.filter(request=>request[0]==='save').length,0);
  t.diagnostic('Course calendar reads across three unchanged terms: '+courseReads.length);
  a.equal(courseReads.length,6,'reuse the verified course rows across terms');
@@ -664,60 +706,109 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
  e.m.HTTP.prototype.json=readTerm;
  queried.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','exams','160','159']);
+ a.deepEqual(queried,['161','160','159','exams']);
  a.equal(e.store.read().runStatus,'success');
 });
-test('shortcut starts the exam request while checking current course events',async()=>{
+test('shortcut verifies and saves current course changes before starting the exam request',async()=>{
  const e=await env();
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
  await executeDaily(e);
- const readPage=e.m.HTTP.prototype.get,getEvents=e.Event.getAll;
- let examStarted=false,courseScannedWhilePending=false,resolveExam;
- const examReady=new Promise(resolve=>{resolveExam=resolve;});
+ loggedIn(e,raw([activity({weekIndexes:[1],room:'教B202'})]));
+ const readPage=e.m.HTTP.prototype.get;
+ let verifiedBeforeExams=false;
  e.m.HTTP.prototype.get=async url=>{
    if(url.endsWith('/exam-arrange')){
-     examStarted=true;
-     await examReady;
+     verifiedBeforeExams=e.store.read().tx===null&&e.db.some(event=>event.location==='教B202'&&!event.notes);
    }
    return readPage(url);
  };
- e.Event.getAll=(start,end,calendars)=>{
-   if(end-start===180*86400000){
-     courseScannedWhilePending=examStarted;
-     resolveExam();
-   }
-   return getEvents(start,end,calendars);
- };
  await e.m.run();
- a.equal(courseScannedWhilePending,true);
+ a.equal(verifiedBeforeExams,true);
  a.equal(e.store.read().runStatus,'success');
 });
-test('a late successful exam check leaves the history cursor and immediately returns success',async()=>{
+test('slow or failed exams leave the same verified course rotation as fast exams',async t=>{
+ for(const outcome of ['fast','slow','failed'])await t.test(outcome,async()=>{
+   const e=await env(),queried=[];
+   e.state.lastBackgroundHistoryTerm=159;
+   const initialTime=Date.now();
+   let elapsed=0;
+   e.sandbox.Date=class extends Date{static now(){return initialTime+elapsed;}};
+   e.m.HTTP.prototype.get=async url=>{
+     if(url.endsWith('/exam-arrange')){
+       queried.push('exams');
+       if(outcome!=='fast')elapsed=17000;
+       if(outcome==='failed')throw Object.assign(new Error('exam timeout'),{code:'BUDGET'});
+       return {url,text:'<table id="exams"><tr class="tr-empty"><td>暂无考试安排</td></tr></table>'};
+     }
+     return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="160">2025-2026-1</option><option value="159">2025-2026-2</option></select>'};
+   };
+   e.m.HTTP.prototype.json=async url=>{
+     queried.push(new URL(url).searchParams.get('semesterId'));
+     return raw([activity({weekIndexes:[1]})]);
+   };
+   await executeDaily(e);
+   const state=e.store.read();
+   a.deepEqual(queried,['161','160','159','exams']);
+   a.equal(state.lastBackgroundHistoryTerm,159);
+   a.deepEqual(Object.keys(state.semesters).sort(),['159','160','161']);
+   a.equal(e.db.filter(event=>event.title==='高等数学'&&!event.notes).length,3);
+   a.equal(state.lastExamError,outcome==='failed'?'BUDGET':null);
+   a.equal(state.runStatus,outcome==='failed'?'partial':'success');
+ });
+});
+test('the course rotation leaves a fixed exam reserve even when the current term runs late',async()=>{
  const e=await env(),queried=[];
- e.state.lastBackgroundHistoryTerm=159;
  const initialTime=Date.now();
  let elapsed=0;
  e.sandbox.Date=class extends Date{static now(){return initialTime+elapsed;}};
- e.m.HTTP.prototype.get=async url=>{
+ loggedIn(e,url=>{
+   const sid=new URL(url).searchParams.get('semesterId');
+   queried.push(sid);
+   if(sid==='161')elapsed=13000;
+   return raw([activity({weekIndexes:[1]})]);
+ });
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(url){
+   const page=await readPage(url);
    if(url.endsWith('/exam-arrange')){
      queried.push('exams');
-     elapsed=17000;
-     return {url,text:'<table id="exams"><tr class="tr-empty"><td>暂无考试安排</td></tr></table>'};
+     a.ok(this.deadline-e.sandbox.Date.now()>=6000);
+     return page;
    }
-   return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="160">2025-2026-1</option><option value="159">2025-2026-2</option></select>'};
- };
- e.m.HTTP.prototype.json=async url=>{
-   queried.push(new URL(url).searchParams.get('semesterId'));
-   return raw([activity({weekIndexes:[1]})]);
+   return {...page,text:page.text.replace('</select>','<option value="160">2025-2026-1</option></select>')};
  };
  await executeDaily(e);
  const state=e.store.read();
  a.deepEqual(queried,['161','exams']);
- a.equal(state.lastBackgroundHistoryTerm,159);
+ a.equal(state.lastBackgroundHistoryTerm,undefined);
+ a.equal(state.lastExamError,null);
  a.equal(state.runStatus,'success');
- a.equal(state.audit.at(-1).status,'checked');
- a.equal(e.notices.length,0);
- a.match(e.sandbox.output,/刷新成功/);
+});
+test('exam response cookies stay local to the exam phase across background runs',async()=>{
+ const e=await env();
+ const originalGet=e.m.HTTP.prototype.get;
+ const cookieKey='CourseSync.Local.v1.cookies';
+ const sessionCookie={name:'session',value:'course',domain:'jwxt.nufe.edu.cn',hostOnly:true,path:'/',expires:0};
+ e.keys.set(cookieKey,JSON.stringify([sessionCookie]));
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const readPage=e.m.HTTP.prototype.get,courseCookies=[],examCookies=[];
+ e.m.HTTP.prototype.get=async function(url){
+   if(url.endsWith('/exam-arrange'))return originalGet.call(this,url);
+   courseCookies.push(this.jar.header(url));
+   return readPage(url);
+ };
+ e.sandbox.fetchImpl=async (_url,{headers})=>{
+   examCookies.push(headers.Cookie);
+   return new Response('<table id="exams"><tr class="tr-empty"><td>暂无考试安排</td></tr></table>',{
+     headers:{'Set-Cookie':'session=exam; Path=/'}
+   });
+ };
+ await executeDaily(e);
+ await e.m.run();
+ a.deepEqual(courseCookies,['session=course','session=course']);
+ a.deepEqual(examCookies,courseCookies);
+ a.deepEqual(JSON.parse(e.keys.get(cookieKey)),[sessionCookie]);
+ a.equal(e.store.read().runStatus,'success');
 });
 test('an interrupted rotating calendar transaction is reported as partial and resumed first',async()=>{
  const e=await env(),queried=[];
@@ -747,7 +838,7 @@ test('an interrupted rotating calendar transaction is reported as partial and re
  };
  await executeDaily(e);
  const partial=e.store.read();
- a.deepEqual(queried.splice(0),['161','exams','160']);
+ a.deepEqual(queried.splice(0),['161','160','exams']);
  a.equal(partial.runStatus,'partial');
  a.equal(partial.lastExamError,null);
  a.equal(partial.tx.sid,'160');
@@ -938,7 +1029,26 @@ test('daily refresh updates managed courses, deduplicates matching imports and p
  const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();
  a.equal(managed().map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
-test('end-to-end malformed source preserves every old event and reports one failure',async()=>{const e=await env();e.baseline([lesson()]);const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});loggedIn(e,{});await executeDaily(e);a.ok(e.db.some(x=>x.identifier===own.identifier));a.ok(e.db.some(x=>x.identifier===legacy.identifier));a.equal(e.requests.length,0);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.equal(e.store.read().lastError,'SCHEMA');});
+test('malformed course source preserves old events and stops before requesting exams',async()=>{
+ const e=await env();
+ e.baseline([lesson()]);
+ const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});
+ loggedIn(e,{});
+ let examRequests=0;
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async url=>{
+   if(url.endsWith('/exam-arrange'))examRequests++;
+   return readPage(url);
+ };
+ await executeDaily(e);
+ a.ok(e.db.some(x=>x.identifier===own.identifier));
+ a.ok(e.db.some(x=>x.identifier===legacy.identifier));
+ a.equal(e.requests.length,0);
+ a.equal(examRequests,0);
+ a.equal(e.notices.length,1);
+ a.match(e.notices[0].title,/失败/);
+ a.equal(e.store.read().lastError,'SCHEMA');
+});
 test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'EMPTY_SOURCE');a.match(e.notices[0].title,/失败/);});
 test('end-to-end failed calendar save never purges legacy data',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});e.setSaveFailure(true);loggedIn(e,raw([activity({weekIndexes:[1],room:'changed'})]));await executeDaily(e);a.equal(e.db.length,2);a.ok(e.store.read().tx);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.match(e.notices[0].title,/失败/);});
 test('end-to-end school person change blocks all calendar writes',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('CourseSync.Local.v1.person','another-person');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');a.equal(e.store.read().authPaused,true);a.match(e.notices[0].title,/登录需要处理/);});
@@ -1571,11 +1681,38 @@ test('fallback creation prompt includes the same warning when the original calen
  a.equal(e.state.calendarId,'calendar-gone');
  a.equal(h.created.length,0);
 });
-test('pending transaction blocks creation of a replacement calendar',async()=>{
+test('a replacement binds despite an older pending journal and courses archive it before writing',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setName(e);
- e.state.tx=tx([],[]);
- await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
- a.equal(h.created.length,0);
+ const oldCalendar={...e.calendar,identifier:'calendar-gone'};
+ const old=e.add(lesson(),{cal:oldCalendar});
+ const stale=lesson({title:'不可重放的旧事务'});
+ e.state.tx=tx([lesson()],[stale]);
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(h.created.length,1);
+ a.equal(e.store.read().calendarId,picked.identifier);
+ const journal=e.store.read().tx;
+ a.equal(journal.calendarId,oldCalendar.identifier);
+ a.deepEqual(JSON.parse(JSON.stringify(journal.target)),[stale]);
+ a.equal(e.requests.length,0);
+
+ loggedIn(e,raw([activity({courseName:'教务系统的新课程',weekIndexes:[1]})]));
+ const writeFile=e.sandbox.__sdk.FileManager.writeAsStringSync;
+ e.sandbox.__sdk.FileManager.writeAsStringSync=(filename,body)=>{
+   if(!filename.includes('课程事务-'))writeFile(filename,body);
+ };
+ await a.rejects(()=>e.m.synchronize(e.state,e.store,picked,true,()=>{}),code('BACKUP_FAILED'));
+ a.equal(e.store.read().calendarId,picked.identifier);
+ a.equal(e.store.read().tx.calendarId,oldCalendar.identifier);
+ a.equal(e.requests.length,0);
+
+ e.sandbox.__sdk.FileManager.writeAsStringSync=writeFile;
+ await e.m.synchronize(e.state,e.store,picked,true,()=>{});
+ const updated=e.store.read();
+ a.equal(updated.tx,null);
+ a.equal(e.files.get(e.store.path(updated.lastArchivedCourseJournal)),JSON.stringify(journal,null,2));
+ a.deepEqual(e.db.map(event=>[event.calendar.identifier,event.title]),[
+   [old.calendar.identifier,old.title],[picked.identifier,'教务系统的新课程']
+ ]);
 });
 test('canceled calendar creation does not proceed after another run owns cancellation',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e);
@@ -2462,7 +2599,7 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
      roomRequests++;
      if(offline)throw Error('offline');
      return {
-       status:200,headers:new Map(),cookies:[],mimeType:'application/json',
+       status:200,headers:new Map([['Set-Cookie','room=session; Path=/']]),cookies:[],mimeType:'application/json',
        text:async()=>JSON.stringify({roomList:[{id:101,nameZh:'博远楼JC101',building:{nameZh:'博远楼'},floor:1}]})
      };
    }
@@ -2484,6 +2621,7 @@ test('NUFE dashboard loads classroom rows and retryable failures without extra d
  a.match(failure.message,/设备没有可用的网络连接/);
  a.match(cancelled.message,/已取消/);
  a.equal(roomRequests,8);
+ a.equal(e.keys.get('CourseSync.Local.v1.cookies'),'[]');
  a.deepEqual(shownDialogs,[]);
  a.equal(e.db.length,dbCountBefore);
 });

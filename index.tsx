@@ -51,6 +51,7 @@ let __shortcutOutput=null;
 const __webviews=new Set();
 // Leave time after the Intent's work budget for the result and cleanup.
 const backgroundDeadline=HostScript.env==='intent'?Date.now()+20000:Infinity;
+const BACKGROUND_ROTATION_MS=6000, BACKGROUND_EXAM_RESERVE_MS=6000;
 let calendarReadDeadline=backgroundDeadline;
 const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
 const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
@@ -716,6 +717,11 @@ class HTTP {
     this.jar=jar;this.persist=persist;this.before=before;this.trace=trace;this.deadline=deadline;this.last=0;
     this.savedCookies=JSON.stringify(jar.cookies);
   }
+  withPrivateCookies(deadline=this.deadline) {
+    const client=new HTTP(new CookieJar([...this.jar.cookies]),undefined,this.before,this.trace,deadline);
+    client.last=this.last;
+    return client;
+  }
   async get(url,opt={}) {
     let method=opt.body?'POST':'GET',body=opt.body||null;
     const started=Date.now(),chainLimit=75000;
@@ -776,15 +782,11 @@ class HTTP {
 }
 function schoolSession(jar,checkpoint,trace,deadline){
   const key=schoolKey(KEY),initial=JSON.stringify(jar.cookies);
-  let verified=false;
-  const http=new HTTP(jar,cookies=>{
-    if(verified)Keychain.set(key,JSON.stringify(cookies));
-  },checkpoint,trace,deadline);
+  const http=new HTTP(jar,undefined,checkpoint,trace,deadline);
   return {http,commitCookies(){
     checkpoint();
     const cookies=JSON.stringify(jar.cookies);
     if(cookies!==initial)Keychain.set(key,cookies);
-    verified=true;
   }};
 }
 async function legacyInput(title,label,secure=false) {
@@ -840,10 +842,10 @@ function examTitle(title,limit=Infinity){
   return EXAM_LABEL+title.trim().slice(0,limit-EXAM_LABEL.length);
 }
 const isExamEvent=(ev,state)=>String(ev?.notes||'').startsWith(EXAM_MARKER)||
+  String(ev?.title||'').startsWith(EXAM_LABEL)||
   Object.prototype.hasOwnProperty.call(state?.examIndex||{},ev?.identifier)||
   (/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(ev?.notes||'')&&
-    (String(ev?.title||'').startsWith(LEGACY_EXAM_ICON)||String(ev?.title||'').startsWith(EXAM_LABEL)||
-      String(ev?.title||'').endsWith(EXAM_LABEL)));
+    (String(ev?.title||'').startsWith(LEGACY_EXAM_ICON)||String(ev?.title||'').endsWith(EXAM_LABEL)));
 function examRows(html) {
   const clean=html.replace(/<!--[\s\S]*?-->/g,'');
   const table=[...clean.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table\s*>/gi)]
@@ -874,8 +876,8 @@ function examRows(html) {
   assert(empty||rows.length,'EXAM_SCHEMA');
   return rows;
 }
-async function fetchExamRows(http,options) {
-  const response=await http.get(JW+EXAM_PATH,options);
+async function fetchExamRows(http) {
+  const response=await http.get(JW+EXAM_PATH);
   const target=safeURL(response.url);
   if(target.host!==safeURL(JW).host||target.path==='/student/login')fail('AUTH_REQUIRED');
   assert(target.path===EXAM_PATH||/^\/student\/for-std\/exam-arrange\/info\/\d+$/.test(target.path),'EXAM_SCHEMA');
@@ -890,7 +892,7 @@ function indexedExamWindows(index,prefix){
   }
   return ranges;
 }
-async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint){
+async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint,examKey){
   const legacyId=state.examCalendarId;
   if(!legacyId||legacyId===calendar.identifier){
     if(legacyId||state.examCalendarTitle){
@@ -905,10 +907,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,c
   progress('合并考试日历');
   const prefix=EXAM_MARKER+state.owner+'] ';
   const index=Object.assign(Object.create(null),state.examIndex);
-  const keyOf=ev=>{
-    const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
-    return typeof key==='string'&&key.startsWith(prefix)?key:null;
-  };
+  const keyOf=ev=>examKey(ev,index);
   const ranges=[...windows,...dedicatedWindows(state),...indexedExamWindows(index,prefix)].sort((a,b)=>a[0]-b[0]);
   const merged=[];
   for(const [start,end] of ranges){
@@ -965,7 +964,7 @@ async function migrateLegacyExamCalendar(state,store,calendar,windows,progress,c
   delete state.examCalendarTitle;
   store.write(state);
 }
-async function upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint){
+async function upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint,examKey){
   if(state.examTitleFormat==='prefix')return;
   for(const [start,end] of [...windows,...indexedExamWindows(index,prefix)]){
     for(let at=start;at<end;at+=90*DAY){
@@ -975,8 +974,8 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows,check
         if(!previous.startsWith(LEGACY_EXAM_ICON)&&!previous.endsWith(EXAM_LABEL))continue;
         const title=examTitle(previous);
         if(title===previous)continue;
-        const key=String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
-        if(!key?.startsWith(prefix))continue;
+        const key=examKey(ev,index);
+        if(!key)continue;
         assert(isStandaloneEvent(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
         checkpoint();
         const oldId=ev.identifier;
@@ -996,12 +995,19 @@ async function upgradeExamTitles(state,store,calendar,index,prefix,windows,check
   state.examTitleFormat='prefix';
   store.write(state);
 }
-async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check(),prefetchedRows) {
+async function syncExams(http,state,store,calendar,progress,now=Date.now(),checkpoint=()=>store.check()) {
   progress('读取考试日程');
   const end=now+366*DAY;
   const prefix=EXAM_MARKER+state.owner+'] ';
+  const courseIndex=storedEventIndex(state);
+  const examKey=(ev,index)=>{
+    const notes=String(ev.notes||'');
+    if(courseIndex.has(ev.identifier)||notes.startsWith('[NUFE_LOCAL_V1 '))return null;
+    const key=notes.startsWith(prefix)?notes:index[ev.identifier];
+    return typeof key==='string'&&key.startsWith(prefix)?key:null;
+  };
   const target=new Map();
-  const rowsFromSchool=await (prefetchedRows??fetchExamRows(http));
+  const rowsFromSchool=await fetchExamRows(http);
   for(const row of rowsFromSchool){
     const time=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})\s*[~～–-]\s*(\d{2}:\d{2})$/.exec(row.time);
     assert(time,'EXAM_SCHEMA');
@@ -1035,18 +1041,18 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   const windows=[[now,end],...[...historical].map(start=>[start,Math.min(start+windowSize,now)])];
   checkpoint();
   state.lastStage='考试：合并旧日历';
-  await migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint);
+  await migrateLegacyExamCalendar(state,store,calendar,windows,progress,checkpoint,examKey);
   state.lastStage='考试：核对旧标题';
   const index=Object.assign(Object.create(null),state.examIndex);
-  await upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint);
-  const keyOf=ev=>String(ev.notes||'').startsWith(prefix)?ev.notes:index[ev.identifier];
+  await upgradeExamTitles(state,store,calendar,index,prefix,windows,checkpoint,examKey);
+  const keyOf=ev=>examKey(ev,index);
   const read=async()=>{
     const owned=new Map();
     for(const [start,stop] of windows){
       checkpoint();
       for(const ev of await calendarRows(start,stop,calendar)){
         const key=keyOf(ev);
-        if(typeof key==='string'&&key.startsWith(prefix)){
+        if(key){
           assert(isStandaloneEvent(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
           owned.set(occurrenceKey(ev),ev);
         }
@@ -1520,6 +1526,7 @@ function validateState(s){
   if(s.tx){
     const t=s.tx;
     assert(typeof t.sid==='string'&&typeof t.anchor==='string'&&typeof t.stamp==='string'&&Number.isFinite(Date.parse(t.stamp)),'STATE_CORRUPT');
+    assert(t.calendarId==null||typeof t.calendarId==='string'&&t.calendarId.length>0,'STATE_CORRUPT');
     monday(t.anchor);validateRecords(t.before);validateRecords(t.target);
     assert([...t.before,...t.target].every(e=>e.sid===t.sid)&&t.changes&&
       ['added','removed','changed'].every(key=>Number.isInteger(t.changes[key])&&t.changes[key]>=0),'STATE_CORRUPT');
@@ -1935,7 +1942,12 @@ function createProgress(state,store,interactive){
     // Persist diagnostic checkpoints less often than network trace messages.
     // Calendar journals, failures, and final results are saved independently.
     if(interactive&&(now<lastSaved||now-lastSaved>=5000)){
-      store.write(state);lastSaved=now;
+      lastSaved=now;
+      try{store.write(state);}
+      catch(error){
+        if(['LOCK_LOST','SYNC_SUPERSEDED'].includes(error?.code))throw error;
+        console.error('[CourseSync] progress checkpoint could not be saved');
+      }
     }
     if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+message);
   };
@@ -2014,7 +2026,6 @@ async function pickCalendar(state,store,beforePrompt){
   if(exact)return await alignBoundCalendarName(exact,state,store);
   // Background jobs never create calendars or silently change the binding.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
   if(!all.length&&typeof HostScript.requestAccess==='function'){
     try{await HostScript.requestAccess(['calendar']);}catch(_){}
     all=await visibleCalendars();
@@ -2026,6 +2037,8 @@ async function pickCalendar(state,store,beforePrompt){
   const title=await requestCalendarName(state);
   store.check();
   const picked=await createDedicatedCalendar(title);
+  // Older journals implicitly targeted the calendar bound at their creation.
+  if(state.tx&&state.tx.calendarId==null)state.tx.calendarId=state.calendarId;
   state.calendarId=picked.identifier;state.calendarTitle=picked.title;
   delete state.calendarBindingPending;
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
@@ -2036,7 +2049,7 @@ function availableRecovery(code,state,store){
   if(code==='COOKIE_STORAGE')return {kind:'cookie',label:'清除异常 Cookie'};
   if(code==='LOCK_CORRUPT')return {kind:'lock',label:'检查并修复异常同步锁'};
   if(['BACKUP_FAILED','CALENDAR_VERIFY','LEGACY_VERIFY','LEGACY_CHANGED','CLEANUP_REMOVE_FAILED','STATE_CORRUPT','MARKER_CORRUPT'].includes(code)){
-    const names=[state?.lastSyncBackupName,state?.lastLegacyBackupName,state?.lastLegacyReportName].filter(Boolean);
+    const names=[state?.lastSyncBackupName,state?.lastArchivedCourseJournal,state?.lastLegacyBackupName,state?.lastLegacyReportName].filter(Boolean);
     if(names.some(n=>/^[^/\\]+$/.test(n)&&store.fm.fileExists(store.path(n))))
       return {kind:'backup',label:'导出恢复备份'};
   }
@@ -2050,7 +2063,7 @@ async function clearBrokenCookies(state,store){
   await notice('已清除异常会话','已清除本机保存的学校 Cookie。账号密码与课程和考试日历均已保留，下次刷新将重新认证。');
 }
 async function exportRecoveryBackups(state,store){
-  const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName]
+  const names=[state.lastSyncBackupName,state.lastArchivedCourseJournal,state.lastLegacyBackupName,state.lastLegacyReportName]
     .filter(n=>n&&/^[^/\\]+$/.test(n)&&store.fm.fileExists(store.path(n)));
   if(!names.length){await notice('没有可用备份','未发现可导出的同步备份；请保留当前课表日历。');return;}
   const files=[...new Set(names)].map(n=>({name:n,data:Data.fromFile(store.path(n))}));
@@ -2248,7 +2261,7 @@ async function inspectEnvironment(state,store){
   }catch(_){put('同步任务','待确认','无法读取锁文件');}
 
   try{
-    const names=[state.tx?.backupName,state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName].filter(Boolean);
+    const names=[state.tx?.backupName,state.lastSyncBackupName,state.lastArchivedCourseJournal,state.lastLegacyBackupName,state.lastLegacyReportName].filter(Boolean);
     if(names.some(n=>typeof n!=='string'||!/^[^/\\]+$/.test(n)||!store.fm.fileExists(store.path(n))))
       put('本地备份','注意','有备份引用不可读取；请保留现有文件');
     else if(names.length)put('本地备份','正常','已记录的备份文件存在（未进行恢复测试）');
@@ -2444,6 +2457,7 @@ async function removeMatchedOldCourses(calendar,state,store,sid,budget,{previous
 }
 async function finishTx(state,store,adapter,budget) {
   const tx=state.tx;
+  assert(tx.calendarId==null||tx.calendarId===adapter.calendar.identifier,'BACKUP_FAILED');
   if(!tx.backupName){
     const live=await adapter.scan(tx.anchor,[...tx.before,...tx.target]);
     const name='同步前快照-'+tx.id+'.json';
@@ -2495,17 +2509,15 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
   let workDeadline=deadline;
   const budget=()=>{store.check();if(Date.now()>=workDeadline)fail('BUDGET');};
   if(Object.hasOwn(state,'nufeBuildingPoints')){delete state.nufeBuildingPoints;store.write(state);}
-  // A pending target is rebased on a fresh school response before any resume write.
-  const interrupted=state.tx;
   delete state.notice;
   // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
   const jar=state.signedOut||manualAuth?.kind==='credentials'?new CookieJar():readCookieJar();
   const stage=progress||createProgress(state,store,interactive);
   const session=schoolSession(jar,budget,stage,interactive?Infinity:deadline);
-  const {http}=session;
-  const info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
+  const info=pageInfo(await coursePage(session.http,interactive,stage,manualAuth));
   verifyBoundPerson(info.person,true);
   session.commitCookies();
+  const http=session.http.withPrivateCookies();
   // Only a verified school session ends the signed-out state.
   if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   state.availableSemesters=info.semesters;
@@ -2513,19 +2525,16 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     stage('登录验证完成');
     calendar=await calendar();
   }
+  if(state.tx?.calendarId&&state.tx.calendarId!==calendar.identifier){
+    const name='课程事务-'+uuid()+'.json';
+    writeVerified(store,name,JSON.stringify(state.tx,null,2));
+    state.lastArchivedCourseJournal=name;
+    state.tx=null;
+    store.write(state);
+  }
+  // Rebase a journal for this calendar on a fresh school response before writing.
+  const interrupted=state.tx;
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
-  let examsChecked=false;
-  let prefetchedExamRows;
-  const refreshExams=async()=>{
-    examsChecked=true;
-    try{
-      await syncExams(http,state,store,calendar,stage,Date.now(),budget,prefetchedExamRows);
-      state.lastExamError=null;
-    }catch(error){
-      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
-      state.lastExamError=diagnosticCode(error);
-    }
-  };
   delete state.historySyncCheckpoint;
   state.retryTermIds=(Array.isArray(state.retryTermIds)?state.retryTermIds:[]).map(Number).filter(sid=>info.semesters.some(term=>term.id===sid)&&sid!==info.current);
   const retrySid=!interactive?state.retryTermIds[0]:undefined;
@@ -2542,70 +2551,79 @@ async function synchronize(state,store,calendar,interactive,progress=null,manual
     }
   }
   state.termErrors=[];
-  for(const sid of sids) {
-    const rotating=!interactive&&sid!==info.current&&sid!==pendingSid;
-    // Required work has priority. The rotating terms share a short window,
-    // and a late run leaves the next term for another automation.
-    if(rotating&&!examsChecked){
-      await refreshExams();
-      if(deadline-Date.now()<4000)break;
-      workDeadline=Math.min(deadline-1000,Date.now()+6000);
-      http.deadline=workDeadline;
-      calendarReadDeadline=workDeadline;
-    }
-    if(rotating&&workDeadline-Date.now()<1500)break;
-    try {
-    budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
-    if(rotating&&sid!==retrySid)state.lastBackgroundHistoryTerm=sid;
-    state.retryTermIds=state.retryTermIds.filter(id=>id!==sid);
-    stage('请求学期 '+sid+' 课表数据');
-    const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
-    const anchor=await chooseAnchor(sid,name,http,state,store);
-    const normalized=expand(raw,sid,anchor);
-    if(normalized.studentCode){const studentKey=schoolKey('CourseSync.Local.v1.student');if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
-    let old=state.semesters[sid];
-    if(interrupted&&interrupted.sid===String(sid)){const recovered=new Map([...interrupted.before,...interrupted.target].map(e=>[e.id,e]));old={...(old||{}),events:[...recovered.values()]};}
-    // Recover local logical IDs from managed event notes when term index is absent.
-    if(!old){const recovered=(await adapter.scan(anchor,normalized.events)).filter(x=>x.rec.sid===String(sid)).map(x=>x.rec);const by=new Map();for(const e of recovered)by.set(e.id,e);old={events:[...by.values()]};}
-    assert(normalized.events.length||!old.events.length,'EMPTY_SOURCE');
-    const p=plan(old.events,normalized.events,uuid);
-    if(!interactive&&sid===info.current){
-      // Only the read overlaps EventKit. Apply exams after the current term has
-      // been verified. Leave its diagnostic stage intact during the overlap.
-      prefetchedExamRows=fetchExamRows(http,{trace:message=>console.log('[CourseSync] '+message)});
-      void prefetchedExamRows.catch(()=>{});
-    }
-    // A missing, duplicate or edited event still goes through the repair transaction.
-    if(!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
-       old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
-      stage('核验学期 '+sid+' 的日历事件');
-      const checked=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
-      if(checked){
-        state.semesters[sid]={...old,events:p.events,index:checked.index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
-        if(checked.rows.some(({ev})=>ev.notes||hasRetiredCalendarPin(ev)))
-          await polishTermNotes(calendar,state,store,sid,budget,{checked:{adapter,rows:checked.rows}});
-        continue;
+  let rotationDeadline=null;
+  const previousReadDeadline=calendarReadDeadline;
+  if(!interactive)calendarReadDeadline=deadline;
+  try {
+    for(const sid of sids) {
+      const rotating=!interactive&&sid!==info.current&&sid!==pendingSid;
+      // Optional terms get a short window with a fixed reserve for exams.
+      // No exam request may use the course window or the shared request gate.
+      if(rotating&&rotationDeadline===null){
+        rotationDeadline=Math.min(deadline-BACKGROUND_EXAM_RESERVE_MS,Date.now()+BACKGROUND_ROTATION_MS);
+        workDeadline=rotationDeadline;
+        http.deadline=workDeadline;
+        calendarReadDeadline=workDeadline;
+      }
+      if(rotating&&workDeadline-Date.now()<1500)break;
+      try {
+        budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
+        if(rotating&&sid!==retrySid)state.lastBackgroundHistoryTerm=sid;
+        state.retryTermIds=state.retryTermIds.filter(id=>id!==sid);
+        stage('请求学期 '+sid+' 课表数据');
+        const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
+        const anchor=await chooseAnchor(sid,name,http,state,store);
+        const normalized=expand(raw,sid,anchor);
+        if(normalized.studentCode){const studentKey=schoolKey('CourseSync.Local.v1.student');if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
+        let old=state.semesters[sid];
+        if(interrupted&&interrupted.sid===String(sid)){const recovered=new Map([...interrupted.before,...interrupted.target].map(e=>[e.id,e]));old={...(old||{}),events:[...recovered.values()]};}
+        // Recover local logical IDs from managed event notes when term index is absent.
+        if(!old){const recovered=(await adapter.scan(anchor,normalized.events)).filter(x=>x.rec.sid===String(sid)).map(x=>x.rec);const by=new Map();for(const e of recovered)by.set(e.id,e);old={events:[...by.values()]};}
+        assert(normalized.events.length||!old.events.length,'EMPTY_SOURCE');
+        const p=plan(old.events,normalized.events,uuid);
+        // A missing, duplicate or edited event still goes through the repair transaction.
+        if(!state.tx&&old.notesFormat===3&&(old.legacyMatchedCleanAt||!old.events.length)&&
+           old.anchor===anchor&&!p.added.length&&!p.removed.length&&!p.changed.length){
+          stage('核验学期 '+sid+' 的日历事件');
+          const checked=await verifyUnchangedTerm(adapter,sid,anchor,p.events);
+          if(checked){
+            state.semesters[sid]={...old,events:p.events,index:checked.index,name,skipped:normalized.skipped,lastSuccess:new Date().toISOString()};
+            if(checked.rows.some(({ev})=>ev.notes||hasRetiredCalendarPin(ev)))
+              await polishTermNotes(calendar,state,store,sid,budget,{checked:{adapter,rows:checked.rows}});
+            continue;
+          }
+        }
+        // Ambiguous moved lessons are represented as remove+add; no relationship is invented.
+        // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
+        stage('写入学期 '+sid+' 的日历事件');
+        state.tx={id:uuid(),calendarId:calendar.identifier,sid:String(sid),anchor,name,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length}};
+        store.write(state);await finishTx(state,store,adapter,budget);
+      } catch(e) {
+        if(rotating&&e.code==='BUDGET'){
+          if(state.tx)state.termErrors.push({sid:String(sid),code:e.code});
+          break;
+        }
+        if(rotating&&!state.retryTermIds.includes(sid))state.retryTermIds.push(sid);
+        if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
+        state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
       }
     }
-    // Ambiguous moved lessons are represented as remove+add; no relationship is invented.
-    // Persist the complete target BEFORE touching EventKit. Future resume uses these IDs.
-    stage('写入学期 '+sid+' 的日历事件');
-    state.tx={id:uuid(),sid:String(sid),anchor,name,before:old.events,target:p.events,stamp:new Date().toISOString(),skipped:normalized.skipped,changes:{added:p.added.length,removed:p.removed.length,changed:p.changed.length}};
-    store.write(state);await finishTx(state,store,adapter,budget);
-    } catch(e) {
-      if(rotating&&e.code==='BUDGET'){
-        if(state.tx)state.termErrors.push({sid:String(sid),code:e.code});
-        break;
-      }
-      if(rotating&&!state.retryTermIds.includes(sid))state.retryTermIds.push(sid);
-      if(state.tx||(sid===info.current&&e.code!=='ANCHOR')||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
-      state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});
+    workDeadline=deadline;
+    if(!interactive)calendarReadDeadline=deadline;
+    // Carry the request spacing forward. Exam-response cookies stay in this
+    // phase so they cannot change the verified session used by later course runs.
+    const examHTTP=http.withPrivateCookies(deadline);
+    try{
+      budget();
+      await syncExams(examHTTP,state,store,calendar,stage,Date.now(),budget);
+      state.lastExamError=null;
+    }catch(error){
+      if(['SYNC_SUPERSEDED','LOCK_LOST','BUSY'].includes(error?.code))throw error;
+      state.lastExamError=diagnosticCode(error);
     }
+  }finally{
+    calendarReadDeadline=previousReadDeadline;
   }
-  workDeadline=deadline;
-  calendarReadDeadline=backgroundDeadline;
-  if(!interactive)http.deadline=deadline;
-  if(!examsChecked)await refreshExams();
   state.reviewPending=false;state.failures=0;state.lastError=null;
   state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;
 }
@@ -2858,10 +2876,10 @@ async function queryDayRooms(http,date,onProgress=()=>{},periods=FREE_ROOM_PERIO
 
 async function queryFreeRoomsToday(http,onStage=()=>{},onProgress=()=>{},now,onAuthenticated=()=>{},periods=FREE_ROOM_PERIODS){
   await coursePage(http,true,onStage);
-  onAuthenticated();
+  const roomHTTP=onAuthenticated()??http;
   onProgress(0.25);
   const date=localDateTime(new Date(now??Date.now()).toISOString()).slice(0,10);
-  return {date,rooms:await queryDayRooms(http,date,onProgress,periods)};
+  return {date,rooms:await queryDayRooms(roomHTTP,date,onProgress,periods)};
 }
 
 async function loadFreeRoomPage(isActive,onProgress,periods){
@@ -2869,7 +2887,10 @@ async function loadFreeRoomPage(isActive,onProgress,periods){
   try{
     checkActive();
     const session=schoolSession(readCookieJar(),checkActive);
-    const results=await queryFreeRoomsToday(session.http,checkActive,onProgress,undefined,session.commitCookies,periods);
+    const results=await queryFreeRoomsToday(session.http,checkActive,onProgress,undefined,()=>{
+      session.commitCookies();
+      return session.http.withPrivateCookies();
+    },periods);
     return {kind:'ready',...results};
   }catch(error){
     const code=diagnosticCode(error);
@@ -2909,9 +2930,11 @@ async function runAttempt() {
       // A failure before synchronization must not reuse an earlier run's stage.
       state.lastStage='准备主菜单';
     }
-    // Skip the dashboard after logout so reopening the script starts with credentials.
-    if(interactive&&(state.calendarId||state.calendarBindingPending)&&(!(reselectSchool||state.signedOut)||state.signedOut&&canOfferSignOut(state))){
-      const canSignOut=canOfferSignOut(state);
+    // Verified credentials give access to account and room actions even if
+    // calendar setup failed. Ordinary first launch and completed logout log in first.
+    const canSignOut=interactive&&canOfferSignOut(state);
+    if(interactive&&(state.calendarId||state.calendarBindingPending||canSignOut)&&
+       (!(reselectSchool||state.signedOut)||state.signedOut&&canSignOut)){
       const canFreeRooms=activeSchoolId==='nufe'&&!state.signedOut&&canSignOut;
       const statusMessage=state.lastError==='LOGOUT_INCOMPLETE'
         ?'退出登录未完成，请重试。'
@@ -2939,7 +2962,7 @@ async function runAttempt() {
       if(selected<0){
         const menu=new Alert();menu.title='CourseSync';
         const lastTime=Number.isFinite(Date.parse(state.lastCheck))?'上次刷新：'+localDateTime(state.lastCheck):'';
-        menu.message=[state.calendarBindingPending?'未绑定日历':'',lastTime,statusMessage].filter(Boolean).join('\n');
+        menu.message=[!state.calendarId||state.calendarBindingPending?'未绑定日历':'',lastTime,statusMessage].filter(Boolean).join('\n');
         menu.addAction('立即刷新');
         if(canSignOut)menu.addDestructiveAction('退出登录');
         menu.addCancelAction('关闭');
