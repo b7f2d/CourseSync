@@ -2640,9 +2640,7 @@ test('NUFE free classrooms group by building and numbered floor with De building
    {name:'德济楼',floors:[{floor:1,roomCodes:['Z2-101']}]},
    {name:'德正楼',floors:[{floor:1,roomCodes:['Z3-101']}]},
    {name:'德业楼',floors:[{floor:1,roomCodes:['Z4-101']}]},
-   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC102','JC104']},{floor:2,roomCodes:['JC203']}]},
-   {name:'博观楼',floors:[{floor:1,roomCodes:['JB101']},{floor:2,roomCodes:['JB202']}]},
-   {name:'博文楼',floors:[{floor:1,roomCodes:['JA105']},{floor:4,roomCodes:['JA414']}]}
+   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC102','JC104']},{floor:2,roomCodes:['JC203']}]}
  ]);
 });
 
@@ -2669,7 +2667,7 @@ test('NUFE free classroom query queries lesson 10 separately for today in China 
  a.deepEqual(JSON.parse(JSON.stringify(result.rooms)),[
    {period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
    {period:'下午',units:['6','7','8','9'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]},
-   {period:'第10节',units:['10'],buildings:[{name:'博观楼',floors:[{floor:2,roomCodes:['JB202']}]}]},
+   {period:'第10节',units:['10'],buildings:[]},
    {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:4,roomCodes:['JC403']}]}]}
  ]);
  a.deepEqual(requestedSegments.map(segment=>segment.units.join(',')),['1,2,3,4,5','6,7,8,9','10','11,12,13']);
@@ -2825,11 +2823,11 @@ test('classroom lists hide repeated IDs and room codes even when the supplied ID
  const sameId={...x,nameZh:'博远楼JC102'};
  const sameNameWithoutId={...x,id:undefined};
  const sameNameWithDifferentId={...x,id:11};
- const other={id:12,nameZh:'博观楼JB201',buildingName:'博观楼',floor:2};
+ const other={id:12,nameZh:'德经楼Z1-101',buildingName:'德经楼',floor:1};
  const rows=await m.queryDayRooms({json:async()=>({roomList:[x,x,sameId,sameNameWithoutId,sameNameWithDifferentId,other]})},'2026-11-23');
  for(const row of rows)a.deepEqual(JSON.parse(JSON.stringify(row.buildings)),[
-   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]},
-   {name:'博观楼',floors:[{floor:2,roomCodes:['JB201']}]}
+   {name:'德经楼',floors:[{floor:1,roomCodes:['Z1-101']}]},
+   {name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}
  ]);
 });
 test('concurrent HTTP requests recheck shared request spacing after waking',()=>{

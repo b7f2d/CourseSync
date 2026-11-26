@@ -125,7 +125,7 @@ test('NUFE provides free classroom query button in dashboard only, not in unauth
  const loginSection=native.slice(0,native.indexOf('type FreeRoomResult'));
  assert.doesNotMatch(loginSection,/查询空闲教室|freeRooms/);
  assert.match(index,/const NUFE_FREE_ROOM_ENDPOINT=/);
- assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5,'博观楼':6,'博文楼':7\}\)/);
+ assert.match(index,/const BUILDING_PRIORITY=Object\.freeze\(\{'德经楼':1,'德济楼':2,'德正楼':3,'德业楼':4,'博远楼':5\}\)/);
  assert.match(index,/queryFreeRoomsForPeriod/);
  assert.match(index,/queryFreeRoomsToday/);
  assert.match(index,/loadFreeRooms:canFreeRooms\?loadFreeRoomPage:undefined/);
@@ -265,8 +265,8 @@ test('classroom dialog displays the selected lessons and room groups without ext
     {name:'博远楼',floors:[{floor:1,roomCodes:['JC101','JC103']},{floor:2,roomCodes:['JC202']}]}
   ]},
   {period:'下午',units:['6','7','8','9'],buildings:[]},
-  {period:'第10节',units:['10'],buildings:[{name:'博观楼',floors:[{floor:2,roomCodes:['JB202']}]}]},
-  {period:'晚上',units:['11','12','13'],buildings:[{name:'博文楼',floors:[{floor:3,roomCodes:['JA303']}]}]}
+  {period:'第10节',units:['10'],buildings:[{name:'德济楼',floors:[{floor:1,roomCodes:['Z2-102']}]}]},
+  {period:'晚上',units:['11','12','13'],buildings:[{name:'博远楼',floors:[{floor:3,roomCodes:['JC303']}]}]}
  ]);
  assert.equal(message,[
   '2026-11-23 · 仙林校区','',
@@ -274,9 +274,9 @@ test('classroom dialog displays the selected lessons and room groups without ext
   '德业楼','1楼  Z4-101','博远楼','1楼  JC101  JC103','2楼  JC202','',
   '第6—9节 · 13:30–16:35',
   '无整段空闲教室','',
-  '第10节 · 16:45–17:25','博观楼','2楼  JB202','',
+  '第10节 · 16:45–17:25','德济楼','1楼  Z2-102','',
   '第11—13节 · 18:30–20:50',
-  '博文楼','3楼  JA303'
+  '博远楼','3楼  JC303'
  ].join('\n'));
 });
 
