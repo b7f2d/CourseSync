@@ -317,7 +317,7 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
    .replace('_value:number','_value')
    .replace(' as const','');
  const {select,label,defaults}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits})',{});
- const localMs=(h,m)=>new Date(2026,10,25,h,m,0,0).getTime();
+ const localMs=(h,m)=>Date.UTC(2026,10,25,h-8,m);
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(9,2)))),{startUnit:2,endUnit:5});
@@ -336,6 +336,8 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.deepEqual(r2.periods,[{period:'第10节',units:['10']}]);
 
  assert.equal(select(5,3).valid,false);
+ assert.equal(select(14,13).valid,false);
+ assert.equal(select(1,0).valid,false);
  assert.equal(label('1'),'第1节  08:20–09:00');
  assert.equal(label('13'),'第13节  20:10–20:50');
 

@@ -566,10 +566,17 @@ function plan(old, incoming, newId) {
 function utf8(s) { return Array.from(unescape(encodeURIComponent(s)),c=>c.charCodeAt(0)); }
 function b64(bytes) { const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';let out='';for(let i=0;i<bytes.length;i+=3){const n=(bytes[i]<<16)|((bytes[i+1]||0)<<8)|(bytes[i+2]||0);out+=chars[n>>>18]+chars[(n>>>12)&63]+(i+1<bytes.length?chars[(n>>>6)&63]:'=')+(i+2<bytes.length?chars[n&63]:'=');}return out; }
 const AES_MUL=(a,b)=>{let r=0;for(let i=0;i<8;i++){if(b&1)r^=a;a=((a<<1)^((a&128)?0x11b:0))&255;b>>=1;}return r;};
-const AES_SBOX=Uint8Array.from({length:256},(_,a)=>{let v=0;if(a){v=1;for(let i=0;i<254;i++)v=AES_MUL(v,a);}let s=v;for(let i=1;i<5;i++)s^=((v<<i)|(v>>>(8-i)))&255;return s^0x63;});
+let aesSBox;
 function aesCBC(message,keyString,ivString) {
   const key=utf8(keyString),iv=utf8(ivString);assert([16,24,32].includes(key.length)&&iv.length===16,'CRYPTO');
-  const sb=AES_SBOX,xtime=x=>((x<<1)^((x&128)?0x11b:0))&255;
+  const sb=aesSBox??=Uint8Array.from({length:256},(_,a)=>{
+    let v=0;
+    if(a){v=1;for(let i=0;i<254;i++)v=AES_MUL(v,a);}
+    let s=v;
+    for(let i=1;i<5;i++)s^=((v<<i)|(v>>>(8-i)))&255;
+    return s^0x63;
+  });
+  const xtime=x=>((x<<1)^((x&128)?0x11b:0))&255;
   const nr=key.length/4+6,w=key.slice();let rc=1;
   while(w.length<16*(nr+1)){let t=w.slice(-4),i=w.length;if(i%key.length===0){t=[sb[t[1]]^rc,sb[t[2]],sb[t[3]],sb[t[0]]];rc=xtime(rc);}else if(key.length===32&&i%32===16)t=t.map(x=>sb[x]);for(let j=0;j<4;j++)w.push(w[i-key.length+j]^t[j]);}
   const data=utf8(message),pad=16-data.length%16;data.push(...Array(pad).fill(pad));let prev=iv,out=[];
@@ -1096,17 +1103,21 @@ async function syncExams(http,state,store,calendar,progress,now=Date.now(),check
   const final=removed?await read():written;
   assert(final.length===target.size&&new Set(final.map(keyOf)).size===target.size&&
     final.every(ev=>target.has(keyOf(ev))&&matches(ev,target.get(keyOf(ev)))),'CALENDAR_VERIFY');
-  // Save the identifier mapping before clearing the recovery markers.
+  // Persist new mappings before clearing recovery markers. A verified no-op
+  // can keep the existing on-disk snapshot until the final refresh result.
+  const mappingsChanged=final.some(ev=>storedIndex[ev.identifier]!==keyOf(ev));
   for(const ev of final)index[ev.identifier]=keyOf(ev);
   state.examIndex=index;
-  state.exams=[...target.values()].map((exam,idx)=>({
+  const exams=[...target.values()].map((exam,idx)=>({
     id:'exam-'+exam.start+'-'+idx,
     title:exam.title,
     start:new Date(exam.start).toISOString(),
     end:new Date(exam.stop).toISOString(),
     location:exam.location||''
   }));
-  store.write(state);
+  const snapshotChanged=JSON.stringify(state.exams)!==JSON.stringify(exams);
+  state.exams=exams;
+  if(saved||removed||mappingsChanged||snapshotChanged)store.write(state);
   state.lastStage='考试：清空备注';
   let notesChanged=false;
   for(const ev of final){
@@ -1604,6 +1615,9 @@ function eventRecord(ev,owner,byNative=null) {
   const rec={...meta,title,teachers,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
 }
+function isStandaloneCourse(ev){
+  return !ev.isAllDay&&!ev.isDetached&&!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length;
+}
 class CalendarAdapter {
   constructor(calendar,owner,store,budget=()=>store.check(),state=null){
     this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;
@@ -1618,7 +1632,7 @@ class CalendarAdapter {
     // before the next term can reuse them. Transactions always use fresh reads.
     if(!reuseWindows)this.verifiedWindows.clear();
     const aligned=reuseWindows||refreshWindows;
-    const found=new Map(),windowSize=90*DAY;
+    const found=new Map(),windowSize=180*DAY;
     const first=aligned?Math.floor(lo/windowSize)*windowSize:lo;
     for(let start=first;start<hi;start+=windowSize){
       this.budget();
@@ -1658,7 +1672,7 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
   const replacements=new Set();
   for(const [id,list] of byId){
     const dates=new Set(list.map(x=>x.rec.start+'\0'+x.rec.end));
-    if(dates.size>1||list.some(x=>x.ev.isAllDay||x.ev.hasRecurrenceRules||x.ev.recurrenceRules?.length)||!list.every(x=>sameCalendarCourse(x.rec,list[0].rec)))replacements.add(id);
+    if(dates.size>1||list.some(({ev})=>!isStandaloneCourse(ev))||!list.every(x=>sameCalendarCourse(x.rec,list[0].rec)))replacements.add(id);
   }
   for(const e of tx.target){budget();const primary=(byId.get(e.id)||[])[0];if(replacements.has(e.id)||!primary||!sameCalendarCourse(primary.rec,e))await adapter.save(e,replacements.has(e.id)?null:primary&&primary.ev);}
   const targetIds=new Set(tx.target.map(e=>e.id));
@@ -1680,7 +1694,7 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
   }
   for(const e of tx.target){
     const row=verified.get(e.id);
-    assert(row&&sameCalendarCourse(row.rec,e),'CALENDAR_VERIFY');
+    assert(row&&isStandaloneCourse(row.ev)&&!row.ev.attendees?.length&&sameCalendarCourse(row.rec,e),'CALENDAR_VERIFY');
     index[e.id]=row.ev.identifier;
   }
   return index;
@@ -2336,7 +2350,7 @@ async function polishTermNotes(calendar,state,store,sid,budget,{checked=null}={}
     const ev=items[0].ev,title=rec.title;
     const retiredPin=hasRetiredCalendarPin(ev);
     if(!ev.notes&&ev.title===title&&!retiredPin)continue;
-    assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
+    assert(isStandaloneCourse(ev)&&!ev.attendees?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
     if(!modified)adapter.verifiedWindows.clear();
     ev.title=title;ev.notes='';
@@ -2471,7 +2485,7 @@ async function verifyUnchangedTerm(adapter,sid,anchor,events){
   for(const {ev,rec} of rows){
     const target=expected.get(rec.id);
     if(!target||!sameCalendarCourse(rec,target)||ev.title!==target.title||adapter.byNative.get(ev.identifier)?.id!==rec.id||
-       ev.isAllDay||ev.isDetached||ev.hasRecurrenceRules||ev.recurrenceRules?.length||ev.attendees?.length)
+       !isStandaloneCourse(ev)||ev.attendees?.length)
       return null;
     expected.delete(rec.id);
     index[rec.id]=ev.identifier;
@@ -2771,15 +2785,13 @@ function compareFreeRooms(a,b){
 }
 
 function groupFreeRooms(rooms){
-  const ids=new Set(),codes=new Set(),codesWithoutId=new Set();
+  const ids=new Set(),codes=new Set();
   const buildings=[];
   for(const {building,floor,code,id} of rooms){
     // Room codes already include their building prefix.
-    const duplicate=id===null?codes.has(code):ids.has(id)||codesWithoutId.has(code);
+    if(codes.has(code)||(id!==null&&ids.has(id)))continue;
     codes.add(code);
-    if(id===null)codesWithoutId.add(code);
-    else ids.add(id);
-    if(duplicate)continue;
+    if(id!==null)ids.add(id);
 
     let buildingGroup=buildings.at(-1);
     if(buildingGroup?.name!==building){
@@ -2906,6 +2918,12 @@ async function runAttempt() {
           ?'点击「立即刷新」重新登录。'
           :state.calendarBindingPending
             ?'点击「立即刷新」绑定日历。'
+          :state.tx
+            ?'有一笔日历写入待恢复。点击「立即刷新」继续。'
+          :state.runStatus==='failed'&&state.lastError
+            ?reasonFor(state.lastError)
+          :state.runStatus==='partial'
+            ?partialSyncDetails(state)||'部分同步未完成。'
           :state.lastCheck
             ?'上次刷新：'+localDateTime(state.lastCheck)
             :'点击「立即刷新」开始同步。';

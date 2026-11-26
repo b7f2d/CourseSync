@@ -198,8 +198,8 @@ function parseClockMinutes(clock) {
   return h * 60 + m;
 }
 function defaultRoomUnits(baseMs = Date.now()) {
-  const d = new Date(baseMs);
-  const nowMin = d.getHours() * 60 + d.getMinutes();
+  const d = new Date(baseMs + 8 * 3600000);
+  const nowMin = d.getUTCHours() * 60 + d.getUTCMinutes();
   const found = nowMin < 20 * 60 + 50
     ? ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin)
     : null;
@@ -208,7 +208,7 @@ function defaultRoomUnits(baseMs = Date.now()) {
 }
 function roomSelectionForUnits(startUnit, endUnit) {
   const from = Number(startUnit), to = Number(endUnit);
-  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 13) {
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || from > 13 || to < 1 || to > 13) {
     return { valid: false, rangeText: '', summary: '请选择有效的课程节次', periods: null };
   }
   const fromTime = ROOM_LESSON_TIMES[String(from)][0];
@@ -421,7 +421,8 @@ async function presentRoomQuery(loadRooms:RoomLoader) {
 
 export async function presentNativeDashboard(options: DashboardOptions): Promise<any> {
   const {state, schoolName, canSignOut, statusMessage, loadFreeRooms} = options;
-  const outcomes={failed:'上次刷新失败',partial:'上次同步部分完成',success:'已同步',cancelled:'上次刷新已取消'};
+  const outcomes={failed:'上次刷新失败',partial:'上次同步部分完成',success:'已同步',
+    cancelled:'上次刷新已取消',running:'上次刷新尚未确认完成'};
   const stateLabel=state?.signedOut?'未登录':state?.calendarBindingPending&&canSignOut?'已登录':
     outcomes[state?.runStatus]||'';
   const calendar = state?.calendarBindingPending || !state?.calendarId ? '未绑定日历' :

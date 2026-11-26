@@ -509,6 +509,26 @@ test('manual refresh reports success in the unlocked dashboard and reuses verifi
  a.equal(e.db[0].identifier,original);
  a.equal(e.db[0].notes,'');
 });
+test('the dashboard explains an incomplete refresh or pending calendar recovery',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__sdk.Navigation={present:async()=>null};
+ const messages=[];
+ e.sandbox.__nativeDashboardMock=async({statusMessage})=>{
+   messages.push(statusMessage);
+   return 'dismiss';
+ };
+ e.state.runStatus='partial';
+ e.state.lastExamError='EXAM_SCHEMA';
+ await executeDaily(e);
+ a.match(messages[0],/考试日程未更新完成.*EXAM_SCHEMA/);
+ e.store.acquire();
+ const state=e.store.read();
+ state.tx=tx([],[]);
+ e.store.write(state);
+ e.store.release();
+ await e.m.run();
+ a.match(messages[1],/日历写入待恢复/);
+});
 test('background term rotation includes future terms and resumes from the previous cursor',async()=>{
  const {m}=await env();
  const info={current:3,semesters:[{id:1},{id:2},{id:3},{id:4},{id:5}]};
@@ -565,8 +585,8 @@ test('automatic refresh leaves blank notes untouched and clears edited notes in 
  a.deepEqual(queried,['161','exams','160','159']);
  a.equal(e.requests.filter(request=>request[0]==='save').length,0);
  t.diagnostic('Course calendar reads across three unchanged terms: '+courseReads.length);
- a.ok(courseReads.length<=17,'reuse the verified course rows across terms, observed '+courseReads.length+' reads');
- a.ok(stateWrites<=8,'progress updates do not rewrite the state file');
+ a.equal(courseReads.length,6,'reuse the verified course rows across terms');
+ a.equal(stateWrites,2,'persist only the run start and the verified result');
  a.ok(e.db.every(event=>!event.notes));
  a.match(e.sandbox.output,/刷新成功/);
 
@@ -1224,6 +1244,22 @@ test('remaining slider WebView is ephemeral, does not expose JS evaluation and p
  w.inner.dispose();
 });
 test('Scripting recurrence flag detects even a single visible series instance',async()=>{const e=await env();const old=e.add(lesson());old.hasRecurrenceRules=true;old.recurrenceRules=[{frequency:'weekly',interval:1}];e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,old.identifier);});
+test('a detached course is replaced once and the next refresh performs no calendar writes',async()=>{
+ const e=await env();
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ await executeDaily(e);
+ const old=e.db[0];
+ old.isDetached=true;
+ await e.m.run();
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(e.db.length,1);
+ a.notEqual(e.db[0].identifier,old.identifier);
+ a.ok(!e.db[0].isDetached);
+ e.requests.length=0;
+ await e.m.run();
+ a.equal(e.store.read().runStatus,'success');
+ a.deepEqual(e.requests,[]);
+});
 test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__COURSESYNC_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait launchCourseSync();})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
 
 test('Scripting 3.2.1 entry parses as an ordinary script without a module async wrapper',()=>{a.doesNotThrow(()=>new vm.Script(source));});
@@ -2457,13 +2493,14 @@ test('a failed classroom request is reported as an error',async()=>{
  a.deepEqual(progress,[]);
 });
 
-test('classroom lists deduplicate by ID with a name fallback for missing IDs',async()=>{
+test('classroom lists hide repeated IDs and room codes even when the supplied IDs differ',async()=>{
  const {m}=await env();
  const x={id:10,nameZh:'博远楼JC101',buildingName:'博远楼',floor:1};
  const sameId={...x,nameZh:'博远楼JC102'};
  const sameNameWithoutId={...x,id:undefined};
+ const sameNameWithDifferentId={...x,id:11};
  const other={id:12,nameZh:'博观楼JB201',buildingName:'博观楼',floor:2};
- const rows=await m.queryDayRooms({json:async()=>({roomList:[x,x,sameId,sameNameWithoutId,other]})},'2026-11-23');
+ const rows=await m.queryDayRooms({json:async()=>({roomList:[x,x,sameId,sameNameWithoutId,sameNameWithDifferentId,other]})},'2026-11-23');
  for(const row of rows)a.deepEqual(JSON.parse(JSON.stringify(row.buildings)),[
    {name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]},
    {name:'博观楼',floors:[{floor:2,roomCodes:['JB201']}]}
