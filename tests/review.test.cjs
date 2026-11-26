@@ -502,12 +502,12 @@ test('manual refresh reports success in the unlocked dashboard and reuses verifi
  const snapshots=()=>[...e.files.keys()].filter(path=>path.includes('同步前快照-'));
  a.equal(snapshots().length,1);
  const original=e.db[0].identifier;
- e.db[0].notes='同步：2025-01-01 08:00';
+ e.db[0].notes='手动修改的课程备注';
  await e.m.run();
  a.deepEqual(seen,[undefined,'success','success','success']);
  a.equal(snapshots().length,1);
  a.equal(e.db[0].identifier,original);
- a.notEqual(e.db[0].notes,'同步：2025-01-01 08:00');
+ a.equal(e.db[0].notes,'');
 });
 test('background term rotation includes future terms and resumes from the previous cursor',async()=>{
  const {m}=await env();
@@ -522,12 +522,11 @@ test('background term rotation includes future terms and resumes from the previo
  a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[3,1,2,4,5]);
 });
 
-test('automatic refresh updates checked course and exam timestamps',async t=>{
+test('automatic refresh leaves blank notes untouched and clears edited notes in place',async t=>{
  const e=await env(),queried=[];
  let readingExams=false;
  const table='https://jwxt.nufe.edu.cn/student/for-std/course-table';
  const exam='https://jwxt.nufe.edu.cn/student/for-std/exam-arrange';
- const oldNote='同步：2025-01-01 08:00';
  e.state.anchors['159']='2026-03-02';
  e.state.anchors['160']='2025-09-01';
  e.m.HTTP.prototype.get=async url=>{
@@ -548,7 +547,7 @@ test('automatic refresh updates checked course and exam timestamps',async t=>{
  await executeDaily(e);
  a.equal(e.store.read().runStatus,'success');
  a.equal(e.db.length,4);
- for(const event of e.db)event.notes=oldNote;
+ a.ok(e.db.every(event=>!event.notes));
  const courseReads=[];
  const getEvents=e.Event.getAll;
  e.Event.getAll=(start,end,calendars)=>{
@@ -563,13 +562,25 @@ test('automatic refresh updates checked course and exam timestamps',async t=>{
  };
  queried.length=0;e.requests.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','160','159','exams']);
- a.equal(e.requests.filter(request=>request[0]==='save').length,4);
-  t.diagnostic('Course calendar reads across three unchanged terms: '+courseReads.length);
-  a.ok(courseReads.length<=35,'reuse the verified course rows across terms, observed '+courseReads.length+' reads');
+ a.deepEqual(queried,['161','exams','160','159']);
+ a.equal(e.requests.filter(request=>request[0]==='save').length,0);
+ t.diagnostic('Course calendar reads across three unchanged terms: '+courseReads.length);
+ a.ok(courseReads.length<=17,'reuse the verified course rows across terms, observed '+courseReads.length+' reads');
  a.ok(stateWrites<=8,'progress updates do not rewrite the state file');
- a.ok(e.db.every(event=>event.notes!==oldNote&&/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(event.notes)));
+ a.ok(e.db.every(event=>!event.notes));
  a.match(e.sandbox.output,/刷新成功/);
+
+ const ids=e.db.map(event=>event.identifier).sort();
+ const examEvent=e.db.find(event=>event.title.startsWith('（考试）'));
+ const courseEvent=e.db.find(event=>event.title==='高等数学');
+ examEvent.notes='手动修改的考试备注';
+ courseEvent.notes='手动修改的课程备注';
+ e.requests.length=0;
+ await e.m.run();
+ a.deepEqual(e.requests.filter(([kind])=>kind==='save').map(([,id])=>id).sort(),
+   [examEvent.identifier,courseEvent.identifier].sort());
+ a.deepEqual(e.db.map(event=>event.identifier).sort(),ids);
+ a.ok(e.db.every(event=>!event.notes));
 
  const missing=e.db.findIndex(event=>event.title.includes('高等数学')&&event.startDate.getUTCMonth()===2);
  a.ok(missing>=0);
@@ -577,7 +588,7 @@ test('automatic refresh updates checked course and exam timestamps',async t=>{
  await e.m.run();
  a.equal(e.store.read().runStatus,'success');
  a.equal(e.db.length,4);
- a.equal(e.db.filter(event=>event.notes===oldNote).length,0);
+ a.ok(e.db.every(event=>!event.notes));
 
  const readTerm=e.m.HTTP.prototype.json;
  e.m.HTTP.prototype.json=async url=>{
@@ -585,17 +596,84 @@ test('automatic refresh updates checked course and exam timestamps',async t=>{
    return readTerm(url);
  };
  await e.m.run();
- const partial=e.store.read();
- a.equal(partial.runStatus,'partial');
- a.equal(partial.lastExamError,null);
- a.deepEqual(Array.from(partial.termErrors,error=>[error.sid,error.code]),[['159','BUDGET']]);
- a.equal(partial.exams.length,1);
- a.match(e.notices.at(-1).body,/2025-2026-2（BUDGET）.*预留时间/);
+ const deferred=e.store.read();
+ a.equal(deferred.runStatus,'success');
+ a.equal(deferred.lastExamError,null);
+ a.equal(deferred.termErrors.length,0);
+ a.equal(deferred.exams.length,1);
+ a.equal(e.notices.length,0);
+ a.match(e.sandbox.output,/刷新成功/);
 
  e.m.HTTP.prototype.json=readTerm;
  queried.length=0;
  await e.m.run();
- a.deepEqual(queried,['161','159','160','exams']);
+ a.deepEqual(queried,['161','exams','160','159']);
+ a.equal(e.store.read().runStatus,'success');
+});
+test('a late successful exam check leaves the history cursor and immediately returns success',async()=>{
+ const e=await env(),queried=[];
+ e.state.lastBackgroundHistoryTerm=159;
+ const initialTime=Date.now();
+ let elapsed=0;
+ e.sandbox.Date=class extends Date{static now(){return initialTime+elapsed;}};
+ e.m.HTTP.prototype.get=async url=>{
+   if(url.endsWith('/exam-arrange')){
+     queried.push('exams');
+     elapsed=17000;
+     return {url,text:'<table id="exams"><tr class="tr-empty"><td>暂无考试安排</td></tr></table>'};
+   }
+   return {url,text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option><option value="160">2025-2026-1</option><option value="159">2025-2026-2</option></select>'};
+ };
+ e.m.HTTP.prototype.json=async url=>{
+   queried.push(new URL(url).searchParams.get('semesterId'));
+   return raw([activity({weekIndexes:[1]})]);
+ };
+ await executeDaily(e);
+ const state=e.store.read();
+ a.deepEqual(queried,['161','exams']);
+ a.equal(state.lastBackgroundHistoryTerm,159);
+ a.equal(state.runStatus,'success');
+ a.equal(state.audit.at(-1).status,'checked');
+ a.equal(e.notices.length,0);
+ a.match(e.sandbox.output,/刷新成功/);
+});
+test('an interrupted rotating calendar transaction is reported as partial and resumed first',async()=>{
+ const e=await env(),queried=[];
+ e.state.anchors['160']='2025-09-01';
+ let elapsed=0;
+ const initialTime=Date.now();
+ e.sandbox.Date=class extends Date{static now(){return initialTime+elapsed;}};
+ loggedIn(e,url=>{
+   const sid=new URL(url).searchParams.get('semesterId');
+   queried.push(sid);
+   return raw([activity({weekIndexes:[1]})]);
+ });
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async url=>{
+   const page=await readPage(url);
+   if(url.endsWith('/exam-arrange')){queried.push('exams');return page;}
+   return {...page,text:page.text.replace('</select>','<option value="160">2025-2026-1</option></select>')};
+ };
+ const writeFile=e.sandbox.__sdk.FileManager.writeAsStringSync;
+ let stalled=false;
+ e.sandbox.__sdk.FileManager.writeAsStringSync=(filename,body)=>{
+   writeFile(filename,body);
+   if(!stalled&&/state-\d+\.json$/.test(filename)&&JSON.parse(body).tx?.sid==='160'){
+     stalled=true;
+     elapsed=7000;
+   }
+ };
+ await executeDaily(e);
+ const partial=e.store.read();
+ a.deepEqual(queried.splice(0),['161','exams','160']);
+ a.equal(partial.runStatus,'partial');
+ a.equal(partial.lastExamError,null);
+ a.equal(partial.tx.sid,'160');
+ a.match(e.sandbox.output,/部分完成/);
+ elapsed=0;
+ await e.m.run();
+ a.deepEqual(queried,['160','161','exams']);
+ a.equal(e.store.read().tx,null);
  a.equal(e.store.read().runStatus,'success');
 });
 test('an unreadable exam response reports the reason and stops after one exam request',async()=>{
@@ -611,6 +689,7 @@ test('an unreadable exam response reports the reason and stops after one exam re
  await executeDaily(e);
  a.equal(examRequests,1);
  a.equal(e.store.read().lastExamError,'EXAM_SCHEMA');
+ a.equal(e.store.read().audit.at(-1).status,'partial');
  a.match(e.sandbox.output,/部分完成.*EXAM_SCHEMA/);
  a.equal(e.notices.length,1);
  a.match(e.notices[0].body,/EXAM_SCHEMA/);
@@ -658,8 +737,8 @@ test('an unresponsive school request and notification still release the lock and
  e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  await executeDaily(e);
  const [calendarTimeout,requestTimeout]=timers.filter(ms=>ms>1000);
- a.ok(calendarTimeout>24000&&calendarTimeout<=26000,'calendar setup shares the new 26-second budget');
- a.ok(requestTimeout>20000&&requestTimeout<=22000,'network uses the remainder after calendar setup');
+ a.ok(calendarTimeout>18000&&calendarTimeout<=20000,'calendar setup shares the 20-second work budget');
+ a.ok(requestTimeout>14000&&requestTimeout<=16000,'network uses the remainder after calendar setup');
  a.equal(timers.at(-1),1000,'notification delivery has a separate short timeout');
  a.equal(e.store.read().lastError,'BUDGET');
  a.equal(e.store.read().resultNoticeError,'NOTIFICATION_FAILED');
@@ -767,7 +846,7 @@ test('daily refresh updates managed courses, deduplicates matching imports and p
  const conflictingRoom=e.add(lesson({location:'校外培训室'}),{notes:'personal'});
  const invitation=e.add(old,{notes:'invitation'});invitation.attendees=[{name:'guest'}];
  loggedIn(e,raw([activity({weekIndexes:[1,3],room:'教B202'})]));await executeDaily(e);
- const managed=()=>e.db.filter(x=>x.calendar.identifier===e.calendar.identifier&&x.notes.startsWith('同步：'));
+ const managed=()=>e.db.filter(x=>x.calendar.identifier===e.calendar.identifier&&e.m.storedEventIndex(e.store.read()).has(x.identifier));
  const own=managed();a.equal(own.length,2);a.ok(own.every(x=>x.location==='教B202'));
  for(const event of [personal,unrelated,invitation,conflictingRoom])a.ok(e.db.some(x=>x.identifier===event.identifier));
  a.equal(e.db.some(x=>x.identifier==='old-ics'),false);
@@ -949,7 +1028,7 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  a.equal(upcoming.location,'教学楼 101');
  a.equal(upcoming.startDate.toISOString(),day+'T00:00:00.000Z');
  a.equal(finished.startDate.toISOString(),'2020-01-01T00:00:00.000Z');
- a.match(finished.notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+ a.equal(finished.notes,'');
  e.store.acquire();
  const state=e.store.read();
  finished.title='🌟 旧考试';
@@ -960,7 +1039,7 @@ test('an upgraded NUFE installation replaces exams on successful empty response'
  a.equal(schoolPrompts,1);
  a.deepEqual(ids(),initialIds);
  a.equal(exams().find(x=>x.identifier===finished.identifier).title,'（考试）旧考试');
- a.match(exams().find(x=>x.identifier===finished.identifier).notes,/^同步：\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+ a.equal(exams().find(x=>x.identifier===finished.identifier).notes,'');
  body='<tr><td>无效响应</td></tr>';
  await e.m.run();
  a.match(alerts.at(-1).message,/EXAM_SCHEMA/);
@@ -1274,16 +1353,10 @@ test('App refresh fetches all courses; scheduled sync rotates two other terms in
  a.equal(e.state.termErrors.length,0);
 });
 
-test('readable event notes contain the synchronization timestamp only',async()=>{
- const {m}=await env();
- const text=m.readableNotes(lesson({teachers:['戴靓']}),'2026-11-01T17:22:37.760Z');
- a.equal(text,'同步：2026-11-02 01:22');
- a.doesNotMatch(text,/教师|NUFE_LOCAL|sid|week|JSON|第 2 周/);
-});
 test('indexed unmarked event remains identifiable after note migration',async()=>{
  const e=await env();const rec=lesson();e.baseline([rec]);const ev=e.add(rec);
  e.state.semesters['161'].index={[rec.id]:ev.identifier};
- ev.notes='教师：张老师\n同步：2026-11-02 01:22';
+ ev.notes='';
  const map=e.m.storedEventIndex(e.state);
  a.equal(e.m.eventRecord(ev,e.state.owner,map).id,rec.id);
 });
@@ -1301,7 +1374,7 @@ test('notes migration keeps the same native event ID',async()=>{
   e.store.write(e.state);
   await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
   a.equal(e.db.length,1);
-  a.match(e.db[0].notes,/^同步：/);
+  a.equal(e.db[0].notes,'');
   a.equal(e.db[0].title,'高等数学');
   a.doesNotMatch(e.db[0].notes,/教师|NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
   a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,rec.id);
@@ -1769,7 +1842,7 @@ test('teacher changes preserve logical identity without rewriting the native eve
  a.equal(e.db[0].title,'高等数学');
  a.deepEqual(e.requests,[]);
 });
-test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
+test('older course notes are cleared in place and the current title is kept',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec,{notes:'教师：张老师\\n同步：2026-11-02 01:22'.replace('\\n','\n')});
  e.baseline([rec]);e.state.semesters['161'].notesFormat=2;
  e.state.semesters['161'].index={[rec.id]:ev.identifier};
@@ -1778,8 +1851,7 @@ test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.equal(e.db.length,1);a.equal(e.db[0].identifier,before);
  a.equal(e.db[0].title,'高等数学');
- a.match(e.db[0].notes,/^同步：/);
- a.doesNotMatch(e.db[0].notes,/教师：/);
+ a.equal(e.db[0].notes,'');
  a.equal(e.state.semesters['161'].notesFormat,3);
 });
 
@@ -1800,7 +1872,7 @@ test('automatic refresh removes a legacy teacher suffix from an indexed course i
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,ev.identifier);
  a.equal(e.db[0].title,'中国税制（双语）');
- a.match(e.db[0].notes,/^同步：[^\n]+$/);
+ a.equal(e.db[0].notes,'');
  a.equal(e.db[0].location,ev.location);
  a.equal(+e.db[0].startDate,+ev.startDate);
  a.equal(e.store.read().semesters['161'].events[0].teachers[0],'高玉胭');
@@ -1839,7 +1911,7 @@ test('credential status surfaces dual-key migration instead of hiding it',async(
 });
 
 
-test('v3 notes refresh after another successful unchanged-term sync',async()=>{
+test('clearing old notes is idempotent across unchanged-term syncs',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec);
  e.baseline([rec]);const term=e.state.semesters['161'];
  term.index={[rec.id]:ev.identifier};
@@ -1853,18 +1925,18 @@ test('v3 notes refresh after another successful unchanged-term sync',async()=>{
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,original);
  a.equal(e.db[0].title,'高等数学');
- a.equal(e.db[0].notes,'同步：2026-11-02 08:35');
- a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites);
+ a.equal(e.db[0].notes,'');
+ a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites+1);
  term.lastSuccess='2026-11-02T01:07:00.000Z';
  e.store.write(e.state);
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.equal(e.db.length,1);
  a.equal(e.db[0].identifier,original);
- a.equal(e.db[0].notes,'同步：2026-11-02 09:07');
+ a.equal(e.db[0].notes,'');
  a.equal(e.state.semesters['161'].notesFormat,3);
  a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites+1);
 });
-test('no-op event save cannot falsely report a timestamp update',async()=>{
+test('no-op event save cannot falsely report that notes were cleared',async()=>{
  const e=await env(),rec=lesson(),ev=e.add(rec);
  e.baseline([rec]);const term=e.state.semesters['161'];
  term.index={[rec.id]:ev.identifier};
@@ -1872,10 +1944,10 @@ test('no-op event save cannot falsely report a timestamp update',async()=>{
  term.lastSuccess='2026-11-02T01:07:00.000Z';
  e.store.write(e.state);e.setDropSave(true);
  await a.rejects(()=>e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{}),code('CALENDAR_VERIFY'));
- a.equal(e.db[0].notes.includes('同步：2026-11-02 09:07'),false);
+ a.equal(e.db[0].notes,ev.notes);
  a.equal(e.db.length,1);
 });
-test('timestamp-only refresh updates multiple course events without changing IDs',async()=>{
+test('clearing notes on multiple courses preserves their IDs',async()=>{
  const e=await env(),first=lesson(),second=lesson({id:'lesson-2',start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z',week:2});
  const a1=e.add(first),a2=e.add(second),ids=[a1.identifier,a2.identifier];
  e.baseline([first,second]);
@@ -1884,7 +1956,7 @@ test('timestamp-only refresh updates multiple course events without changing IDs
  term.notesFormat=3;term.lastSuccess='2026-11-02T01:07:00.000Z';e.store.write(e.state);
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.deepEqual(e.db.map(x=>x.identifier),ids);
- a.ok(e.db.every(x=>x.notes==='同步：2026-11-02 09:07'));
+ a.ok(e.db.every(x=>!x.notes));
 });
 
 test('manual cancellation request only targets the exact previous lock token',async()=>{
@@ -2439,7 +2511,7 @@ test('rollback removes structured exam locations while preserving classroom text
 });
 
 test('plain text native structured object is not treated as a leftover coordinate',async()=>{
- const e=await env(),rec=lesson({location:'德业楼 Z4-110'}),old=e.add(rec,{notes:'同步：2026-11-01 08:00'});
+ const e=await env(),rec=lesson({location:'德业楼 Z4-110'}),old=e.add(rec,{notes:''});
  e.baseline([rec]);const term=e.state.semesters['161'];term.index={[rec.id]:old.identifier};
  term.lastSuccess='2026-11-01T00:00:00.000Z';term.notesFormat=3;
  old.structuredLocation={title:rec.location,geoLocation:null,radius:0};
