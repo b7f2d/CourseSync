@@ -764,7 +764,7 @@ test('the course rotation leaves a fixed exam reserve even when the current term
  loggedIn(e,url=>{
    const sid=new URL(url).searchParams.get('semesterId');
    queried.push(sid);
-   if(sid==='161')elapsed=13000;
+   if(sid==='161')elapsed=14000;
    return raw([activity({weekIndexes:[1]})]);
  });
  const readPage=e.m.HTTP.prototype.get;
@@ -772,7 +772,7 @@ test('the course rotation leaves a fixed exam reserve even when the current term
    const page=await readPage(url);
    if(url.endsWith('/exam-arrange')){
      queried.push('exams');
-     a.ok(this.deadline-e.sandbox.Date.now()>=6000);
+     a.ok(this.deadline-e.sandbox.Date.now()>=10000);
      return page;
    }
    return {...page,text:page.text.replace('</select>','<option value="160">2025-2026-1</option></select>')};
@@ -954,7 +954,7 @@ test('a current semester timeout leaves the exam phase its reserved time',async(
    return readPage.call(this,url);
  };
  await executeDaily(e);
- a.equal(examRemaining,5999);
+ a.equal(examRemaining,9999);
  a.equal(e.store.read().termErrors[0].code,'BUDGET');
  a.equal(e.store.read().syncResults.exams,'success');
  a.deepEqual(e.db.map(event=>event.title),[examTitleForRecovery]);
@@ -1016,8 +1016,8 @@ test('an unresponsive school request and notification still release the lock and
  e.sandbox.__sdk.Intent.text=value=>({type:'text',value});
  await executeDaily(e);
  const [calendarTimeout,requestTimeout]=timers.filter(ms=>ms>1000);
- a.ok(calendarTimeout>18000&&calendarTimeout<=20000,'calendar setup shares the 20-second work budget');
- a.ok(requestTimeout>14000&&requestTimeout<=16000,'network uses the remainder after calendar setup');
+ a.ok(calendarTimeout>23000&&calendarTimeout<=25000,'calendar setup shares the 25-second work budget');
+ a.ok(requestTimeout>19000&&requestTimeout<=21000,'network uses the remainder after calendar setup');
  a.equal(timers.at(-1),1000,'notification delivery has a separate short timeout');
  a.equal(e.store.read().lastError,'BUDGET');
  a.equal(e.store.read().resultNoticeError,'NOTIFICATION_FAILED');

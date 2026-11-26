@@ -50,8 +50,9 @@ const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu'
 let __shortcutOutput=null;
 const __webviews=new Set();
 // Leave time after the Intent's work budget for the result and cleanup.
-const backgroundDeadline=HostScript.env==='intent'?Date.now()+20000:Infinity;
-const BACKGROUND_ROTATION_MS=6000, BACKGROUND_EXAM_RESERVE_MS=6000;
+const BACKGROUND_SYNC_BUDGET_MS=25000;
+const backgroundDeadline=HostScript.env==='intent'?Date.now()+BACKGROUND_SYNC_BUDGET_MS:Infinity;
+const BACKGROUND_ROTATION_MS=6000, BACKGROUND_EXAM_RESERVE_MS=10000;
 const FOREGROUND_EXAM_RESERVE_MS=60000;
 let calendarReadDeadline=backgroundDeadline;
 const awaitNotification=work=>backgroundDeadline===Infinity?work:bounded(work,1000,'NOTIFICATION_FAILED');
@@ -2607,7 +2608,7 @@ async function syncCourses(info,http,state,store,calendar,interactive,stage,budg
 async function synchronize(state,store,calendar,interactive,progress=null,manualAuth=null) {
   // Reserve time for releasing the lock and returning the Shortcuts result.
   const deadline=interactive?Date.now()+15*60000:
-    backgroundDeadline===Infinity?Date.now()+20000:backgroundDeadline;
+    backgroundDeadline===Infinity?Date.now()+BACKGROUND_SYNC_BUDGET_MS:backgroundDeadline;
   let workDeadline=deadline;
   const budget=()=>{store.check();if(Date.now()>=workDeadline)fail('BUDGET');};
   if(Object.hasOwn(state,'nufeBuildingPoints')){delete state.nufeBuildingPoints;store.write(state);}
