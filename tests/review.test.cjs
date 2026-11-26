@@ -784,13 +784,18 @@ test('the course rotation leaves a fixed exam reserve even when the current term
  a.equal(state.lastExamError,null);
  a.equal(state.runStatus,'success');
 });
-test('exam response cookies stay local to the exam phase across background runs',async()=>{
+test('course and exam response cookies stay local to their own phases across background runs',async()=>{
  const e=await env();
  const originalGet=e.m.HTTP.prototype.get;
  const cookieKey='CourseSync.Local.v1.cookies';
  const sessionCookie={name:'session',value:'course',domain:'jwxt.nufe.edu.cn',hostOnly:true,path:'/',expires:0};
  e.keys.set(cookieKey,JSON.stringify([sessionCookie]));
  loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const readCourses=e.m.HTTP.prototype.json;
+ e.m.HTTP.prototype.json=async function(url){
+   this.jar.set({...sessionCookie,value:'course-response'});
+   return readCourses.call(this,url);
+ };
  const readPage=e.m.HTTP.prototype.get,courseCookies=[],examCookies=[];
  e.m.HTTP.prototype.get=async function(url){
    if(url.endsWith('/exam-arrange'))return originalGet.call(this,url);
@@ -863,10 +868,111 @@ test('an unreadable exam response reports the reason and stops after one exam re
  a.equal(examRequests,1);
  a.equal(e.store.read().lastExamError,'EXAM_SCHEMA');
  a.equal(e.store.read().audit.at(-1).status,'partial');
- a.match(e.sandbox.output,/部分完成.*EXAM_SCHEMA/);
+ a.match(e.sandbox.output,/部分完成：课程已核验 · 考试未完成[\s\S]*EXAM_SCHEMA/);
  a.equal(e.notices.length,1);
  a.match(e.notices[0].body,/EXAM_SCHEMA/);
  a.equal(e.db.length,1);
+});
+const examTitleForRecovery='（考试）期末测试';
+const examDayForRecovery='2026-09-08';
+function withRecoveryExam(e){
+ const get=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(url){
+   if(!url.endsWith('/exam-arrange'))return get.call(this,url);
+   return {url,text:'<table id="exams"><tr data-finished="false"><td><div class="time">'+examDayForRecovery+
+     ' 08:00~09:40</div></td><td><div>期末测试</div><div>期末</div></td><td>未结束</td></tr></table>'};
+ };
+}
+test('course and exam writes recover separately after an interrupted save',async t=>{
+ for(const failedPhase of ['courses','exams'])await t.test(failedPhase,async()=>{
+   const e=await env();
+   loggedIn(e,raw([activity({weekIndexes:[1]})]));
+   withRecoveryExam(e);
+   const save=e.Event.prototype.save;
+   let interrupted=false;
+   e.Event.prototype.save=async function(){
+     const phase=this.title===examTitleForRecovery?'exams':'courses';
+     await save.call(this);
+     if(!interrupted&&phase===failedPhase){interrupted=true;throw new Error('save acknowledgement lost');}
+   };
+   await executeDaily(e);
+   const partial=e.store.read();
+   const completedPhase=failedPhase==='courses'?'exams':'courses';
+   a.equal(partial.runStatus,'partial');
+   a.equal(partial.syncResults[failedPhase],'failed');
+   a.equal(partial.syncResults[completedPhase],'success');
+   a.equal(Boolean(partial.tx),failedPhase==='courses');
+   a.equal(e.db.length,2);
+   const completed=e.db.find(event=>(event.title===examTitleForRecovery)===(completedPhase==='exams'));
+   a.equal(completed.notes,'');
+
+   e.requests.length=0;
+   await e.m.run();
+   const recovered=e.store.read();
+   a.equal(recovered.runStatus,'success');
+   a.equal(recovered.tx,null);
+   a.equal(e.db.length,2);
+   a.ok(e.db.every(event=>!event.notes));
+   a.ok(e.db.some(event=>event.identifier===completed.identifier));
+   a.ok(e.requests.every(([,id])=>id!==completed.identifier));
+   a.equal(e.db.find(event=>event.title==='高等数学').startDate.toISOString(),'2026-09-07T00:00:00.000Z');
+   a.equal(e.db.find(event=>event.title===examTitleForRecovery).startDate.toISOString(),'2026-09-08T00:00:00.000Z');
+   a.ok(e.db.every(event=>event.timeZone==='Asia/Shanghai'));
+ });
+});
+test('a verified identity can refresh exams when course semester metadata is unavailable',async()=>{
+ const e=await env();
+ loggedIn(e,()=>{throw new Error('course data request should not start');});
+ withRecoveryExam(e);
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(url){
+   const page=await readPage.call(this,url);
+   return url.endsWith('/exam-arrange')?page:{...page,text:'var personId=100;'};
+ };
+ await executeDaily(e);
+ const state=e.store.read();
+ a.equal(state.runStatus,'partial');
+ a.equal(state.lastCourseError,'SCHEMA');
+ a.equal(state.syncResults.courses,'failed');
+ a.equal(state.syncResults.exams,'success');
+ a.deepEqual(e.db.map(event=>event.title),[examTitleForRecovery]);
+});
+test('a current semester timeout leaves the exam phase its reserved time',async()=>{
+ const e=await env();
+ const initialTime=Date.now();
+ let elapsed=0,examRemaining=0;
+ e.sandbox.Date=class extends Date{static now(){return initialTime+elapsed;}};
+ loggedIn(e,[]);
+ withRecoveryExam(e);
+ e.m.HTTP.prototype.json=async function(){
+   elapsed=this.deadline-initialTime+1;
+   throw Object.assign(new Error('course timeout'),{code:'BUDGET'});
+ };
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(url){
+   if(url.endsWith('/exam-arrange'))examRemaining=this.deadline-e.sandbox.Date.now();
+   return readPage.call(this,url);
+ };
+ await executeDaily(e);
+ a.equal(examRemaining,5999);
+ a.equal(e.store.read().termErrors[0].code,'BUDGET');
+ a.equal(e.store.read().syncResults.exams,'success');
+ a.deepEqual(e.db.map(event=>event.title),[examTitleForRecovery]);
+});
+test('two failed phases report both errors without advancing the last verified refresh',async()=>{
+ const e=await env();
+ e.state.lastCheck='2026-09-01T00:00:00.000Z';
+ loggedIn(e,{});
+ const readPage=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async url=>url.endsWith('/exam-arrange')?{url,text:'<html>unexpected</html>'}:readPage(url);
+ await executeDaily(e);
+ const state=e.store.read();
+ a.equal(state.runStatus,'failed');
+ a.equal(state.lastCheck,e.state.lastCheck);
+ a.equal(state.audit.at(-1).courses,'failed');
+ a.equal(state.audit.at(-1).exams,'failed');
+ a.match(e.sandbox.output,/刷新失败：课程未完成 · 考试未完成[\s\S]*（SCHEMA）/);
+ a.match(e.notices[0].body,/EXAM_SCHEMA/);
 });
 test('successful background refresh skips notifications even when delivery is unavailable',async()=>{
  const e=await env();loggedIn(e,raw([activity({weekIndexes:[1]})]));
@@ -1029,7 +1135,7 @@ test('daily refresh updates managed courses, deduplicates matching imports and p
  const ids=own.map(x=>x.identifier).sort().join(',');e.notices.length=0;await e.m.run();
  a.equal(managed().map(x=>x.identifier).sort().join(','),ids);a.equal(e.notices.length,0);
 });
-test('malformed course source preserves old events and stops before requesting exams',async()=>{
+test('malformed course source preserves old events while exams still complete',async()=>{
  const e=await env();
  e.baseline([lesson()]);
  const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});
@@ -1044,15 +1150,33 @@ test('malformed course source preserves old events and stops before requesting e
  a.ok(e.db.some(x=>x.identifier===own.identifier));
  a.ok(e.db.some(x=>x.identifier===legacy.identifier));
  a.equal(e.requests.length,0);
- a.equal(examRequests,0);
+ a.equal(examRequests,1);
  a.equal(e.notices.length,1);
- a.match(e.notices[0].title,/失败/);
- a.equal(e.store.read().lastError,'SCHEMA');
+ a.match(e.notices[0].title,/部分完成/);
+ a.match(e.sandbox.output,/课程未完成 · 考试已核验[\s\S]*SCHEMA/);
+ a.equal(e.store.read().termErrors[0].code,'SCHEMA');
 });
-test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'EMPTY_SOURCE');a.match(e.notices[0].title,/失败/);});
-test('end-to-end failed calendar save never purges legacy data',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});e.setSaveFailure(true);loggedIn(e,raw([activity({weekIndexes:[1],room:'changed'})]));await executeDaily(e);a.equal(e.db.length,2);a.ok(e.store.read().tx);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.match(e.notices[0].title,/失败/);});
+test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().termErrors[0].code,'EMPTY_SOURCE');a.match(e.notices[0].title,/部分完成/);});
+test('end-to-end failed calendar save never purges legacy data',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});e.setSaveFailure(true);loggedIn(e,raw([activity({weekIndexes:[1],room:'changed'})]));await executeDaily(e);a.equal(e.db.length,2);a.ok(e.store.read().tx);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.match(e.notices[0].title,/部分完成/);});
 test('end-to-end school person change blocks all calendar writes',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('CourseSync.Local.v1.person','another-person');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');a.equal(e.store.read().authPaused,true);a.match(e.notices[0].title,/登录需要处理/);});
-test('end-to-end changed student identity in data blocks replacement',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('CourseSync.Local.v1.student','another-student');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');});
+test('a student identity mismatch in course data stops both sync phases',async()=>{
+ const e=await env();
+ e.baseline([lesson()]);
+ e.add(lesson());
+ e.keys.set('CourseSync.Local.v1.student','another-student');
+ loggedIn(e,raw([activity()]));
+ const get=e.m.HTTP.prototype.get;
+ let examRequests=0;
+ e.m.HTTP.prototype.get=async url=>{
+   if(url.endsWith('/exam-arrange'))examRequests++;
+   return get(url);
+ };
+ await executeDaily(e);
+ a.equal(e.requests.length,0);
+ a.equal(examRequests,0);
+ a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');
+ a.equal(e.store.read().authPaused,true);
+});
 test('end-to-end missing bound calendar never falls back to personal calendar',async()=>{const e=await env();e.state.calendarId='missing-calendar';e.add(lesson(),{cal:e.other,notes:'personal'});loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'CALENDAR_MISSING');a.equal(e.notices.length,1);});
 test('second background invocation does not start while a previous lock is held',async()=>{
  const e=await env();e.store.write(e.state);
@@ -1168,7 +1292,7 @@ test('cookie RFC default path also applies to directory endpoint itself',async()
 
 test('owned series is replaced with a standalone new target after backup',async()=>{const e=await env();e.add(lesson(),{id:'owned-series'});e.add(lesson(),{id:'owned-series',offset:7*86400000});e.setSeries(true);e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,'owned-series');a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,'lesson-1');});
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
-test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
+test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().termErrors[0].code,'SCHEMA');a.equal(e.store.read().syncResults.exams,'success');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.equal(e.notices.length,0);});
 test('main menu keeps refresh and available sign-out without removed status entry',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
@@ -1700,7 +1824,9 @@ test('a replacement binds despite an older pending journal and courses archive i
  e.sandbox.__sdk.FileManager.writeAsStringSync=(filename,body)=>{
    if(!filename.includes('课程事务-'))writeFile(filename,body);
  };
- await a.rejects(()=>e.m.synchronize(e.state,e.store,picked,true,()=>{}),code('BACKUP_FAILED'));
+ await e.m.synchronize(e.state,e.store,picked,true,()=>{});
+ a.equal(e.state.lastCourseError,'BACKUP_FAILED');
+ a.equal(e.state.syncResults.exams,'success');
  a.equal(e.store.read().calendarId,picked.identifier);
  a.equal(e.store.read().tx.calendarId,oldCalendar.identifier);
  a.equal(e.requests.length,0);
