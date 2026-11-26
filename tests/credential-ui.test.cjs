@@ -163,6 +163,7 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
    .replace('options: DashboardOptions','options')
    .replace(': Promise<any>','')
    .replace('let date: string|undefined','let date')
+   .replace('let periods: RoomPeriodSpec[]|null=null','let periods=null')
    .replace('let result: FreeRoomResult','let result');
  const calls=[], selections=[1,0,0,2], rooms=[{kind:'error',message:'查询失败'},{kind:'ready',date:'2026-11-23',rooms:[{period:'上午',units:['1','2','3','4','5'],buildings:[{name:'博远楼',floors:[{floor:1,roomCodes:['JC101']}]}]}]}];
  const sandbox={Dialog:{actionSheet:async opts=>{calls.push(opts);return selections.shift();}},Navigation:{},
@@ -177,17 +178,20 @@ test('system dashboard preserves actions, classroom results, retry, and logout',
  assert.equal(calls[2].title,'空闲教室');
  assert.equal(calls[2].message,'2026-11-23 · 仙林校区\n\n第1—5节 · 08:20–12:15\n博远楼\n1楼  JC101');
 
- sandbox.Date=class extends Date{static now(){return Date.parse('2026-12-31T16:30:00Z');}};
- selections.push(1,1,1,0,0);
+ sandbox.Date=class extends Date{static now(){return Date.parse('2027-01-01T01:02:00Z');}};
+ selections.push(1,1,1,2,0,0);
  const promptValues=[null,'2030-02-29','2030-06-15'];
  const datePrompts=[];
  sandbox.Dialog.prompt=async opts=>{datePrompts.push(opts);return promptValues.shift();};
  const fallbackDates=[];
- assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,_periods,date)=>{
+ const fallbackPeriods=[];
+ assert.equal(await show({state:{},canSignOut:true,statusMessage:'',loadFreeRooms:async(_a,_b,periods,date)=>{
    fallbackDates.push(date);
+   fallbackPeriods.push(periods);
    return {kind:'ready',date:date??'2027-01-01',rooms:[]};
  }}),0);
- assert.deepEqual(fallbackDates,[undefined,'2030-06-15']);
+ assert.deepEqual(fallbackDates,[undefined,'2030-06-15','2027-01-01']);
+ assert.deepEqual(Array.from(fallbackPeriods.at(-1)[0].units),['2','3','4','5']);
  assert.equal(datePrompts[1].defaultValue,'2027-01-01');
  assert.match(datePrompts[2].message,/日期无效/);
 
@@ -322,7 +326,7 @@ test('room transition is centered, retains native navigation and cancels before 
  assert.match(query,/if\(started\)\{[\s\S]*?return;/);
 });
 
-test('room query uses iOS wheel Pickers for start/end lessons with exact times and no quick presets',()=>{
+test('room query uses exact school times and a Today shortcut with time-based default lessons',()=>{
  const vm=require('node:vm');
  const helpers=native.slice(native.indexOf('function systemDialog()'),native.indexOf('function RoomResultsView('))
    .replace('(globalThis as any).Dialog','globalThis.Dialog')
@@ -333,14 +337,17 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
    .replace('_value:number','_value')
    .replace('date?:string','date')
    .replace(' as const','');
- const {select,label,defaults,beijingDate,shiftDate,dateLabel,pickerDate}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,beijingDate:beijingRoomDate,shiftDate:shiftRoomDate,dateLabel:roomDateLabel,pickerDate:pickerRoomDate})',{});
+ const {select,label,defaults,defaultQuery,beijingDate,shiftDate,dateLabel,pickerDate}=vm.runInNewContext(helpers+'\n({select:roomSelectionForUnits,label:roomLessonLabel,defaults:defaultRoomUnits,defaultQuery:defaultRoomQuery,beijingDate:beijingRoomDate,shiftDate:shiftRoomDate,dateLabel:roomDateLabel,pickerDate:pickerRoomDate})',{});
  const localMs=(h,m)=>Date.UTC(2026,10,25,h-8,m);
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(7,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(8,30)))),{startUnit:1,endUnit:4});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(9,0)))),{startUnit:2,endUnit:5});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(9,2)))),{startUnit:2,endUnit:5});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(12,30)))),{startUnit:6,endUnit:9});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(19,0)))),{startUnit:11,endUnit:13});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(20,50)))),{startUnit:1,endUnit:4});
  assert.deepEqual(JSON.parse(JSON.stringify(defaults(localMs(21,0)))),{startUnit:1,endUnit:4});
+ assert.deepEqual(JSON.parse(JSON.stringify(defaultQuery(Date.parse('2026-12-31T16:00:00Z')))),{date:'2027-01-01',startUnit:1,endUnit:4});
  const r1=JSON.parse(JSON.stringify(select(2,4)));
  assert.equal(r1.label,'第2—4节 · 09:05–11:25');
  assert.deepEqual(r1.periods,[{period:'2,3,4',units:['2','3','4']}]);
@@ -366,6 +373,8 @@ test('room query uses iOS wheel Pickers for start/end lessons with exact times a
  assert.match(datePicker,/datePickerStyle="compact"/);
  assert.doesNotMatch(datePicker,/startDate=|endDate=/);
  assert.match(view,/<Slider min=\{-ROOM_SLIDER_DAYS\} max=\{ROOM_SLIDER_DAYS\} step=\{1\}[\s\S]*<Picker title="开始节次"/);
+ assert.match(view,/<Button title=\{'今天 '\+today\.slice\(5\)\}[^>]*action=\{resetToday\}/);
+ assert.match(view,/const resetToday=\(\)=>\{[\s\S]*?defaultRoomQuery\(\)[\s\S]*?setDateAnchor\(current.date\);setDayOffset\(0\);[\s\S]*?setStartUnit\(current.startUnit\);setEndUnit\(current.endUnit\);/);
  assert.match(view,/pickerStyle="wheel"/);
  assert.match(view,/title="开始节次"/);
  assert.match(view,/title="结束节次"/);

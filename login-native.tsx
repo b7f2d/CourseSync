@@ -232,11 +232,12 @@ function parseClockMinutes(clock) {
 function defaultRoomUnits(baseMs = Date.now()) {
   const d = new Date(baseMs + ROOM_BEIJING_OFFSET_MS);
   const nowMin = d.getUTCHours() * 60 + d.getUTCMinutes();
-  const found = nowMin < 20 * 60 + 50
-    ? ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin)
-    : null;
+  const found = ROOM_LESSON_UNITS.find(u => parseClockMinutes(ROOM_LESSON_TIMES[u][1]) > nowMin);
   const startUnit = found ? Number(found) : 1;
   return { startUnit, endUnit: Math.min(13, startUnit + 3) };
+}
+function defaultRoomQuery(baseMs=Date.now()){
+  return {date:beijingRoomDate(baseMs),...defaultRoomUnits(baseMs)};
 }
 function roomSelectionForUnits(startUnit, endUnit) {
   const from = Number(startUnit), to = Number(endUnit);
@@ -283,13 +284,12 @@ async function readRoomResults(loadRooms:RoomLoader,isActive=()=>true,updateProg
 
 function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpen:()=>boolean;onClose:()=>void}) {
   const dismiss=Navigation.useDismiss();
-  const [openedAt]=useState(()=>Date.now());
-  const initialUnits=defaultRoomUnits(openedAt);
-  const today=beijingRoomDate(openedAt);
-  const [dateAnchor,setDateAnchor]=useState(today);
+  const [initial]=useState(()=>defaultRoomQuery());
+  const today=beijingRoomDate();
+  const [dateAnchor,setDateAnchor]=useState(initial.date);
   const [dayOffset,setDayOffset]=useState(0);
-  const [startUnit,setStartUnit]=useState(initialUnits.startUnit);
-  const [endUnit,setEndUnit]=useState(initialUnits.endUnit);
+  const [startUnit,setStartUnit]=useState(initial.startUnit);
+  const [endUnit,setEndUnit]=useState(initial.endUnit);
   const [selectedPeriods,setSelectedPeriods]=useState<RoomPeriodSpec[]|null>(null);
   const [result,setResult]=useState<FreeRoomResult|null>(null);
   const [attempt,setAttempt]=useState(0);
@@ -332,6 +332,12 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
     setDayOffset(0);
     setDateAnchor(next);
   };
+  const resetToday=()=>{
+    const current=defaultRoomQuery();
+    resetPicker();
+    setDateAnchor(current.date);setDayOffset(0);
+    setStartUnit(current.startUnit);setEndUnit(current.endUnit);
+  };
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible">
     {selectedPeriods&&!result?<VStack navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline"
       toolbar={toolbar} spacing={12} padding={24}
@@ -342,13 +348,16 @@ function RoomResultsView({loadRooms,isOpen,onClose}: {loadRooms:RoomLoader;isOpe
       </Text>
     </VStack>:<List navigationTitle="空闲教室" navigationBarTitleDisplayMode="inline" listStyle="insetGroup" toolbar={toolbar}>
       <VStack alignment="leading" spacing={6} padding={{top:4,bottom:4}}>
-        {DatePicker?<DatePicker title={date===today?'日期（今天）':'日期'} datePickerStyle="compact"
-          displayedComponents={['date']} value={new Date(date+'T12:00:00').getTime()}
-          onChanged={value=>selectDate(pickerRoomDate(value))}/>
-          :<Button title={roomDateLabel(date,today)} action={async()=>{
-            const next=await promptRoomDate(date);
-            if(next)selectDate(next);
-          }}/>}
+        <HStack spacing={12}>
+          {DatePicker?<DatePicker title="日期" datePickerStyle="compact"
+            displayedComponents={['date']} value={new Date(date+'T12:00:00').getTime()}
+            onChanged={value=>selectDate(pickerRoomDate(value))}/>
+            :<Button title={roomDateLabel(date,today)} buttonStyle="borderless" action={async()=>{
+              const next=await promptRoomDate(date);
+              if(next)selectDate(next);
+            }}/>}
+          <Button title={'今天 '+today.slice(5)} buttonStyle="bordered" action={resetToday}/>
+        </HStack>
         {Slider&&<Slider min={-ROOM_SLIDER_DAYS} max={ROOM_SLIDER_DAYS} step={1} value={dayOffset} onChanged={onDateChanged}
           label={<Text>查询日期</Text>} accessibilityValue={roomDateLabel(date,today)}
           minValueLabel={<Text>{shiftRoomDate(dateAnchor,-ROOM_SLIDER_DAYS).slice(5)}</Text>}
@@ -438,18 +447,24 @@ async function presentRoomQuery(loadRooms:RoomLoader) {
     }finally{open=false;}
   }
   let date: string|undefined;
+  let periods: RoomPeriodSpec[]|null=null;
   let result=await readRoomResults(loadRooms);
   while(true){
     const ready=result.kind==='ready';
     const selected=await chooseNativeAction({title:'空闲教室',
       message:result.kind==='ready'?formatRoomResults(result.date,result.rooms):result.message,
-      actions:[{label:ready?'返回':'重试'},{label:'更改日期'}],cancelButton:!ready,cancelLabel:'返回'});
+      actions:[{label:ready?'返回':'重试'},{label:'更改日期'},{label:'今天 '+beijingRoomDate().slice(5)}],
+      cancelButton:!ready,cancelLabel:'返回'});
     if(selected===1){
       const next=await promptRoomDate(result.kind==='ready'?result.date:date??beijingRoomDate());
       if(!next)continue;
       date=next;
+    }else if(selected===2){
+      const current=defaultRoomQuery();
+      date=current.date;
+      periods=roomSelectionForUnits(current.startUnit,current.endUnit).periods;
     }else if(ready||selected!==0)return;
-    result=await readRoomResults(loadRooms,undefined,undefined,null,date);
+    result=await readRoomResults(loadRooms,undefined,undefined,periods,date);
   }
 }
 
